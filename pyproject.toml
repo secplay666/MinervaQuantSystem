@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quant-system"
+version = "0.1.0"
+description = "A-share quantitative research data platform"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "akshare==1.18.78",
+  "duckdb>=1.2,<2",
+  "pandas>=2.2,<3",
+  "pyarrow>=17,<24",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<10",
+]
+
+[project.scripts]
+quant-data = "quant_system.data_platform.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+

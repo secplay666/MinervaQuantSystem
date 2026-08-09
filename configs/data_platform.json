@@ -1,0 +1,40 @@
+{
+  "provider": "akshare",
+  "provider_version": "1.18.78",
+  "market": "A_SHARE",
+  "start_date": "20200101",
+  "end_date": null,
+  "request_pause_seconds": 0.35,
+  "max_retries": 4,
+  "symbols": [
+    {"symbol": "000001", "name": "平安银行", "group": "SZSE_MAIN"},
+    {"symbol": "000002", "name": "万科A", "group": "SZSE_MAIN"},
+    {"symbol": "000333", "name": "美的集团", "group": "SZSE_MAIN"},
+    {"symbol": "000651", "name": "格力电器", "group": "SZSE_MAIN"},
+    {"symbol": "000858", "name": "五粮液", "group": "SZSE_MAIN"},
+    {"symbol": "002415", "name": "海康威视", "group": "SZSE_MAIN"},
+    {"symbol": "002594", "name": "比亚迪", "group": "SZSE_MAIN"},
+    {"symbol": "002714", "name": "牧原股份", "group": "SZSE_MAIN"},
+    {"symbol": "300059", "name": "东方财富", "group": "CHINEXT"},
+    {"symbol": "300750", "name": "宁德时代", "group": "CHINEXT"},
+    {"symbol": "600000", "name": "浦发银行", "group": "SSE_MAIN"},
+    {"symbol": "600036", "name": "招商银行", "group": "SSE_MAIN"},
+    {"symbol": "600519", "name": "贵州茅台", "group": "SSE_MAIN"},
+    {"symbol": "600900", "name": "长江电力", "group": "SSE_MAIN"},
+    {"symbol": "601318", "name": "中国平安", "group": "SSE_MAIN"},
+    {"symbol": "601398", "name": "工商银行", "group": "SSE_MAIN"},
+    {"symbol": "601857", "name": "中国石油", "group": "SSE_MAIN"},
+    {"symbol": "603259", "name": "药明康德", "group": "SSE_MAIN"},
+    {"symbol": "688981", "name": "中芯国际", "group": "STAR"},
+    {"symbol": "688041", "name": "海光信息", "group": "STAR"}
+  ],
+  "indices": [
+    {"symbol": "sh000001", "name": "上证指数"},
+    {"symbol": "sz399001", "name": "深证成指"},
+    {"symbol": "sh000300", "name": "沪深300"},
+    {"symbol": "sz399006", "name": "创业板指"},
+    {"symbol": "sh000688", "name": "科创50"},
+    {"symbol": "sh000905", "name": "中证500"}
+  ]
+}
+
