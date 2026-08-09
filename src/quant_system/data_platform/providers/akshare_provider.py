@@ -44,6 +44,16 @@ class AkShareProvider(MarketDataProvider):
     def version(self) -> str:
         return str(ak.__version__)
 
+    @staticmethod
+    def _with_market_prefix(symbol: str) -> str:
+        if symbol.startswith(("sh", "sz", "bj")):
+            return symbol
+        if symbol.startswith(("5", "6")):
+            return f"sh{symbol}"
+        if symbol.startswith(("4", "8", "9")):
+            return f"bj{symbol}"
+        return f"sz{symbol}"
+
     def _call(self, name: str, func: Callable[..., T], **kwargs: object) -> T:
         last_error: Exception | None = None
         for attempt in range(1, self.max_retries + 1):
@@ -77,6 +87,17 @@ class AkShareProvider(MarketDataProvider):
     def fetch_daily_bars(
         self, symbol: str, start_date: str, end_date: str
     ) -> pd.DataFrame:
+        if symbol.startswith(("4", "8", "9")):
+            frame = self._call(
+                "stock_zh_a_daily_sina",
+                ak.stock_zh_a_daily,
+                symbol=self._with_market_prefix(symbol),
+                start_date=start_date,
+                end_date=end_date,
+                adjust="",
+            )
+            self.daily_sources[symbol] = "akshare.stock_zh_a_daily.sina"
+            return frame
         with self._source_lock:
             eastmoney_available = self._eastmoney_daily_available
         if eastmoney_available:
@@ -105,7 +126,7 @@ class AkShareProvider(MarketDataProvider):
         frame = self._call(
             "stock_zh_a_hist_tx",
             ak.stock_zh_a_hist_tx,
-            symbol=symbol,
+            symbol=self._with_market_prefix(symbol),
             start_date=start_date,
             end_date=end_date,
             adjust="",
@@ -117,10 +138,7 @@ class AkShareProvider(MarketDataProvider):
     def fetch_adjustment_factors(
         self, symbol: str, start_date: str, end_date: str
     ) -> pd.DataFrame:
-        market_prefix = "sh" if symbol.startswith(("5", "6")) else (
-            "bj" if symbol.startswith(("4", "8", "9")) else "sz"
-        )
-        provider_symbol = f"{market_prefix}{symbol}"
+        provider_symbol = self._with_market_prefix(symbol)
         qfq = self._call(
             "stock_zh_a_daily_qfq_factor",
             ak.stock_zh_a_daily,
@@ -174,7 +192,7 @@ class AkShareProvider(MarketDataProvider):
         frame = self._call(
             "stock_zh_a_hist_tx",
             ak.stock_zh_a_hist_tx,
-            symbol=symbol,
+            symbol=self._with_market_prefix(symbol),
             start_date="19900101",
             end_date="20500101",
             adjust="",

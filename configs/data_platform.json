@@ -7,7 +7,7 @@
   "end_date": null,
   "request_pause_seconds": 0.35,
   "max_retries": 4,
-  "max_workers": 6,
+  "max_workers": 12,
   "daily_universe": "all_a_share",
   "download_adjustment_factors": true,
   "symbols": [
