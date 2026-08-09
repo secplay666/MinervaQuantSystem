@@ -10,9 +10,9 @@ data/raw/
 data/canonical/
 data/reports/
 data/manifests/
+data/checkpoints/
 data/*.duckdb
 data/*.duckdb.wal
 
 # Keep directory placeholders
 !data/.gitkeep
-

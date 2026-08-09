@@ -25,6 +25,7 @@ def ensure_directories(root: Path) -> None:
         "data/canonical",
         "data/manifests",
         "data/reports",
+        "data/checkpoints",
     ):
         (root / relative).mkdir(parents=True, exist_ok=True)
 
@@ -48,4 +49,3 @@ def json_dump(path: Path, payload: Any) -> None:
         encoding="utf-8",
     )
     temp_path.replace(path)
-

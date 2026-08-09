@@ -7,6 +7,9 @@
   "end_date": null,
   "request_pause_seconds": 0.35,
   "max_retries": 4,
+  "max_workers": 6,
+  "daily_universe": "all_a_share",
+  "download_adjustment_factors": true,
   "symbols": [
     {"symbol": "000001", "name": "平安银行", "group": "SZSE_MAIN"},
     {"symbol": "000002", "name": "万科A", "group": "SZSE_MAIN"},

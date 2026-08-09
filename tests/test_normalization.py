@@ -4,6 +4,7 @@ import pandas as pd
 
 from quant_system.data_platform.normalization import (
     infer_exchange,
+    normalize_adjustment_factors,
     normalize_daily_bars,
 )
 
@@ -37,3 +38,27 @@ def test_normalize_daily_bars_converts_lots_to_shares() -> None:
     assert result.loc[0, "volume_shares"] == 12_300
     assert result.loc[0, "price_adjustment"] == "NONE"
 
+
+def test_normalize_adjustment_factors_keeps_baseline_and_numeric_values() -> None:
+    raw = pd.DataFrame(
+        [
+            {
+                "date": "2026-06-26",
+                "qfq_factor": "1.0",
+                "hfq_factor": "8.88",
+            },
+            {
+                "date": "1900-01-01",
+                "qfq_factor": "8.88",
+                "hfq_factor": "1.0",
+            },
+        ]
+    )
+    result = normalize_adjustment_factors(
+        raw, "600519", "run", "2026-08-09T00:00:00Z"
+    )
+    assert list(result["effective_date"].astype(str)) == [
+        "1900-01-01",
+        "2026-06-26",
+    ]
+    assert result.loc[1, "qfq_factor"] == 1.0

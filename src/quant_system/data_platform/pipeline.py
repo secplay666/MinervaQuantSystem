@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
-from .config import DataPlatformConfig
+from .config import DataPlatformConfig, SymbolConfig
 from .normalization import (
     normalize_calendar,
     normalize_daily_bars,
+    normalize_adjustment_factors,
     normalize_index_bars,
     normalize_instruments,
     normalize_market_snapshot,
@@ -53,7 +56,119 @@ class IngestionPipeline:
             stats["max_date"] = str(frame[date_column].max())
         return stats
 
-    def run(self) -> dict[str, Any]:
+    def _daily_symbols(self, instruments: pd.DataFrame) -> tuple[SymbolConfig, ...]:
+        if self.config.daily_universe == "configured":
+            return self.config.symbols
+        return tuple(
+            SymbolConfig(
+                symbol=str(row.symbol).zfill(6),
+                name=str(row.name),
+                group=str(row.exchange),
+            )
+            for row in instruments.itertuples(index=False)
+        )
+
+    def _daily_path(self, symbol: str) -> Path:
+        return (
+            self.root
+            / "data"
+            / "canonical"
+            / "daily_bars"
+            / f"symbol={symbol}"
+            / "data.parquet"
+        )
+
+    def _factor_path(self, symbol: str) -> Path:
+        return (
+            self.root
+            / "data"
+            / "canonical"
+            / "adjustment_factors"
+            / f"symbol={symbol}"
+            / "data.parquet"
+        )
+
+    def _existing_max_date(self, path: Path, column: str) -> date | None:
+        if not path.exists():
+            return None
+        frame = pd.read_parquet(path, columns=[column])
+        if frame.empty:
+            return None
+        values = pd.to_datetime(frame[column], errors="coerce").dropna()
+        return values.max().date() if not values.empty else None
+
+    @staticmethod
+    def _merge_daily_bars(
+        existing: pd.DataFrame, incoming: pd.DataFrame
+    ) -> pd.DataFrame:
+        if existing.empty:
+            return incoming
+        if incoming.empty:
+            return existing
+        frame = pd.concat([existing, incoming], ignore_index=True)
+        frame = (
+            frame.drop_duplicates(["symbol", "trade_date"], keep="last")
+            .sort_values(["symbol", "trade_date"], ignore_index=True)
+        )
+        previous_close = frame.groupby("symbol")["close"].shift(1)
+        frame["change_cny"] = frame["close"] - previous_close
+        frame["pct_change"] = frame["change_cny"] / previous_close * 100
+        frame["amplitude_pct"] = (
+            (frame["high"] - frame["low"]) / previous_close * 100
+        )
+        return frame
+
+    def _checkpoint_path(self, run_id: str, dataset: str) -> Path:
+        return self.root / "data" / "checkpoints" / f"run_id={run_id}" / f"{dataset}.json"
+
+    @staticmethod
+    def _validate_adjustment_factors(
+        frame: pd.DataFrame, symbol: str
+    ) -> list[QualityIssue]:
+        issues: list[QualityIssue] = []
+        duplicate_count = int(
+            frame.duplicated(["symbol", "effective_date"]).sum()
+        )
+        if duplicate_count:
+            issues.append(
+                QualityIssue(
+                    "adjustment_factors",
+                    "unique_symbol_date",
+                    "blocking",
+                    f"{symbol} 复权因子日期重复",
+                    duplicate_count,
+                )
+            )
+        for column in ["qfq_factor", "hfq_factor"]:
+            invalid_count = int(
+                (frame[column].notna() & (frame[column] <= 0)).sum()
+            )
+            if invalid_count:
+                issues.append(
+                    QualityIssue(
+                        "adjustment_factors",
+                        "positive_factor",
+                        "blocking",
+                        f"{symbol} 的 {column} 存在非正数",
+                        invalid_count,
+                    )
+                )
+            null_count = int(frame[column].isna().sum())
+            if null_count:
+                issues.append(
+                    QualityIssue(
+                        "adjustment_factors",
+                        "factor_not_null",
+                        "warning",
+                        f"{symbol} 的 {column} 存在空值",
+                        null_count,
+                    )
+                )
+        return issues
+
+    def run(self, mode: str = "incremental") -> dict[str, Any]:
+        if mode not in {"full", "incremental"}:
+            raise ValueError("mode must be one of: full, incremental")
         ensure_directories(self.root)
         run_id = make_run_id()
         started_at = utc_now_iso()
@@ -80,6 +195,7 @@ class IngestionPipeline:
         )
         instruments = normalize_instruments(instruments_raw, run_id, ingested_at)
         issues.extend(validate_instruments(instruments))
+        daily_symbols = self._daily_symbols(instruments)
         configured_symbols = {item.symbol for item in self.config.symbols}
         available_symbols = set(instruments["symbol"])
         missing_symbols = sorted(configured_symbols - available_symbols)
@@ -126,76 +242,275 @@ class IngestionPipeline:
         expected_latest_date = calendar["trade_date"].max() if not calendar.empty else None
 
         successful_symbols = 0
-        for item in self.config.symbols:
-            self.logger.info("Downloading daily bars for %s %s", item.symbol, item.name)
-            try:
-                raw = self.provider.fetch_daily_bars(
-                    item.symbol, self.config.start_date, self.config.end_date
+        daily_checkpoint = {
+            "run_id": run_id,
+            "mode": mode,
+            "universe": self.config.daily_universe,
+            "requested_symbols": len(daily_symbols),
+            "completed_symbols": [],
+            "failed_symbols": [],
+        }
+        daily_checkpoint_path = self._checkpoint_path(run_id, "daily_bars")
+        json_dump(daily_checkpoint_path, daily_checkpoint)
+        files.append(str(daily_checkpoint_path))
+
+        pending: dict[Any, tuple[SymbolConfig, str]] = {}
+        for item in daily_symbols:
+            existing_max = self._existing_max_date(self._daily_path(item.symbol), "trade_date")
+            if (
+                mode == "incremental"
+                and existing_max is not None
+                and expected_latest_date is not None
+                and existing_max >= expected_latest_date
+            ):
+                dataset_stats[f"daily_bars:{item.symbol}"] = self._stats(
+                    pd.read_parquet(self._daily_path(item.symbol)), "trade_date"
                 )
-                files.append(
-                    str(
-                        write_raw_frame(
-                            self.root,
-                            self.config.provider,
-                            "daily_bars",
-                            run_id,
-                            item.symbol,
-                            raw,
+                daily_checkpoint["completed_symbols"].append(
+                    {"symbol": item.symbol, "status": "skipped", "last_date": str(existing_max)}
+                )
+                successful_symbols += 1
+                continue
+            if mode == "full" or existing_max is None:
+                start_date = self.config.start_date
+            else:
+                start_date = max(
+                    self.config.start_date,
+                    (existing_max + timedelta(days=1)).strftime("%Y%m%d"),
+                )
+            pending[item.symbol] = (item, start_date)
+
+        def fetch_daily(item: SymbolConfig, start_date: str) -> tuple[SymbolConfig, str, pd.DataFrame, pd.DataFrame]:
+            raw = self.provider.fetch_daily_bars(
+                item.symbol, start_date, self.config.end_date
+            )
+            frame = normalize_daily_bars(
+                raw,
+                item.symbol,
+                run_id,
+                ingested_at,
+                source=self.provider.daily_sources.get(
+                    item.symbol, "akshare.unknown"
+                ),
+            )
+            return item, start_date, raw, frame
+
+        with ThreadPoolExecutor(max_workers=self.config.max_workers) as executor:
+            futures = {
+                executor.submit(fetch_daily, item, start_date): item
+                for item, start_date in pending.values()
+            }
+            for completed_count, future in enumerate(as_completed(futures), start=1):
+                item = futures[future]
+                try:
+                    item, start_date, raw, incoming = future.result()
+                    files.append(
+                        str(
+                            write_raw_frame(
+                                self.root,
+                                self.config.provider,
+                                "daily_bars",
+                                run_id,
+                                item.symbol,
+                                raw,
+                            )
                         )
                     )
+                    existing_path = self._daily_path(item.symbol)
+                    existing = (
+                        pd.read_parquet(existing_path)
+                        if mode == "incremental" and existing_path.exists()
+                        else pd.DataFrame()
+                    )
+                    if incoming.empty and not existing.empty:
+                        frame = existing
+                        issues.append(
+                            QualityIssue(
+                                "daily_bars",
+                                "incremental_no_new_rows",
+                                "warning",
+                                f"{item.symbol} 从 {start_date} 起没有新增行情，保留已有数据",
+                            )
+                        )
+                    else:
+                        frame = self._merge_daily_bars(existing, incoming)
+                    if not frame.empty:
+                        symbol_issues = validate_bars(frame, "daily_bars", item.symbol)
+                        if (
+                            expected_latest_date
+                            and frame["trade_date"].max() < expected_latest_date
+                        ):
+                            symbol_issues.append(
+                                QualityIssue(
+                                    "daily_bars",
+                                    "latest_trade_date",
+                                    "warning",
+                                    f"{item.symbol} 最新行情 {frame['trade_date'].max()} "
+                                    f"早于交易日历 {expected_latest_date}",
+                                )
+                            )
+                        issues.extend(symbol_issues)
+                        files.append(
+                            str(
+                                write_canonical_frame(
+                                    self.root,
+                                    "daily_bars",
+                                    frame,
+                                    partition=f"symbol={item.symbol}",
+                                )
+                            )
+                        )
+                        dataset_stats[f"daily_bars:{item.symbol}"] = self._stats(
+                            frame, "trade_date"
+                        )
+                    daily_checkpoint["completed_symbols"].append(
+                        {
+                            "symbol": item.symbol,
+                            "status": "updated",
+                            "start_date": start_date,
+                            "last_date": str(frame["trade_date"].max()) if not frame.empty else None,
+                        }
+                    )
+                    successful_symbols += 1
+                    if completed_count % 25 == 0 or completed_count == len(futures):
+                        self.logger.info(
+                            "Daily bars progress: %s/%s symbols",
+                            completed_count,
+                            len(futures),
+                        )
+                        json_dump(daily_checkpoint_path, daily_checkpoint)
+                except Exception as exc:
+                    self.logger.exception("Failed to ingest %s", item.symbol)
+                    errors.append(
+                        {"dataset": "daily_bars", "subject": item.symbol, "error": str(exc)}
+                    )
+                    issues.append(
+                        QualityIssue(
+                            "daily_bars",
+                            "ingestion_success",
+                            "blocking",
+                            f"{item.symbol} 下载或标准化失败: {exc}",
+                        )
+                    )
+                    daily_checkpoint["failed_symbols"].append(
+                        {"symbol": item.symbol, "error": str(exc)}
+                    )
+                    json_dump(daily_checkpoint_path, daily_checkpoint)
+
+        json_dump(daily_checkpoint_path, daily_checkpoint)
+
+        factor_requested = 0
+        factor_successful = 0
+        if self.config.download_adjustment_factors:
+            factor_checkpoint = {
+                "run_id": run_id,
+                "mode": mode,
+                "requested_symbols": 0,
+                "completed_symbols": [],
+                "failed_symbols": [],
+            }
+            factor_checkpoint_path = self._checkpoint_path(
+                run_id, "adjustment_factors"
+            )
+            json_dump(factor_checkpoint_path, factor_checkpoint)
+            files.append(str(factor_checkpoint_path))
+            factor_pending: dict[str, SymbolConfig] = {}
+            for item in daily_symbols:
+                factor_path = self._factor_path(item.symbol)
+                if mode == "incremental" and factor_path.exists():
+                    factor_frame = pd.read_parquet(factor_path)
+                    dataset_stats[f"adjustment_factors:{item.symbol}"] = self._stats(
+                        factor_frame, "effective_date"
+                    )
+                    factor_checkpoint["completed_symbols"].append(
+                        {"symbol": item.symbol, "status": "skipped"}
+                    )
+                    factor_successful += 1
+                else:
+                    factor_pending[item.symbol] = item
+            factor_requested = len(daily_symbols)
+            factor_checkpoint["requested_symbols"] = factor_requested
+
+            def fetch_factors(item: SymbolConfig) -> tuple[SymbolConfig, pd.DataFrame, pd.DataFrame]:
+                raw = self.provider.fetch_adjustment_factors(
+                    item.symbol, self.config.start_date, self.config.end_date
                 )
-                frame = normalize_daily_bars(
+                frame = normalize_adjustment_factors(
                     raw,
                     item.symbol,
                     run_id,
                     ingested_at,
-                    source=self.provider.daily_sources.get(
-                        item.symbol, "akshare.unknown"
-                    ),
+                    source="akshare.stock_zh_a_daily.sina",
                 )
-                symbol_issues = validate_bars(frame, "daily_bars", item.symbol)
-                if (
-                    expected_latest_date
-                    and not frame.empty
-                    and frame["trade_date"].max() < expected_latest_date
-                ):
-                    symbol_issues.append(
-                        QualityIssue(
-                            "daily_bars",
-                            "latest_trade_date",
-                            "warning",
-                            f"{item.symbol} 最新行情 {frame['trade_date'].max()} "
-                            f"早于交易日历 {expected_latest_date}",
+                return item, raw, frame
+
+            with ThreadPoolExecutor(max_workers=self.config.max_workers) as executor:
+                futures = {
+                    executor.submit(fetch_factors, item): item
+                    for item in factor_pending.values()
+                }
+                for completed_count, future in enumerate(as_completed(futures), start=1):
+                    item = futures[future]
+                    try:
+                        item, raw, frame = future.result()
+                        files.append(
+                            str(
+                                write_raw_frame(
+                                    self.root,
+                                    self.config.provider,
+                                    "adjustment_factors",
+                                    run_id,
+                                    item.symbol,
+                                    raw,
+                                )
+                            )
                         )
-                    )
-                issues.extend(symbol_issues)
-                files.append(
-                    str(
-                        write_canonical_frame(
-                            self.root,
-                            "daily_bars",
-                            frame,
-                            partition=f"symbol={item.symbol}",
+                        if frame.empty:
+                            raise ValueError(f"{item.symbol} 没有返回复权因子")
+                        issues.extend(
+                            self._validate_adjustment_factors(frame, item.symbol)
                         )
-                    )
-                )
-                dataset_stats[f"daily_bars:{item.symbol}"] = self._stats(
-                    frame, "trade_date"
-                )
-                successful_symbols += 1
-            except Exception as exc:
-                self.logger.exception("Failed to ingest %s", item.symbol)
-                errors.append(
-                    {"dataset": "daily_bars", "subject": item.symbol, "error": str(exc)}
-                )
-                issues.append(
-                    QualityIssue(
-                        "daily_bars",
-                        "ingestion_success",
-                        "blocking",
-                        f"{item.symbol} 下载或标准化失败: {exc}",
-                    )
-                )
+                        files.append(
+                            str(
+                                write_canonical_frame(
+                                    self.root,
+                                    "adjustment_factors",
+                                    frame,
+                                    partition=f"symbol={item.symbol}",
+                                )
+                            )
+                        )
+                        dataset_stats[f"adjustment_factors:{item.symbol}"] = self._stats(
+                            frame, "effective_date"
+                        )
+                        factor_checkpoint["completed_symbols"].append(
+                            {"symbol": item.symbol, "status": "updated"}
+                        )
+                        factor_successful += 1
+                        if completed_count % 25 == 0 or completed_count == len(futures):
+                            self.logger.info(
+                                "Adjustment factors progress: %s/%s symbols",
+                                completed_count,
+                                len(futures),
+                            )
+                            json_dump(factor_checkpoint_path, factor_checkpoint)
+                    except Exception as exc:
+                        self.logger.exception(
+                            "Failed to ingest adjustment factors for %s", item.symbol
+                        )
+                        factor_checkpoint["failed_symbols"].append(
+                            {"symbol": item.symbol, "error": str(exc)}
+                        )
+                        issues.append(
+                            QualityIssue(
+                                "adjustment_factors",
+                                "ingestion_success",
+                                "warning",
+                                f"{item.symbol} 复权因子下载或标准化失败: {exc}",
+                            )
+                        )
+                        json_dump(factor_checkpoint_path, factor_checkpoint)
+            json_dump(factor_checkpoint_path, factor_checkpoint)
 
         for item in self.config.indices:
             self.logger.info("Downloading index bars for %s %s", item.symbol, item.name)
@@ -318,10 +633,13 @@ class IngestionPipeline:
             "status": status,
             "provider": self.config.provider,
             "provider_version": self.provider.version,
+            "mode": mode,
             "config_hash": json_hash(asdict(self.config)),
             "config": asdict(self.config),
             "successful_symbols": successful_symbols,
-            "requested_symbols": len(self.config.symbols),
+            "requested_symbols": len(daily_symbols),
+            "successful_factor_symbols": factor_successful,
+            "requested_factor_symbols": factor_requested,
             "quality_summary": summary,
             "dataset_stats": dataset_stats,
             "errors": errors,
@@ -340,6 +658,6 @@ class IngestionPipeline:
             run_id,
             status,
             successful_symbols,
-            len(self.config.symbols),
+            len(daily_symbols),
         )
         return manifest

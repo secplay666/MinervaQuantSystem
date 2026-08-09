@@ -245,6 +245,56 @@ def normalize_index_bars(
     )
 
 
+def normalize_adjustment_factors(
+    raw: pd.DataFrame,
+    symbol: str,
+    run_id: str,
+    ingested_at: str,
+    source: str = "akshare.stock_zh_a_daily.sina",
+) -> pd.DataFrame:
+    """Normalize AKShare's event-style qfq/hfq factor response.
+
+    The provider returns one row per factor change, plus a 1900-01-01
+    baseline row.  We retain the baseline because DuckDB ASOF joins use it
+    when calculating adjusted prices for the earliest available bar.
+    """
+    if raw.empty:
+        return pd.DataFrame()
+    required = {"date", "qfq_factor", "hfq_factor"}
+    if not required.issubset(raw.columns):
+        raise KeyError(
+            f"Unsupported adjustment factor columns: {list(raw.columns)}"
+        )
+    frame = raw[["date", "qfq_factor", "hfq_factor"]].copy()
+    frame = frame.rename(columns={"date": "effective_date"})
+    frame["effective_date"] = pd.to_datetime(
+        frame["effective_date"], errors="coerce"
+    ).dt.date
+    for column in ["qfq_factor", "hfq_factor"]:
+        frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    frame["symbol"] = symbol
+    frame["source"] = source
+    frame["ingested_at"] = ingested_at
+    frame["run_id"] = run_id
+    frame["schema_version"] = SCHEMA_VERSION
+    return (
+        frame.dropna(subset=["effective_date"])
+        .drop_duplicates(["symbol", "effective_date"], keep="last")
+        .sort_values(["symbol", "effective_date"], ignore_index=True)[
+            [
+                "symbol",
+                "effective_date",
+                "qfq_factor",
+                "hfq_factor",
+                "source",
+                "ingested_at",
+                "run_id",
+                "schema_version",
+            ]
+        ]
+    )
+
+
 def normalize_market_snapshot(
     raw: pd.DataFrame,
     snapshot_date: str,

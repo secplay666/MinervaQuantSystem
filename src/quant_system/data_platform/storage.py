@@ -55,6 +55,7 @@ def build_duckdb_catalog(root: Path, manifest: dict[str, Any]) -> Path:
         "instruments": root / "data" / "canonical" / "instruments",
         "trading_calendar": root / "data" / "canonical" / "trading_calendar",
         "daily_bars": root / "data" / "canonical" / "daily_bars",
+        "adjustment_factors": root / "data" / "canonical" / "adjustment_factors",
         "index_bars": root / "data" / "canonical" / "index_bars",
         "market_snapshot": root / "data" / "canonical" / "market_snapshot",
     }
@@ -105,6 +106,35 @@ def build_duckdb_catalog(root: Path, manifest: dict[str, Any]) -> Path:
                 """,
                 [dataset, len(files), row_count, str(directory.resolve())],
             )
+        if dataset_paths["daily_bars"].exists() and dataset_paths[
+            "adjustment_factors"
+        ].exists():
+            con.execute(
+                """
+                CREATE OR REPLACE VIEW daily_bars_adjusted AS
+                WITH bars_with_factors AS (
+                    SELECT
+                        b.*,
+                        COALESCE(f.qfq_factor, 1.0) AS qfq_factor,
+                        COALESCE(f.hfq_factor, 1.0) AS hfq_factor
+                    FROM daily_bars AS b
+                    ASOF LEFT JOIN adjustment_factors AS f
+                      ON b.symbol = f.symbol
+                     AND b.trade_date >= f.effective_date
+                )
+                SELECT
+                    *,
+                    open * qfq_factor AS qfq_open,
+                    high * qfq_factor AS qfq_high,
+                    low * qfq_factor AS qfq_low,
+                    close * qfq_factor AS qfq_close,
+                    open * hfq_factor AS hfq_open,
+                    high * hfq_factor AS hfq_high,
+                    low * hfq_factor AS hfq_low,
+                    close * hfq_factor AS hfq_close
+                FROM bars_with_factors
+                """
+            )
         con.execute("DELETE FROM ingestion_runs WHERE run_id = ?", [manifest["run_id"]])
         con.execute(
             """
@@ -122,4 +152,3 @@ def build_duckdb_catalog(root: Path, manifest: dict[str, Any]) -> Path:
             ],
         )
     return database_path
-

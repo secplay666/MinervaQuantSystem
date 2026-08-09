@@ -26,7 +26,7 @@ def _configure_logging(verbose: bool = False) -> None:
 def command_ingest(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     config = DataPlatformConfig.load(Path(args.config).resolve())
-    manifest = IngestionPipeline(root, config).run()
+    manifest = IngestionPipeline(root, config).run(mode=args.mode)
     print(json.dumps(manifest, ensure_ascii=False, indent=2, default=str))
     return 0 if manifest["status"] == "complete" else 2
 
@@ -64,6 +64,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     ingest = subparsers.add_parser("ingest", help="download and normalize data")
     ingest.add_argument("--config", default="configs/data_platform.json")
+    ingest.add_argument(
+        "--mode",
+        choices=("full", "incremental"),
+        default="incremental",
+        help="full replaces each selected history; incremental resumes from local partitions",
+    )
     ingest.set_defaults(handler=command_ingest)
 
     catalog = subparsers.add_parser("catalog", help="show available datasets")
@@ -84,4 +90,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

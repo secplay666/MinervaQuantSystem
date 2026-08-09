@@ -21,10 +21,15 @@ class MarketDataProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def fetch_adjustment_factors(
+        self, symbol: str, start_date: str, end_date: str
+    ) -> pd.DataFrame:
+        raise NotImplementedError
+
+    @abstractmethod
     def fetch_index_daily(self, symbol: str) -> pd.DataFrame:
         raise NotImplementedError
 
     @abstractmethod
     def fetch_market_snapshot(self) -> pd.DataFrame:
         raise NotImplementedError
-

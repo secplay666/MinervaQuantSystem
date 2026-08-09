@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from collections.abc import Callable
 from typing import TypeVar
@@ -32,6 +33,7 @@ class AkShareProvider(MarketDataProvider):
         self.snapshot_source = "akshare.unknown"
         self._eastmoney_daily_available = True
         self._eastmoney_index_available = True
+        self._source_lock = threading.Lock()
         if actual_version != expected_version:
             raise RuntimeError(
                 f"AKShare version mismatch: expected {expected_version}, "
@@ -75,7 +77,9 @@ class AkShareProvider(MarketDataProvider):
     def fetch_daily_bars(
         self, symbol: str, start_date: str, end_date: str
     ) -> pd.DataFrame:
-        if self._eastmoney_daily_available:
+        with self._source_lock:
+            eastmoney_available = self._eastmoney_daily_available
+        if eastmoney_available:
             try:
                 frame = self._call(
                     "stock_zh_a_hist",
@@ -90,7 +94,8 @@ class AkShareProvider(MarketDataProvider):
                 self.daily_sources[symbol] = "akshare.stock_zh_a_hist.eastmoney"
                 return frame
             except RuntimeError as exc:
-                self._eastmoney_daily_available = False
+                with self._source_lock:
+                    self._eastmoney_daily_available = False
                 self.logger.warning(
                     "Eastmoney daily bars unavailable; using Tencent for the "
                     "remaining run. First affected symbol=%s: %s",
@@ -109,8 +114,44 @@ class AkShareProvider(MarketDataProvider):
         self.daily_sources[symbol] = "akshare.stock_zh_a_hist_tx.tencent"
         return frame
 
+    def fetch_adjustment_factors(
+        self, symbol: str, start_date: str, end_date: str
+    ) -> pd.DataFrame:
+        market_prefix = "sh" if symbol.startswith(("5", "6")) else (
+            "bj" if symbol.startswith(("4", "8", "9")) else "sz"
+        )
+        provider_symbol = f"{market_prefix}{symbol}"
+        qfq = self._call(
+            "stock_zh_a_daily_qfq_factor",
+            ak.stock_zh_a_daily,
+            symbol=provider_symbol,
+            start_date="19900101",
+            end_date=end_date,
+            adjust="qfq-factor",
+        )
+        hfq = self._call(
+            "stock_zh_a_daily_hfq_factor",
+            ak.stock_zh_a_daily,
+            symbol=provider_symbol,
+            start_date="19900101",
+            end_date=end_date,
+            adjust="hfq-factor",
+        )
+        qfq = qfq.rename(columns={"qfq_factor": "qfq_factor"})
+        hfq = hfq.rename(columns={"hfq_factor": "hfq_factor"})
+        if "date" not in qfq.columns or "date" not in hfq.columns:
+            raise RuntimeError(
+                f"Unexpected adjustment factor columns for {symbol}: "
+                f"qfq={list(qfq.columns)}, hfq={list(hfq.columns)}"
+            )
+        frame = pd.merge(qfq, hfq, on="date", how="outer")
+        frame.insert(0, "symbol", symbol)
+        return frame
+
     def fetch_index_daily(self, symbol: str) -> pd.DataFrame:
-        if self._eastmoney_index_available:
+        with self._source_lock:
+            eastmoney_available = self._eastmoney_index_available
+        if eastmoney_available:
             try:
                 frame = self._call(
                     "stock_zh_index_daily_em",
@@ -122,7 +163,8 @@ class AkShareProvider(MarketDataProvider):
                 )
                 return frame
             except RuntimeError as exc:
-                self._eastmoney_index_available = False
+                with self._source_lock:
+                    self._eastmoney_index_available = False
                 self.logger.warning(
                     "Eastmoney index bars unavailable; using Tencent for the "
                     "remaining run. First affected symbol=%s: %s",
