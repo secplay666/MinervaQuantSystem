@@ -217,7 +217,7 @@ class IngestionPipeline:
                     raw,
                     item.symbol,
                     item.name,
-                    self.config.start_date,
+                    self.config.index_start_date,
                     self.config.end_date,
                     run_id,
                     ingested_at,

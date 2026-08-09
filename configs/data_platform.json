@@ -3,6 +3,7 @@
   "provider_version": "1.18.78",
   "market": "A_SHARE",
   "start_date": "20200101",
+  "index_start_date": "19900101",
   "end_date": null,
   "request_pause_seconds": 0.35,
   "max_retries": 4,
@@ -37,4 +38,3 @@
     {"symbol": "sh000905", "name": "中证500"}
   ]
 }
-
