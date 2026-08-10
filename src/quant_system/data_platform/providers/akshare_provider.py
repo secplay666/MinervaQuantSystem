@@ -29,6 +29,7 @@ class AkShareProvider(MarketDataProvider):
         self.logger = logging.getLogger(self.__class__.__name__)
         actual_version = getattr(ak, "__version__", "unknown")
         self.daily_sources: dict[str, str] = {}
+        self.adjustment_sources: dict[str, str] = {}
         self.index_sources: dict[str, str] = {}
         self.snapshot_source = "akshare.unknown"
         self._eastmoney_daily_available = True
@@ -139,32 +140,80 @@ class AkShareProvider(MarketDataProvider):
         self, symbol: str, start_date: str, end_date: str
     ) -> pd.DataFrame:
         provider_symbol = self._with_market_prefix(symbol)
-        qfq = self._call(
-            "stock_zh_a_daily_qfq_factor",
-            ak.stock_zh_a_daily,
-            symbol=provider_symbol,
-            start_date="19900101",
-            end_date=end_date,
-            adjust="qfq-factor",
-        )
-        hfq = self._call(
-            "stock_zh_a_daily_hfq_factor",
-            ak.stock_zh_a_daily,
-            symbol=provider_symbol,
-            start_date="19900101",
-            end_date=end_date,
-            adjust="hfq-factor",
-        )
-        qfq = qfq.rename(columns={"qfq_factor": "qfq_factor"})
-        hfq = hfq.rename(columns={"hfq_factor": "hfq_factor"})
-        if "date" not in qfq.columns or "date" not in hfq.columns:
-            raise RuntimeError(
-                f"Unexpected adjustment factor columns for {symbol}: "
-                f"qfq={list(qfq.columns)}, hfq={list(hfq.columns)}"
+        try:
+            qfq = self._call(
+                "stock_zh_a_daily_qfq_factor",
+                ak.stock_zh_a_daily,
+                symbol=provider_symbol,
+                start_date="19900101",
+                end_date=end_date,
+                adjust="qfq-factor",
             )
-        frame = pd.merge(qfq, hfq, on="date", how="outer")
-        frame.insert(0, "symbol", symbol)
-        return frame
+            hfq = self._call(
+                "stock_zh_a_daily_hfq_factor",
+                ak.stock_zh_a_daily,
+                symbol=provider_symbol,
+                start_date="19900101",
+                end_date=end_date,
+                adjust="hfq-factor",
+            )
+            if "date" not in qfq.columns or "date" not in hfq.columns:
+                raise RuntimeError(
+                    f"Unexpected adjustment factor columns for {symbol}: "
+                    f"qfq={list(qfq.columns)}, hfq={list(hfq.columns)}"
+                )
+            frame = pd.merge(qfq, hfq, on="date", how="outer")
+            frame.insert(0, "symbol", symbol)
+            self.adjustment_sources[symbol] = "akshare.stock_zh_a_daily.sina"
+            return frame
+        except RuntimeError as exc:
+            self.logger.warning(
+                "Sina adjustment factors unavailable for %s; deriving from Tencent: %s",
+                symbol,
+                exc,
+            )
+            raw_frames = {}
+            for adjust in ("", "qfq", "hfq"):
+                raw_frames[adjust or "raw"] = self._call(
+                    "stock_zh_a_hist_tx_adjusted",
+                    ak.stock_zh_a_hist_tx,
+                    symbol=provider_symbol,
+                    start_date="19900101",
+                    end_date=end_date,
+                    adjust=adjust,
+                    timeout=30,
+                )
+            frame = self._derive_adjustment_factors(
+                raw_frames["raw"], raw_frames["qfq"], raw_frames["hfq"]
+            )
+            frame.insert(0, "symbol", symbol)
+            self.adjustment_sources[symbol] = (
+                "akshare.stock_zh_a_hist_tx.tencent.derived"
+            )
+            return frame
+
+    @staticmethod
+    def _derive_adjustment_factors(
+        raw: pd.DataFrame, qfq: pd.DataFrame, hfq: pd.DataFrame
+    ) -> pd.DataFrame:
+        def closes(frame: pd.DataFrame, column: str) -> pd.DataFrame:
+            if not {"date", "close"}.issubset(frame.columns):
+                raise RuntimeError(
+                    f"Unexpected Tencent adjusted columns: {list(frame.columns)}"
+                )
+            return frame[["date", "close"]].rename(columns={"close": column})
+
+        frame = closes(raw, "raw_close")
+        frame = frame.merge(closes(qfq, "qfq_close"), on="date", how="inner")
+        frame = frame.merge(closes(hfq, "hfq_close"), on="date", how="inner")
+        raw_close = pd.to_numeric(frame["raw_close"], errors="coerce")
+        frame["qfq_factor"] = pd.to_numeric(
+            frame["qfq_close"], errors="coerce"
+        ).div(raw_close.where(raw_close != 0))
+        frame["hfq_factor"] = pd.to_numeric(
+            frame["hfq_close"], errors="coerce"
+        ).div(raw_close.where(raw_close != 0))
+        return frame[["date", "qfq_factor", "hfq_factor"]]
 
     def fetch_index_daily(self, symbol: str) -> pd.DataFrame:
         with self._source_lock:

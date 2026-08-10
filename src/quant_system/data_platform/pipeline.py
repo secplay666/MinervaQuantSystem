@@ -440,7 +440,9 @@ class IngestionPipeline:
                     item.symbol,
                     run_id,
                     ingested_at,
-                    source="akshare.stock_zh_a_daily.sina",
+                    source=self.provider.adjustment_sources.get(
+                        item.symbol, "akshare.unknown"
+                    ),
                 )
                 return item, raw, frame
 
