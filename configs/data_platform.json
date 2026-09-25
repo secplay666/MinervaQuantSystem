@@ -4,40 +4,161 @@
   "market": "A_SHARE",
   "start_date": "20200101",
   "index_start_date": "19900101",
-  "end_date": null,
   "request_pause_seconds": 0.35,
   "max_retries": 4,
   "max_workers": 12,
   "daily_universe": "all_a_share",
   "download_adjustment_factors": true,
+  "http_timeout_seconds": 30,
+  "session_final_time": "16:00",
+  "overlap_sessions": 3,
+  "min_latest_coverage": 0.98,
+  "min_factor_success_ratio": 0.99,
+  "max_listing_shrink_ratio": 0.02,
+  "download_status_history": true,
+  "suspension_backfill_start": "20230103",
+  "manual_delistings": [
+    {
+      "symbol": "920680",
+      "name": "广道退",
+      "list_date": "20211115",
+      "delist_date": "20260105",
+      "source": "北交所终止上市公告；一财 2026-01-05"
+    },
+    {
+      "symbol": "920305",
+      "name": "云创退",
+      "list_date": "20210826",
+      "delist_date": "20260730",
+      "source": "北交所终止上市公告；央广财经 2026-07-29（精选层挂牌 2021-08-26）"
+    }
+  ],
   "symbols": [
-    {"symbol": "000001", "name": "平安银行", "group": "SZSE_MAIN"},
-    {"symbol": "000002", "name": "万科A", "group": "SZSE_MAIN"},
-    {"symbol": "000333", "name": "美的集团", "group": "SZSE_MAIN"},
-    {"symbol": "000651", "name": "格力电器", "group": "SZSE_MAIN"},
-    {"symbol": "000858", "name": "五粮液", "group": "SZSE_MAIN"},
-    {"symbol": "002415", "name": "海康威视", "group": "SZSE_MAIN"},
-    {"symbol": "002594", "name": "比亚迪", "group": "SZSE_MAIN"},
-    {"symbol": "002714", "name": "牧原股份", "group": "SZSE_MAIN"},
-    {"symbol": "300059", "name": "东方财富", "group": "CHINEXT"},
-    {"symbol": "300750", "name": "宁德时代", "group": "CHINEXT"},
-    {"symbol": "600000", "name": "浦发银行", "group": "SSE_MAIN"},
-    {"symbol": "600036", "name": "招商银行", "group": "SSE_MAIN"},
-    {"symbol": "600519", "name": "贵州茅台", "group": "SSE_MAIN"},
-    {"symbol": "600900", "name": "长江电力", "group": "SSE_MAIN"},
-    {"symbol": "601318", "name": "中国平安", "group": "SSE_MAIN"},
-    {"symbol": "601398", "name": "工商银行", "group": "SSE_MAIN"},
-    {"symbol": "601857", "name": "中国石油", "group": "SSE_MAIN"},
-    {"symbol": "603259", "name": "药明康德", "group": "SSE_MAIN"},
-    {"symbol": "688981", "name": "中芯国际", "group": "STAR"},
-    {"symbol": "688041", "name": "海光信息", "group": "STAR"}
+    {
+      "symbol": "000001",
+      "name": "平安银行",
+      "group": "SZSE_MAIN"
+    },
+    {
+      "symbol": "000002",
+      "name": "万科A",
+      "group": "SZSE_MAIN"
+    },
+    {
+      "symbol": "000333",
+      "name": "美的集团",
+      "group": "SZSE_MAIN"
+    },
+    {
+      "symbol": "000651",
+      "name": "格力电器",
+      "group": "SZSE_MAIN"
+    },
+    {
+      "symbol": "000858",
+      "name": "五粮液",
+      "group": "SZSE_MAIN"
+    },
+    {
+      "symbol": "002415",
+      "name": "海康威视",
+      "group": "SZSE_MAIN"
+    },
+    {
+      "symbol": "002594",
+      "name": "比亚迪",
+      "group": "SZSE_MAIN"
+    },
+    {
+      "symbol": "002714",
+      "name": "牧原股份",
+      "group": "SZSE_MAIN"
+    },
+    {
+      "symbol": "300059",
+      "name": "东方财富",
+      "group": "CHINEXT"
+    },
+    {
+      "symbol": "300750",
+      "name": "宁德时代",
+      "group": "CHINEXT"
+    },
+    {
+      "symbol": "600000",
+      "name": "浦发银行",
+      "group": "SSE_MAIN"
+    },
+    {
+      "symbol": "600036",
+      "name": "招商银行",
+      "group": "SSE_MAIN"
+    },
+    {
+      "symbol": "600519",
+      "name": "贵州茅台",
+      "group": "SSE_MAIN"
+    },
+    {
+      "symbol": "600900",
+      "name": "长江电力",
+      "group": "SSE_MAIN"
+    },
+    {
+      "symbol": "601318",
+      "name": "中国平安",
+      "group": "SSE_MAIN"
+    },
+    {
+      "symbol": "601398",
+      "name": "工商银行",
+      "group": "SSE_MAIN"
+    },
+    {
+      "symbol": "601857",
+      "name": "中国石油",
+      "group": "SSE_MAIN"
+    },
+    {
+      "symbol": "603259",
+      "name": "药明康德",
+      "group": "SSE_MAIN"
+    },
+    {
+      "symbol": "688981",
+      "name": "中芯国际",
+      "group": "STAR"
+    },
+    {
+      "symbol": "688041",
+      "name": "海光信息",
+      "group": "STAR"
+    }
   ],
   "indices": [
-    {"symbol": "sh000001", "name": "上证指数"},
-    {"symbol": "sz399001", "name": "深证成指"},
-    {"symbol": "sh000300", "name": "沪深300"},
-    {"symbol": "sz399006", "name": "创业板指"},
-    {"symbol": "sh000688", "name": "科创50"},
-    {"symbol": "sh000905", "name": "中证500"}
+    {
+      "symbol": "sh000001",
+      "name": "上证指数"
+    },
+    {
+      "symbol": "sz399001",
+      "name": "深证成指"
+    },
+    {
+      "symbol": "sh000300",
+      "name": "沪深300"
+    },
+    {
+      "symbol": "sz399006",
+      "name": "创业板指"
+    },
+    {
+      "symbol": "sh000688",
+      "name": "科创50"
+    },
+    {
+      "symbol": "sh000905",
+      "name": "中证500"
+    }
   ]
 }

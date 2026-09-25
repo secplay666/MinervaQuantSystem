@@ -11,8 +11,12 @@ data/canonical/
 data/reports/
 data/manifests/
 data/checkpoints/
+data/staging/
+data/quarantine/
+data/archive/
 data/*.duckdb
 data/*.duckdb.wal
+data/*.duckdb.building*
 
 # Keep directory placeholders
 !data/.gitkeep

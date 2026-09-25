@@ -7,9 +7,12 @@ import sys
 from pathlib import Path
 
 import duckdb
+import pandas as pd
 
+from .audit import run_audit
 from .config import DataPlatformConfig
 from .pipeline import IngestionPipeline
+from .storage import CatalogError, build_duckdb_catalog, read_canonical
 
 
 def _root_from_file() -> Path:
@@ -23,23 +26,60 @@ def _configure_logging(verbose: bool = False) -> None:
     )
 
 
+def _print_json(payload: object) -> None:
+    print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+
+
+def _load_config(args: argparse.Namespace) -> DataPlatformConfig:
+    return DataPlatformConfig.load(Path(args.config).resolve())
+
+
 def command_ingest(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
-    config = DataPlatformConfig.load(Path(args.config).resolve())
-    manifest = IngestionPipeline(root, config).run(mode=args.mode)
-    print(json.dumps(manifest, ensure_ascii=False, indent=2, default=str))
+    manifest = IngestionPipeline(root, _load_config(args)).run(mode=args.mode)
+    _print_json({key: manifest.get(key) for key in (
+        "run_id", "status", "mode", "expected_latest_date", "quality_summary", "counters",
+        "data_version", "catalog_status", "quality_report_markdown", "fatal_error")})
     return 0 if manifest["status"] == "complete" else 2
 
 
+def command_rebuild(args: argparse.Namespace) -> int:
+    from .rebuild import rebuild_canonical
+
+    report = rebuild_canonical(Path(args.root).resolve(), _load_config(args), apply=args.apply)
+    _print_json({key: report.get(key) for key in (
+        "run_id", "status", "applied", "staging", "archived_to", "counters", "quality_summary",
+        "diff", "audit")})
+    return 0 if report["status"] == "complete" else 2
+
+
+def command_audit(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    config = _load_config(args)
+    calendar = read_canonical(root, "trading_calendar")
+    if calendar is None or calendar.empty:
+        print("No canonical trading calendar; run ingest first.", file=sys.stderr)
+        return 1
+    result = run_audit(root, max(calendar["trade_date"]), pd.to_datetime(config.start_date).date(),
+                       config.min_latest_coverage, "adhoc_audit")
+    _print_json({"summary": result.summary, "issues": [issue.to_dict() for issue in result.issues]})
+    return 2 if any(issue.severity == "blocking" for issue in result.issues) else 0
+
+
 def command_catalog(args: argparse.Namespace) -> int:
-    database = Path(args.root).resolve() / "data" / "market.duckdb"
+    root = Path(args.root).resolve()
+    if args.rebuild:
+        try:
+            print(f"Catalog rebuilt: {build_duckdb_catalog(root)}")
+        except CatalogError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+    database = root / "data" / "market.duckdb"
     if not database.exists():
         print(f"Database does not exist: {database}", file=sys.stderr)
         return 1
     with duckdb.connect(str(database), read_only=True) as con:
-        rows = con.execute(
-            "SELECT * FROM data_catalog ORDER BY dataset"
-        ).fetchdf()
+        rows = con.execute("SELECT * FROM data_catalog ORDER BY dataset").fetchdf()
     print(rows.to_string(index=False))
     return 0
 
@@ -72,7 +112,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ingest.set_defaults(handler=command_ingest)
 
+    rebuild = subparsers.add_parser(
+        "rebuild", help="regenerate the canonical layer from raw data (dry run unless --apply)"
+    )
+    rebuild.add_argument("--config", default="configs/data_platform.json")
+    rebuild.add_argument("--apply", action="store_true",
+                         help="archive the live canonical layer and swap the rebuilt one in")
+    rebuild.set_defaults(handler=command_rebuild)
+
+    audit = subparsers.add_parser("audit", help="run whole-dataset quality checks")
+    audit.add_argument("--config", default="configs/data_platform.json")
+    audit.set_defaults(handler=command_audit)
+
     catalog = subparsers.add_parser("catalog", help="show available datasets")
+    catalog.add_argument("--rebuild", action="store_true", help="rebuild market.duckdb from canonical parquet")
     catalog.set_defaults(handler=command_catalog)
 
     query = subparsers.add_parser("query", help="run a read-only DuckDB query")
