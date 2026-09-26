@@ -18,6 +18,14 @@ class SymbolConfig:
 class IndexConfig:
     symbol: str
     name: str
+    source: str = "tencent"  # tencent (price indices) | csindex (e.g. total-return H00300)
+    kind: str = "price"      # price | total_return
+
+    def __post_init__(self) -> None:
+        if self.source not in {"tencent", "csindex"}:
+            raise ValueError(f"index {self.symbol}: unknown source {self.source!r}")
+        if self.kind not in {"price", "total_return"}:
+            raise ValueError(f"index {self.symbol}: unknown kind {self.kind!r}")
 
 
 @dataclass(frozen=True)
@@ -55,6 +63,10 @@ class DataPlatformConfig:
     download_status_history: bool = True
     suspension_backfill_start: str = "20230103"
     manual_delistings: tuple[ManualDelisting, ...] = field(default_factory=tuple)
+    download_corporate: bool = True
+    download_classification: bool = True
+    sw_mapping_path: str = "configs/industry/sw2014_to_sw2021_l1.json"
+    index_weight_symbols: tuple[str, ...] = ("000300", "000905", "000852")
     config_hash: str = ""
 
     @classmethod
@@ -111,6 +123,11 @@ class DataPlatformConfig:
                 )
                 for item in payload.get("manual_delistings", [])
             ),
+            download_corporate=bool(payload.get("download_corporate", True)),
+            download_classification=bool(payload.get("download_classification", True)),
+            sw_mapping_path=str(payload.get("sw_mapping_path", "configs/industry/sw2014_to_sw2021_l1.json")),
+            index_weight_symbols=tuple(str(item) for item in payload.get("index_weight_symbols",
+                                                                         ("000300", "000905", "000852"))),
             # Hash the file payload, not runtime-resolved values, so an
             # unchanged config keeps the same hash across days.
             config_hash=json_hash(payload),

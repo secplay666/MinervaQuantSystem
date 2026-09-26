@@ -48,6 +48,7 @@ SOURCE_SINA_DAILY = "akshare.stock_zh_a_daily.sina"
 SOURCE_SINA_RAW_DAILY = "akshare.stock_zh_a_cdr_daily.sina"
 SOURCE_TENCENT_INDEX = "akshare.stock_zh_a_hist_tx.tencent"
 SOURCE_EASTMONEY_INDEX = "akshare.stock_zh_index_daily_em.eastmoney"
+SOURCE_CSINDEX_INDEX = "akshare.stock_zh_index_hist_csindex.csindex"
 
 DAILY_BAR_COLUMNS = [
     "symbol",
@@ -447,7 +448,9 @@ def normalize_index_bars(
         "volume": ("volume", "成交量"),
     }
     resolved = {key: _first_column(raw, values) for key, values in aliases.items()}
-    if "tencent" in source:
+    if "csindex" in source:
+        scale = 1.0  # CSIndex volume is in shares, amount in 100 million CNY
+    elif "tencent" in source:
         # Tencent index volume is in lots; AKShare only converts codes outside
         # its sh000/sz399 exemption, so mirror that rule.
         scale = 100.0 if symbol.startswith(("sh000", "sz399")) else 1.0
@@ -465,11 +468,18 @@ def normalize_index_bars(
             ).round().astype("Int64"),
         }
     )
-    amount_column = next((item for item in ("amount", "成交额") if item in raw.columns), None)
+    amount_column = next((item for item in ("amount", "成交额", "成交金额") if item in raw.columns), None)
     frame["turnover_cny"] = (
         pd.to_numeric(raw[amount_column], errors="coerce") if amount_column else np.nan
     )
+    if "csindex" in source:
+        frame["turnover_cny"] = frame["turnover_cny"] * 1e8
     frame["volume_scale"] = scale
+    # CSIndex total-return series publish only the close; open/high/low are
+    # set to it so bar validation still applies (only the close is used).
+    close_only = frame[["open", "high", "low"]].isna().all(axis=1) & frame["close"].notna()
+    for column in ("open", "high", "low"):
+        frame.loc[close_only, column] = frame.loc[close_only, "close"]
     frame = frame.dropna(subset=["trade_date"])
     start = pd.to_datetime(start_date).date()
     end = pd.to_datetime(end_date).date()

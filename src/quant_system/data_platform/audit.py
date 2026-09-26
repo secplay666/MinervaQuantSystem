@@ -188,6 +188,7 @@ def _audit(
     _check_factor_freshness(con, root, expected_latest, result)
     _check_calendar_against_index(con, root, start_date, expected_latest, result)
     _check_risk_history(root, result)
+    _check_reference_coverage(con, root, expected_latest, result)
     return result
 
 
@@ -583,3 +584,36 @@ def _check_risk_history(root: Path, result: AuditResult) -> None:
             "risk_warning_intervals", "consistent_with_price_limits", "warning",
             f"上交所主板风险警示区间内有 {len(breaks)} 个交易日超出 5% 涨跌幅: " + ", ".join(breaks[:20]),
             len(breaks)))
+
+
+def _check_reference_coverage(con: duckdb.DuckDBPyConnection, root: Path, expected_latest: date,
+                              result: AuditResult) -> None:
+    """Stage-3 reference data: every stock trading on the latest session
+    should have a share-capital history and an industry class."""
+    traded = {row[0] for row in con.execute(
+        "SELECT DISTINCT symbol FROM bars WHERE trade_date = ?", [expected_latest]).fetchall()}
+    if not traded:
+        return
+    checks = []
+    shares_path = canonical_path(root, "share_capital")
+    if shares_path.exists():
+        shares = pd.read_parquet(shares_path, columns=["symbol", "change_date"])
+        known = set(shares.loc[shares["change_date"] <= expected_latest, "symbol"])
+        checks.append(("share_capital", "coverage_latest_session", sorted(traded - known), "没有股本记录"))
+    industry_path = canonical_path(root, "industry_sw")
+    if industry_path.exists():
+        industry = pd.read_parquet(industry_path, columns=["symbol", "start_date", "end_date", "l1_code"])
+        active = industry[(industry["start_date"] <= expected_latest)
+                          & (industry["end_date"].isna() | (industry["end_date"] > expected_latest))
+                          & (industry["l1_code"] != "000000")]
+        checks.append(("industry_sw", "coverage_latest_session", sorted(traded - set(active["symbol"])),
+                       "没有申万行业分类"))
+    summary = {}
+    for dataset, rule, missing, text in checks:
+        summary[dataset] = {"traded": len(traded), "missing": len(missing)}
+        if missing:
+            result.issues.append(QualityIssue(
+                dataset, rule, "warning",
+                f"{expected_latest} 有行情的 {len(missing)} 只股票{text}: " + ", ".join(missing[:30]), len(missing)))
+    if summary:
+        result.summary["reference_coverage"] = summary

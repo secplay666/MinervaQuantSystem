@@ -26,6 +26,17 @@ import pandas as pd
 
 from .audit import run_audit
 from .config import DataPlatformConfig
+from .corporate import (
+    load_sw2014_mapping,
+    merge_dividends,
+    merge_fetch_log,
+    merge_index_weights,
+    merge_share_capital,
+    normalize_dividends,
+    normalize_index_weights,
+    normalize_share_capital,
+    normalize_sw_classification,
+)
 from .normalization import (
     SOURCE_EASTMONEY_DAILY,
     SOURCE_EASTMONEY_INDEX,
@@ -137,6 +148,8 @@ class CanonicalRebuilder:
         self._rebuild_index_bars(calendar_end)
         self._rebuild_snapshots()
         self._rebuild_status_history(master)
+        self._rebuild_corporate()
+        self._rebuild_classification()
         audit = run_audit(self.staging, calendar_end, self.start_date,
                           self.config.min_latest_coverage, f"rebuild_{self.rebuild_id}")
         if not audit.gaps.empty:
@@ -328,6 +341,8 @@ class CanonicalRebuilder:
                 )
                 part = normalize_index_bars(raw, symbol, names.get(symbol, symbol), index_start, calendar_end,
                                             run_id, run_id_to_iso(run_id), source)
+                if "csindex" in source:  # same session filter as ingestion
+                    part = part[part["trade_date"].isin(set(self.open_dates))].reset_index(drop=True)
                 merged = merge_index_bars(merged, part)
             if merged is not None and not merged.empty:
                 write_canonical_frame(self.staging, "index_bars", merged, partition=f"symbol={symbol}")
@@ -424,6 +439,47 @@ class CanonicalRebuilder:
                                                          keep="last")
             write_canonical_frame(self.staging, "bulletin_fetch_log", log)
         return bulletins, run_ids
+
+    def _rebuild_corporate(self) -> None:
+        """Replay share-capital and dividend windows in run order (the same
+        append-only merges as ingestion), and rebuild their fetch log."""
+        log_rows: list[dict[str, Any]] = []
+        for dataset in ("share_capital", "dividends"):
+            merged = None
+            for run_id, directory in _raw_runs(self.raw_root, dataset):
+                for path in sorted(directory.glob("*.parquet")):
+                    raw = pd.read_parquet(path)
+                    if dataset == "share_capital":
+                        part = normalize_share_capital(raw, run_id, run_id_to_iso(run_id))
+                        merged = merge_share_capital(merged, part)
+                    else:
+                        report = path.stem.removeprefix("report_")
+                        part = normalize_dividends(raw, report, run_id, run_id_to_iso(run_id))
+                        merged = merge_dividends(merged, part)
+                    log_rows.append({"dataset": dataset, "window": path.stem, "rows": len(part), "run_id": run_id})
+            if merged is not None and not merged.empty:
+                write_canonical_frame(self.staging, dataset, merged)
+        if log_rows:
+            write_canonical_frame(self.staging, "corporate_fetch_log", merge_fetch_log(None, log_rows))
+
+    def _rebuild_classification(self) -> None:
+        runs = [(run_id, directory) for run_id, directory in _raw_runs(self.raw_root, "industry_sw")
+                if (directory / "history.parquet").exists() and (directory / "codes.parquet").exists()]
+        if runs:
+            run_id, directory = runs[-1]
+            mapping = load_sw2014_mapping(self.root / self.config.sw_mapping_path)
+            intervals, _ = normalize_sw_classification(
+                pd.read_parquet(directory / "history.parquet"), pd.read_parquet(directory / "codes.parquet"),
+                mapping, run_id, run_id_to_iso(run_id))
+            if not intervals.empty:
+                write_canonical_frame(self.staging, "industry_sw", intervals)
+        merged = None
+        for run_id, directory in _raw_runs(self.raw_root, "index_weights"):
+            for path in sorted(directory.glob("*.parquet")):
+                part = normalize_index_weights(pd.read_parquet(path), path.stem, run_id, run_id_to_iso(run_id))
+                merged = merge_index_weights(merged, part)
+        if merged is not None and not merged.empty:
+            write_canonical_frame(self.staging, "index_weights", merged)
 
     # ---------------------------------------------------------------- diff
 

@@ -11,7 +11,7 @@ import pandas as pd
 
 from .audit import run_audit
 from .config import DataPlatformConfig
-from .pipeline import IngestionPipeline
+from .pipeline import STEPS, IngestionPipeline
 from .storage import CatalogError, build_duckdb_catalog, read_canonical
 
 
@@ -113,7 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ingest.add_argument(
         "--steps",
-        help="comma-separated subset of: daily_bars,adjustment_factors,indices,status_history,market_snapshot "
+        help=f"comma-separated subset of: {','.join(STEPS)} "
              "(calendar, security master and the audit always run)",
     )
     ingest.set_defaults(handler=command_ingest)

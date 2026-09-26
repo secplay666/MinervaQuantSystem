@@ -159,6 +159,32 @@
     {
       "symbol": "sh000905",
       "name": "中证500"
+    },
+    {
+      "symbol": "H00300",
+      "name": "沪深300全收益",
+      "source": "csindex",
+      "kind": "total_return"
+    },
+    {
+      "symbol": "H00905",
+      "name": "中证500全收益",
+      "source": "csindex",
+      "kind": "total_return"
+    },
+    {
+      "symbol": "H00852",
+      "name": "中证1000全收益",
+      "source": "csindex",
+      "kind": "total_return"
     }
+  ],
+  "download_corporate": true,
+  "download_classification": true,
+  "sw_mapping_path": "configs/industry/sw2014_to_sw2021_l1.json",
+  "index_weight_symbols": [
+    "000300",
+    "000905",
+    "000852"
   ]
 }

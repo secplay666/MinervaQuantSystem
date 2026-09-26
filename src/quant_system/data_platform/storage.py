@@ -25,6 +25,10 @@ SINGLE_FILE_DATASETS = (
     "risk_warning_bulletins",
     "risk_warning_adjustments",
     "bar_gaps",
+    "share_capital",
+    "dividends",
+    "industry_sw",
+    "index_weights",
 )
 DATE_COLUMNS = {
     "daily_bars": "trade_date",
@@ -35,6 +39,10 @@ DATE_COLUMNS = {
     "suspension_events": "suspend_start",
     "security_name_changes": "effective_date",
     "risk_warning_bulletins": "pub_date",
+    "share_capital": "change_date",
+    "dividends": "report_date",
+    "industry_sw": "start_date",
+    "index_weights": "as_of_date",
 }
 
 
@@ -64,13 +72,21 @@ def write_raw_frame(
     frame: pd.DataFrame,
     source: str | None = None,
 ) -> Path:
-    """Persist a vendor response unchanged; ``source`` is kept in file metadata."""
+    """Persist a vendor response unchanged; ``source`` is kept in file metadata.
+
+    JSON APIs can mix types within a field (e.g. numbers and text); such
+    object columns are stored as text rather than failing the run.
+    """
     metadata = {RAW_SOURCE_KEY: source.encode("utf-8")} if source else None
-    return write_parquet_atomic(
-        frame,
-        root / "data" / "raw" / provider / dataset / f"run_id={run_id}" / f"{name}.parquet",
-        metadata,
-    )
+    path = root / "data" / "raw" / provider / dataset / f"run_id={run_id}" / f"{name}.parquet"
+    try:
+        return write_parquet_atomic(frame, path, metadata)
+    except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError):
+        text = frame.copy()
+        for column in text.columns[text.dtypes == object]:
+            text[column] = text[column].map(lambda value: value if value is None or isinstance(value, str)
+                                            else str(value))
+        return write_parquet_atomic(text, path, metadata)
 
 
 def read_raw_source(path: Path) -> str | None:

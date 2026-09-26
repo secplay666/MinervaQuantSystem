@@ -13,6 +13,25 @@ import pandas as pd
 
 from .audit import run_audit
 from .config import DataPlatformConfig
+from .corporate import (
+    SOURCE_DIVIDENDS,
+    SOURCE_INDEX_WEIGHTS,
+    SOURCE_SHARE_CAPITAL,
+    SOURCE_SW,
+    dividend_report_dates,
+    dividend_window,
+    load_sw2014_mapping,
+    merge_dividends,
+    merge_fetch_log,
+    merge_index_weights,
+    merge_share_capital,
+    normalize_dividends,
+    normalize_index_weights,
+    normalize_share_capital,
+    normalize_sw_classification,
+    same_frame,
+    share_capital_windows,
+)
 from .normalization import (
     SCHEMA_VERSION,
     as_date,
@@ -76,7 +95,9 @@ from .storage import (
 from .utils import code_version, ensure_directories, json_dump, run_id_to_iso, unique_run_id, utc_now_iso
 
 MAX_RECORDED_ERRORS = 200
-STEPS = ("daily_bars", "adjustment_factors", "indices", "status_history", "market_snapshot")
+STEPS = ("daily_bars", "adjustment_factors", "indices", "status_history", "market_snapshot", "corporate",
+         "classification")
+CORPORATE_MAX_CONSECUTIVE_FAILURES = 3
 BAIDU_MAX_CONSECUTIVE_FAILURES = 10
 BULLETIN_MAX_CONSECUTIVE_FAILURES = 2
 
@@ -197,6 +218,10 @@ class IngestionPipeline:
             self._ingest_status_history(ctx)
         if "market_snapshot" in self.steps:
             self._ingest_market_snapshot(ctx)
+        if "corporate" in self.steps and self.config.download_corporate:
+            self._ingest_corporate(ctx)
+        if "classification" in self.steps and self.config.download_classification:
+            self._ingest_classification(ctx)
         self._audit(ctx, universe)
 
     # ------------------------------------------------------------ helpers
@@ -642,16 +667,22 @@ class IngestionPipeline:
                                                  self.config.overlap_sessions)
                 else:
                     existing, fetch_start = None, index_start
-                result = self.provider.fetch_index_daily(
-                    item.symbol, self._date_str(fetch_start), self._date_str(ctx.expected_latest)
-                )
+                fetch = (self.provider.fetch_csindex_daily if item.source == "csindex"
+                         else self.provider.fetch_index_daily)
+                result = fetch(item.symbol, self._date_str(fetch_start), self._date_str(ctx.expected_latest))
                 self._raw(ctx, step, item.symbol, result.frame, result.source)
                 incoming = normalize_index_bars(
                     result.frame, item.symbol, item.name, index_start, ctx.expected_latest,
                     ctx.run_id, ctx.ingested_at, source=result.source,
                 )
+                if item.source == "csindex":
+                    # CSIndex prepends a placeholder row (1990-01-01, base value) that is no session.
+                    sessions = set(ctx.open_dates)
+                    incoming = incoming[incoming["trade_date"].isin(sessions)].reset_index(drop=True)
                 issues = validate_index_refresh(incoming, existing, item.symbol)
                 merged = merge_index_bars(existing, incoming)
+                if item.source == "csindex":
+                    merged = merged[merged["trade_date"].isin(sessions)].reset_index(drop=True)
                 previous = read_canonical(self.root, step, f"symbol={item.symbol}")
                 if previous is not None and len(merged) < len(previous) * 0.99:
                     issues.append(
@@ -861,6 +892,131 @@ class IngestionPipeline:
                     ["exchange", "keyword", "window_start", "window_end"], keep="last")
             write_canonical_frame(self.root, "bulletin_fetch_log", new_log)
         return merged
+
+    # ----------------------------------------------------------- corporate
+
+    def _ingest_corporate(self, ctx: RunContext) -> None:
+        """Share-capital changes and dividends (append-only, window log)."""
+        log = read_canonical(self.root, "corporate_fetch_log")
+        today = self.clock().date()
+        log_rows: list[dict[str, Any]] = []
+        jobs = [
+            ("share_capital", [(f"{field}_{start}_{end}", (field, start, end))
+                               for field, start, end in share_capital_windows(today, log)]),
+            ("dividends", [(dividend_window(report), (report,)) for report in dividend_report_dates(today, log)]),
+        ]
+        for dataset, windows in jobs:
+            merged = read_canonical(self.root, dataset)
+            consecutive = 0
+            for name, args in windows:
+                if consecutive >= CORPORATE_MAX_CONSECUTIVE_FAILURES:
+                    ctx.count(dataset, "deferred_windows")
+                    continue
+                try:
+                    if dataset == "share_capital":
+                        raw = self.provider.fetch_share_capital(*args)
+                        part = normalize_share_capital(raw, ctx.run_id, ctx.ingested_at)
+                    else:
+                        raw = self.provider.fetch_dividends(*args)
+                        part = normalize_dividends(raw, args[0], ctx.run_id, ctx.ingested_at)
+                except Exception as exc:
+                    ctx.error(dataset, name, exc)
+                    ctx.count(dataset, "failed_windows")
+                    consecutive += 1
+                    continue
+                consecutive = 0
+                self._raw(ctx, dataset, name, raw,
+                          SOURCE_SHARE_CAPITAL if dataset == "share_capital" else SOURCE_DIVIDENDS)
+                merged = (merge_share_capital if dataset == "share_capital" else merge_dividends)(merged, part)
+                log_rows.append({"dataset": dataset, "window": name, "rows": len(part), "run_id": ctx.run_id})
+                ctx.count(dataset, "windows")
+            if merged is not None and not merged.empty:
+                write_canonical_frame(self.root, dataset, merged)
+            failed = ctx.counters.get(dataset, {}).get("failed_windows", 0)
+            deferred = ctx.counters.get(dataset, {}).get("deferred_windows", 0)
+            if failed or deferred:
+                ctx.issues.append(QualityIssue(
+                    dataset, "fetch_windows", "warning",
+                    f"{dataset} 抓取：{failed} 个窗口失败、{deferred} 个窗口推迟，下次运行重试", failed + deferred))
+        if log_rows:
+            write_canonical_frame(self.root, "corporate_fetch_log", merge_fetch_log(log, log_rows))
+
+    # ------------------------------------------------------ classification
+
+    def _ingest_classification(self, ctx: RunContext) -> None:
+        self._ingest_sw_classification(ctx)
+        self._ingest_index_weights(ctx)
+
+    def _ingest_sw_classification(self, ctx: RunContext) -> None:
+        """Shenwan history.  A raw copy is kept only when the workbooks
+        changed, and the intervals always carry the run id of the raw copy
+        they were built from, so a rebuild reproduces them exactly."""
+        step = "industry_sw"
+        try:
+            files = self.provider.fetch_sw_classification()
+        except Exception as exc:
+            ctx.error(step, "download", exc)
+            ctx.issues.append(QualityIssue(step, "ingestion_success", "warning", f"申万行业分类下载失败: {exc}"))
+            return
+        latest = self._latest_raw_run(step, ("history", "codes"))
+        changed = latest is None or any(
+            not same_frame(frame, pd.read_parquet(latest[1] / f"{name}.parquet")) for name, frame in files.items())
+        if changed:
+            for name, frame in files.items():
+                self._raw(ctx, step, name, frame, SOURCE_SW)
+            raw_run = ctx.run_id
+        else:
+            raw_run = latest[0]
+            ctx.count(step, "unchanged")
+        mapping = load_sw2014_mapping(self.root / self.config.sw_mapping_path)
+        intervals, missing = normalize_sw_classification(files["history"], files["codes"], mapping, raw_run,
+                                                         run_id_to_iso(raw_run))
+        if intervals.empty:
+            ctx.issues.append(QualityIssue(step, "not_empty", "blocking", "申万行业分类为空，保留已有数据"))
+            return
+        existing = read_canonical(self.root, step)
+        if existing is not None and len(intervals) < len(existing) * 0.99:
+            ctx.issues.append(QualityIssue(
+                step, "history_not_shrunk", "blocking",
+                f"申万行业区间从 {len(existing)} 行缩减到 {len(intervals)} 行，保留已有数据"))
+            return
+        if missing:
+            ctx.issues.append(QualityIssue(
+                step, "sw2014_mapping_complete", "warning",
+                "以下申万旧版代码不在映射表中（记为未分类）: " + ", ".join(missing[:30]), len(missing)))
+        write_canonical_frame(self.root, step, intervals)
+        ctx.count(step, "intervals", len(intervals))
+
+    def _ingest_index_weights(self, ctx: RunContext) -> None:
+        """CSIndex weights: one snapshot per (index, publication date)."""
+        step = "index_weights"
+        merged = read_canonical(self.root, step)
+        seen = set() if merged is None else set(zip(merged["index_code"], merged["as_of_date"]))
+        for index_code in self.config.index_weight_symbols:
+            try:
+                raw = self.provider.fetch_index_weights(index_code)
+                part = normalize_index_weights(raw, index_code, ctx.run_id, ctx.ingested_at)
+            except Exception as exc:
+                ctx.error(step, index_code, exc)
+                ctx.issues.append(QualityIssue(step, "ingestion_success", "warning",
+                                               f"{index_code} 成分权重下载失败: {exc}"))
+                continue
+            if part.empty or (index_code, part["as_of_date"].iloc[0]) in seen:
+                ctx.count(step, "unchanged")
+                continue
+            self._raw(ctx, step, index_code, raw, SOURCE_INDEX_WEIGHTS)
+            merged = merge_index_weights(merged, part)
+            ctx.count(step, "snapshots")
+        if merged is not None and not merged.empty:
+            write_canonical_frame(self.root, step, merged)
+
+    def _latest_raw_run(self, dataset: str, names: tuple[str, ...]) -> tuple[str, Path] | None:
+        base = self.root / "data" / "raw" / self.config.provider / dataset
+        runs = sorted(base.glob("run_id=*")) if base.exists() else []
+        for directory in reversed(runs):
+            if all((directory / f"{name}.parquet").exists() for name in names):
+                return directory.name.removeprefix("run_id="), directory
+        return None
 
     # ------------------------------------------------------------ snapshot
 

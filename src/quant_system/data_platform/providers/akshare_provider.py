@@ -15,6 +15,7 @@ import requests
 
 from ..symbols import infer_exchange, market_prefix
 from .base import FetchResult, MarketDataProvider
+from .eastmoney_dc import A_SHARE_TYPES, PaginationMismatch, collect_pages, dc_page, sw_file
 
 T = TypeVar("T")
 
@@ -323,7 +324,46 @@ class AkShareProvider(MarketDataProvider):
             page += 1
         return pd.DataFrame(rows)
 
+    # -- stage 3: corporate data, classification, total-return indices ---------
 
+    def fetch_datacenter(self, report: str, filter: str, sort_columns: str) -> pd.DataFrame:
+        """All pages of an Eastmoney datacenter report; pages are retried
+        individually and the whole report once if the row count drifts."""
+        def page(**kwargs: object) -> tuple[list[dict], int, int]:
+            return self._call(f"datacenter:{report}:{filter}:{kwargs['page']}", dc_page, **kwargs)
+
+        for attempt in (1, 2):
+            try:
+                return collect_pages(page, report, filter, sort_columns)
+            except PaginationMismatch as exc:
+                if attempt == 2:
+                    raise ProviderError(str(exc), terminal=False) from exc
+                self.logger.warning("%s; refetching the whole report", exc)
+        raise AssertionError("unreachable")
+
+    def fetch_csindex_daily(self, symbol: str, start_date: str, end_date: str) -> FetchResult:
+        frame = self._call(f"stock_zh_index_hist_csindex:{symbol}", ak.stock_zh_index_hist_csindex,
+                           symbol=symbol, start_date=start_date, end_date=end_date)
+        return FetchResult(frame, SOURCE_CSINDEX)
+
+    def fetch_index_weights(self, symbol: str) -> pd.DataFrame:
+        return self._call(f"index_stock_cons_weight_csindex:{symbol}", ak.index_stock_cons_weight_csindex,
+                          symbol=symbol)
+
+    def fetch_sw_classification(self) -> dict[str, pd.DataFrame]:
+        return {kind: self._call(f"sw_classification:{kind}", sw_file, kind=kind) for kind in ("history", "codes")}
+
+    def fetch_share_capital(self, date_field: str, start: str, end: str) -> pd.DataFrame:
+        if date_field not in {"END_DATE", "NOTICE_DATE"}:
+            raise ValueError(f"unsupported share-capital date field {date_field}")
+        filter = f"({date_field}>='{start}')({date_field}<'{end}'){A_SHARE_TYPES}"
+        return self.fetch_datacenter("RPT_F10_EH_EQUITY", filter, "SECUCODE,END_DATE")
+
+    def fetch_dividends(self, report_date: str) -> pd.DataFrame:
+        return self.fetch_datacenter("RPT_SHAREBONUS_DET", f"(REPORT_DATE='{report_date}')", "SECUCODE")
+
+
+SOURCE_CSINDEX = "akshare.stock_zh_index_hist_csindex.csindex"
 SSE_PAGE_SIZE = 100
 SSE_BULLETIN_PAUSE_SECONDS = 3.0
 BULLETIN_ATTEMPTS = 2

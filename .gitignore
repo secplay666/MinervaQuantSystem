@@ -14,6 +14,7 @@ data/checkpoints/
 data/staging/
 data/quarantine/
 data/archive/
+data/features/
 data/*.duckdb
 data/*.duckdb.wal
 data/*.duckdb.building*

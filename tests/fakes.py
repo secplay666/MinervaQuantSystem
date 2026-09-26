@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 import pandas as pd
 
@@ -13,6 +14,8 @@ from quant_system.data_platform.sessions import SHANGHAI_TZ
 from quant_system.data_platform.symbols import market_prefix
 
 HOLIDAY = date(2026, 9, 25)
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SW_MAPPING = REPO_ROOT / "configs" / "industry" / "sw2014_to_sw2021_l1.json"
 
 
 def business_days(start: date, end: date) -> list[date]:
@@ -50,6 +53,8 @@ def make_config(**overrides: object) -> DataPlatformConfig:
         manual_delistings=(
             ManualDelisting("920002", "测试退", "20250101", "20260916", "test"),
         ),
+        sw_mapping_path=str(SW_MAPPING),
+        index_weight_symbols=("000300",),
         config_hash="test",
     )
     values.update(overrides)
@@ -221,6 +226,84 @@ class FakeProvider(MarketDataProvider):
     def fetch_bse_announcements(self, keyword: str, start: str, end: str) -> pd.DataFrame:
         rows = [r for r in self.bse_announcements if keyword in r["disclosureTitle"] and start <= r["publishDate"] <= end]
         return pd.DataFrame(rows, columns=["companyCd", "companyName", "disclosureTitle", "destFilePath", "publishDate"])
+
+    # stage 3: corporate data, classification, total-return indices -----------
+
+    share_rows: list[dict[str, object]] = field(default_factory=lambda: [
+        {"SECUCODE": "600001.SH", "SECURITY_CODE": "600001", "END_DATE": "2010-01-04 00:00:00",
+         "NOTICE_DATE": "2009-12-28 00:00:00", "TOTAL_SHARES": 1.0e9, "LISTED_A_SHARES": 6.0e8,
+         "LIMITED_A_SHARES": 4.0e8, "CHANGE_REASON": "首发A股上市"},
+        {"SECUCODE": "600001.SH", "SECURITY_CODE": "600001", "END_DATE": "2026-09-15 00:00:00",
+         "NOTICE_DATE": "2026-09-10 00:00:00", "TOTAL_SHARES": 1.2e9, "LISTED_A_SHARES": 1.2e9,
+         "LIMITED_A_SHARES": 0.0, "CHANGE_REASON": "送股上市"},
+        {"SECUCODE": "000001.SZ", "SECURITY_CODE": "000001", "END_DATE": "1991-04-03 00:00:00",
+         "NOTICE_DATE": "1991-04-01 00:00:00", "TOTAL_SHARES": 2.0e10, "LISTED_A_SHARES": 2.0e10,
+         "LIMITED_A_SHARES": 0.0, "CHANGE_REASON": "首发A股上市"},
+        {"SECUCODE": "830001.NQ", "SECURITY_CODE": "830001", "END_DATE": "2026-09-01 00:00:00",
+         "NOTICE_DATE": "2026-08-30 00:00:00", "TOTAL_SHARES": 5.0e7, "LISTED_A_SHARES": 5.0e7,
+         "LIMITED_A_SHARES": 0.0, "CHANGE_REASON": "新三板"},
+    ])
+    dividend_rows: list[dict[str, object]] = field(default_factory=lambda: [
+        {"SECUCODE": "600001.SH", "SECURITY_CODE": "600001", "REPORT_DATE": "2025-12-31 00:00:00",
+         "PLAN_NOTICE_DATE": "2026-03-20 00:00:00", "NOTICE_DATE": "2026-06-10 00:00:00",
+         "EQUITY_RECORD_DATE": "2026-06-16 00:00:00", "EX_DIVIDEND_DATE": "2026-06-17 00:00:00",
+         "PRETAX_BONUS_RMB": 3.0, "BONUS_RATIO": 2.0, "IT_RATIO": None, "TOTAL_SHARES": 1.0e9,
+         "ASSIGN_PROGRESS": "实施分配", "IMPL_PLAN_PROFILE": "10送2股派3元(含税)"},
+    ])
+    sw_history_rows: list[tuple[str, str, str]] = field(default_factory=lambda: [
+        ("600001", "2010-01-04 00:00:00", "340301"), ("600001", "2021-07-30 00:00:00", "340501"),
+        ("000001", "2014-02-21 00:00:00", "480101"), ("000001", "2021-07-30 00:00:00", "480301"),
+        ("688001", "2021-07-30 00:00:00", "270101"), ("300001", "2026-09-10 00:00:00", "270101"),
+    ])
+    index_weights_date: str = "2026-08-31"
+    fail_sw: bool = False
+
+    def fetch_csindex_daily(self, symbol: str, start_date: str, end_date: str) -> FetchResult:
+        self.calls.append(("csindex", symbol))
+        start, end = pd.to_datetime(start_date).date(), pd.to_datetime(end_date).date()
+        days = [d for d in OPEN_DATES if start <= d <= min(end, self.today)]
+        # Like the real service: a base-value placeholder dated 1990-01-01 comes first.
+        frame = pd.DataFrame(
+            [{"日期": "1990-01-01", "指数代码": symbol, "开盘": float("nan"), "最高": float("nan"),
+              "最低": float("nan"), "收盘": 1000.0, "成交量": 0.0, "成交金额": 0.0}]
+            + [{"日期": d.isoformat(), "指数代码": symbol, "开盘": float("nan"), "最高": float("nan"),
+                "最低": float("nan"), "收盘": 6000.0 + i, "成交量": 2.0e10, "成交金额": 5000.0}
+               for i, d in enumerate(days)]
+        )
+        return FetchResult(frame, "akshare.stock_zh_index_hist_csindex.csindex")
+
+    def fetch_index_weights(self, symbol: str) -> pd.DataFrame:
+        self.calls.append(("index_weights", symbol))
+        rows = [("600001", "甲股份", "上海证券交易所", 60.0), ("000001", "乙银行", "深圳证券交易所", 40.0)]
+        return pd.DataFrame([{"日期": self.index_weights_date, "指数代码": symbol, "成分券代码": s,
+                              "成分券名称": n, "交易所": x, "权重": w} for s, n, x, w in rows])
+
+    def fetch_sw_classification(self) -> dict[str, pd.DataFrame]:
+        self.calls.append(("sw", "classification"))
+        if self.fail_sw:
+            raise RuntimeError("swsresearch timed out")
+        history = pd.DataFrame([{"股票代码": s, "计入日期": d, "行业代码": c, "更新日期": "2025-01-01 00:00:00"}
+                                for s, d, c in self.sw_history_rows])
+        codes = pd.DataFrame([
+            {"行业代码": code, "一级行业名称": l1, "二级行业名称": l2, "三级行业名称": l3}
+            for code, l1, l2, l3 in (
+                ("340000", "食品饮料", None, None), ("340500", "食品饮料", "白酒Ⅱ", None),
+                ("340501", "食品饮料", "白酒Ⅱ", "白酒Ⅲ"), ("480000", "银行", None, None),
+                ("480300", "银行", "股份制银行Ⅱ", None), ("480301", "银行", "股份制银行Ⅱ", "股份制银行Ⅲ"),
+                ("270000", "电子", None, None), ("270100", "电子", "半导体", None),
+                ("270101", "电子", "半导体", "分立器件"),
+            )
+        ])
+        return {"history": history, "codes": codes}
+
+    def fetch_share_capital(self, date_field: str, start: str, end: str) -> pd.DataFrame:
+        self.calls.append(("share_capital", f"{date_field}:{start}"))
+        rows = [r for r in self.share_rows if start <= str(r[date_field])[:10] < end]
+        return pd.DataFrame(rows)
+
+    def fetch_dividends(self, report_date: str) -> pd.DataFrame:
+        self.calls.append(("dividends", report_date))
+        return pd.DataFrame([r for r in self.dividend_rows if str(r["REPORT_DATE"])[:10] == report_date])
 
     def fetch_sz_name_changes(self) -> pd.DataFrame:
         return pd.DataFrame(

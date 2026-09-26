@@ -1,0 +1,2237 @@
+{
+ "description": "SW2014 industry code -> SW2021 level-1 code, from stocks classified on both sides of the 2021-07-30 switch (majority), else the SW2014 level-2 / level-1 majority.",
+ "switch_date": "2021-07-30",
+ "sources": [
+  "https://www.swsresearch.com/swindex/pdf/SwClass2021/StockClassifyUse_stock.xls",
+  "https://www.swsresearch.com/swindex/pdf/SwClass2021/SwClassCode_2021.xls"
+ ],
+ "script": "scripts/build_sw_mapping.py",
+ "codes": {
+  "110101": {
+   "l1_code": "110000",
+   "l1_name": "农林牧渔",
+   "method": "level2_majority",
+   "stocks": 4,
+   "share": 0.6667
+  },
+  "110102": {
+   "l1_code": "110000",
+   "l1_name": "农林牧渔",
+   "method": "transition",
+   "stocks": 4,
+   "share": 1.0
+  },
+  "110103": {
+   "l1_code": "370000",
+   "l1_name": "医药生物",
+   "method": "transition",
+   "stocks": 1,
+   "share": 0.5
+  },
+  "110201": {
+   "l1_code": "110000",
+   "l1_name": "农林牧渔",
+   "method": "level2_majority",
+   "stocks": 1,
+   "share": 0.5
+  },
+  "110202": {
+   "l1_code": "110000",
+   "l1_name": "农林牧渔",
+   "method": "transition",
+   "stocks": 1,
+   "share": 0.5
+  },
+  "110301": {
+   "l1_code": "110000",
+   "l1_name": "农林牧渔",
+   "method": "level1_majority",
+   "stocks": 35,
+   "share": 0.7609
+  },
+  "110401": {
+   "l1_code": "110000",
+   "l1_name": "农林牧渔",
+   "method": "transition",
+   "stocks": 14,
+   "share": 0.9333
+  },
+  "110501": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "level2_majority",
+   "stocks": 2,
+   "share": 0.5
+  },
+  "110502": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "level2_majority",
+   "stocks": 2,
+   "share": 0.5
+  },
+  "110503": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "level2_majority",
+   "stocks": 2,
+   "share": 0.5
+  },
+  "110504": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "transition",
+   "stocks": 2,
+   "share": 0.5
+  },
+  "110601": {
+   "l1_code": "110000",
+   "l1_name": "农林牧渔",
+   "method": "transition",
+   "stocks": 1,
+   "share": 1.0
+  },
+  "110701": {
+   "l1_code": "110000",
+   "l1_name": "农林牧渔",
+   "method": "transition",
+   "stocks": 15,
+   "share": 0.9375
+  },
+  "110801": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "transition",
+   "stocks": 1,
+   "share": 0.5
+  },
+  "210101": {
+   "l1_code": "750000",
+   "l1_name": "石油石化",
+   "method": "transition",
+   "stocks": 3,
+   "share": 1.0
+  },
+  "210201": {
+   "l1_code": "740000",
+   "l1_name": "煤炭",
+   "method": "transition",
+   "stocks": 27,
+   "share": 0.9643
+  },
+  "210202": {
+   "l1_code": "740000",
+   "l1_name": "煤炭",
+   "method": "transition",
+   "stocks": 8,
+   "share": 1.0
+  },
+  "210301": {
+   "l1_code": "230000",
+   "l1_name": "钢铁",
+   "method": "transition",
+   "stocks": 6,
+   "share": 0.5
+  },
+  "210401": {
+   "l1_code": "750000",
+   "l1_name": "石油石化",
+   "method": "transition",
+   "stocks": 14,
+   "share": 1.0
+  },
+  "210402": {
+   "l1_code": "620000",
+   "l1_name": "建筑装饰",
+   "method": "transition",
+   "stocks": 1,
+   "share": 1.0
+  },
+  "220101": {
+   "l1_code": "750000",
+   "l1_name": "石油石化",
+   "method": "transition",
+   "stocks": 13,
+   "share": 0.9286
+  },
+  "220103": {
+   "l1_code": "750000",
+   "l1_name": "石油石化",
+   "method": "transition",
+   "stocks": 5,
+   "share": 1.0
+  },
+  "220201": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "transition",
+   "stocks": 2,
+   "share": 1.0
+  },
+  "220202": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "transition",
+   "stocks": 3,
+   "share": 1.0
+  },
+  "220203": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "transition",
+   "stocks": 1,
+   "share": 0.3333
+  },
+  "220204": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "transition",
+   "stocks": 6,
+   "share": 0.6
+  },
+  "220301": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "transition",
+   "stocks": 7,
+   "share": 0.875
+  },
+  "220302": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "transition",
+   "stocks": 3,
+   "share": 1.0
+  },
+  "220303": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "transition",
+   "stocks": 26,
+   "share": 0.963
+  },
+  "220304": {
+   "l1_code": "770000",
+   "l1_name": "美容护理",
+   "method": "transition",
+   "stocks": 11,
+   "share": 0.9167
+  },
+  "220305": {
+   "l1_code": "270000",
+   "l1_name": "电子",
+   "method": "transition",
+   "stocks": 3,
+   "share": 0.5
+  },
+  "220306": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "transition",
+   "stocks": 3,
+   "share": 0.75
+  },
+  "220307": {
+   "l1_code": "240000",
+   "l1_name": "有色金属",
+   "method": "transition",
+   "stocks": 1,
+   "share": 1.0
+  },
+  "220308": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "transition",
+   "stocks": 2,
+   "share": 1.0
+  },
+  "220309": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "transition",
+   "stocks": 47,
+   "share": 0.5054
+  },
+  "220310": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "transition",
+   "stocks": 8,
+   "share": 1.0
+  },
+  "220311": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "level2_majority",
+   "stocks": 103,
+   "share": 0.5787
+  },
+  "220312": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "transition",
+   "stocks": 4,
+   "share": 1.0
+  },
+  "220313": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "transition",
+   "stocks": 1,
+   "share": 0.3333
+  },
+  "220314": {
+   "l1_code": "610000",
+   "l1_name": "建筑材料",
+   "method": "transition",
+   "stocks": 7,
+   "share": 1.0
+  },
+  "220401": {
+   "l1_code": "750000",
+   "l1_name": "石油石化",
+   "method": "transition",
+   "stocks": 5,
+   "share": 0.7143
+  },
+  "220402": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "transition",
+   "stocks": 1,
+   "share": 1.0
+  },
+  "220403": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "transition",
+   "stocks": 1,
+   "share": 0.3333
+  },
+  "220404": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "transition",
+   "stocks": 3,
+   "share": 0.6
+  },
+  "220405": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "transition",
+   "stocks": 1,
+   "share": 1.0
+  },
+  "220501": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "transition",
+   "stocks": 12,
+   "share": 0.7059
+  },
+  "220502": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "transition",
+   "stocks": 3,
+   "share": 1.0
+  },
+  "220503": {
+   "l1_code": "630000",
+   "l1_name": "电力设备",
+   "method": "transition",
+   "stocks": 1,
+   "share": 1.0
+  },
+  "220601": {
+   "l1_code": "280000",
+   "l1_name": "汽车",
+   "method": "transition",
+   "stocks": 9,
+   "share": 1.0
+  },
+  "220602": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "transition",
+   "stocks": 1,
+   "share": 1.0
+  },
+  "220603": {
+   "l1_code": "280000",
+   "l1_name": "汽车",
+   "method": "level2_majority",
+   "stocks": 9,
+   "share": 0.9
+  },
+  "220701": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "level1_majority",
+   "stocks": 139,
+   "share": 0.5285
+  },
+  "220702": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "level1_majority",
+   "stocks": 139,
+   "share": 0.5285
+  },
+  "220703": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "level1_majority",
+   "stocks": 139,
+   "share": 0.5285
+  },
+  "230101": {
+   "l1_code": "230000",
+   "l1_name": "钢铁",
+   "method": "transition",
+   "stocks": 22,
+   "share": 1.0
+  },
+  "230102": {
+   "l1_code": "230000",
+   "l1_name": "钢铁",
+   "method": "transition",
+   "stocks": 14,
+   "share": 1.0
+  },
+  "230201": {
+   "l1_code": "230000",
+   "l1_name": "钢铁",
+   "method": "level1_majority",
+   "stocks": 36,
+   "share": 1.0
+  },
+  "240101": {
+   "l1_code": "240000",
+   "l1_name": "有色金属",
+   "method": "level1_majority",
+   "stocks": 25,
+   "share": 0.4717
+  },
+  "240102": {
+   "l1_code": "240000",
+   "l1_name": "有色金属",
+   "method": "level1_majority",
+   "stocks": 25,
+   "share": 0.4717
+  },
+  "240103": {
+   "l1_code": "240000",
+   "l1_name": "有色金属",
+   "method": "level1_majority",
+   "stocks": 25,
+   "share": 0.4717
+  },
+  "240104": {
+   "l1_code": "240000",
+   "l1_name": "有色金属",
+   "method": "level1_majority",
+   "stocks": 25,
+   "share": 0.4717
+  },
+  "240105": {
+   "l1_code": "240000",
+   "l1_name": "有色金属",
+   "method": "level1_majority",
+   "stocks": 25,
+   "share": 0.4717
+  },
+  "240106": {
+   "l1_code": "240000",
+   "l1_name": "有色金属",
+   "method": "level1_majority",
+   "stocks": 25,
+   "share": 0.4717
+  },
+  "240201": {
+   "l1_code": "240000",
+   "l1_name": "有色金属",
+   "method": "transition",
+   "stocks": 5,
+   "share": 0.625
+  },
+  "240202": {
+   "l1_code": "640000",
+   "l1_name": "机械设备",
+   "method": "transition",
+   "stocks": 2,
+   "share": 0.5
+  },
+  "240203": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "transition",
+   "stocks": 6,
+   "share": 0.5455
+  },
+  "240301": {
+   "l1_code": "240000",
+   "l1_name": "有色金属",
+   "method": "transition",
+   "stocks": 1,
+   "share": 0.2
+  },
+  "240302": {
+   "l1_code": "240000",
+   "l1_name": "有色金属",
+   "method": "transition",
+   "stocks": 4,
+   "share": 0.6667
+  },
+  "240303": {
+   "l1_code": "240000",
+   "l1_name": "有色金属",
+   "method": "transition",
+   "stocks": 3,
+   "share": 0.75
+  },
+  "240401": {
+   "l1_code": "240000",
+   "l1_name": "有色金属",
+   "method": "transition",
+   "stocks": 1,
+   "share": 0.3333
+  },
+  "240501": {
+   "l1_code": "240000",
+   "l1_name": "有色金属",
+   "method": "level2_majority",
+   "stocks": 11,
+   "share": 0.9167
+  },
+  "240502": {
+   "l1_code": "240000",
+   "l1_name": "有色金属",
+   "method": "level2_majority",
+   "stocks": 11,
+   "share": 0.9167
+  },
+  "240503": {
+   "l1_code": "240000",
+   "l1_name": "有色金属",
+   "method": "transition",
+   "stocks": 3,
+   "share": 1.0
+  },
+  "240504": {
+   "l1_code": "240000",
+   "l1_name": "有色金属",
+   "method": "transition",
+   "stocks": 8,
+   "share": 0.8889
+  },
+  "250101": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "250102": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "250103": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "250104": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "250105": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "250106": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "250201": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "250202": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "250203": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "250204": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "250205": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "260101": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "260102": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "260103": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "260104": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "260105": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "260106": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "260201": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "260202": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "260203": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "260204": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "260205": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "260206": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "260207": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "260208": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "260209": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "260301": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "260401": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "260402": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "260403": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "260404": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "260405": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "260501": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "270101": {
+   "l1_code": "270000",
+   "l1_name": "电子",
+   "method": "transition",
+   "stocks": 50,
+   "share": 0.9615
+  },
+  "270102": {
+   "l1_code": "630000",
+   "l1_name": "电力设备",
+   "method": "transition",
+   "stocks": 1,
+   "share": 1.0
+  },
+  "270103": {
+   "l1_code": "270000",
+   "l1_name": "电子",
+   "method": "transition",
+   "stocks": 3,
+   "share": 0.75
+  },
+  "270201": {
+   "l1_code": "270000",
+   "l1_name": "电子",
+   "method": "level2_majority",
+   "stocks": 3,
+   "share": 0.5
+  },
+  "270202": {
+   "l1_code": "270000",
+   "l1_name": "电子",
+   "method": "transition",
+   "stocks": 1,
+   "share": 1.0
+  },
+  "270203": {
+   "l1_code": "270000",
+   "l1_name": "电子",
+   "method": "transition",
+   "stocks": 2,
+   "share": 0.4
+  },
+  "270301": {
+   "l1_code": "270000",
+   "l1_name": "电子",
+   "method": "transition",
+   "stocks": 6,
+   "share": 0.6667
+  },
+  "270302": {
+   "l1_code": "330000",
+   "l1_name": "家用电器",
+   "method": "transition",
+   "stocks": 8,
+   "share": 0.6667
+  },
+  "270303": {
+   "l1_code": "710000",
+   "l1_name": "计算机",
+   "method": "transition",
+   "stocks": 3,
+   "share": 0.75
+  },
+  "270401": {
+   "l1_code": "270000",
+   "l1_name": "电子",
+   "method": "transition",
+   "stocks": 8,
+   "share": 0.3077
+  },
+  "270501": {
+   "l1_code": "270000",
+   "l1_name": "电子",
+   "method": "transition",
+   "stocks": 14,
+   "share": 0.7778
+  },
+  "270502": {
+   "l1_code": "270000",
+   "l1_name": "电子",
+   "method": "transition",
+   "stocks": 58,
+   "share": 0.9508
+  },
+  "280101": {
+   "l1_code": "280000",
+   "l1_name": "汽车",
+   "method": "transition",
+   "stocks": 12,
+   "share": 1.0
+  },
+  "280102": {
+   "l1_code": "280000",
+   "l1_name": "汽车",
+   "method": "transition",
+   "stocks": 5,
+   "share": 1.0
+  },
+  "280103": {
+   "l1_code": "280000",
+   "l1_name": "汽车",
+   "method": "transition",
+   "stocks": 6,
+   "share": 1.0
+  },
+  "280201": {
+   "l1_code": "280000",
+   "l1_name": "汽车",
+   "method": "transition",
+   "stocks": 156,
+   "share": 0.9398
+  },
+  "280301": {
+   "l1_code": "280000",
+   "l1_name": "汽车",
+   "method": "transition",
+   "stocks": 9,
+   "share": 0.8182
+  },
+  "280401": {
+   "l1_code": "280000",
+   "l1_name": "汽车",
+   "method": "transition",
+   "stocks": 5,
+   "share": 0.7143
+  },
+  "310101": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "310102": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "310103": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "310104": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "310201": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "310301": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "310302": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "310303": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "310304": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "310305": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "310306": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "310307": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "310401": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "310402": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "320101": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "320102": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "320103": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "320104": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "320201": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "330101": {
+   "l1_code": "330000",
+   "l1_name": "家用电器",
+   "method": "transition",
+   "stocks": 6,
+   "share": 1.0
+  },
+  "330102": {
+   "l1_code": "430000",
+   "l1_name": "房地产",
+   "method": "transition",
+   "stocks": 1,
+   "share": 0.5
+  },
+  "330103": {
+   "l1_code": "330000",
+   "l1_name": "家用电器",
+   "method": "transition",
+   "stocks": 1,
+   "share": 1.0
+  },
+  "330104": {
+   "l1_code": "330000",
+   "l1_name": "家用电器",
+   "method": "transition",
+   "stocks": 25,
+   "share": 0.9615
+  },
+  "330105": {
+   "l1_code": "330000",
+   "l1_name": "家用电器",
+   "method": "transition",
+   "stocks": 23,
+   "share": 1.0
+  },
+  "330201": {
+   "l1_code": "330000",
+   "l1_name": "家用电器",
+   "method": "transition",
+   "stocks": 3,
+   "share": 0.75
+  },
+  "330202": {
+   "l1_code": "330000",
+   "l1_name": "家用电器",
+   "method": "transition",
+   "stocks": 1,
+   "share": 0.3333
+  },
+  "340101": {
+   "l1_code": "340000",
+   "l1_name": "食品饮料",
+   "method": "level1_majority",
+   "stocks": 101,
+   "share": 0.8938
+  },
+  "340102": {
+   "l1_code": "340000",
+   "l1_name": "食品饮料",
+   "method": "level1_majority",
+   "stocks": 101,
+   "share": 0.8938
+  },
+  "340103": {
+   "l1_code": "340000",
+   "l1_name": "食品饮料",
+   "method": "level1_majority",
+   "stocks": 101,
+   "share": 0.8938
+  },
+  "340201": {
+   "l1_code": "340000",
+   "l1_name": "食品饮料",
+   "method": "level1_majority",
+   "stocks": 101,
+   "share": 0.8938
+  },
+  "340202": {
+   "l1_code": "340000",
+   "l1_name": "食品饮料",
+   "method": "level1_majority",
+   "stocks": 101,
+   "share": 0.8938
+  },
+  "340301": {
+   "l1_code": "340000",
+   "l1_name": "食品饮料",
+   "method": "transition",
+   "stocks": 18,
+   "share": 1.0
+  },
+  "340302": {
+   "l1_code": "340000",
+   "l1_name": "食品饮料",
+   "method": "transition",
+   "stocks": 7,
+   "share": 1.0
+  },
+  "340303": {
+   "l1_code": "340000",
+   "l1_name": "食品饮料",
+   "method": "transition",
+   "stocks": 3,
+   "share": 1.0
+  },
+  "340304": {
+   "l1_code": "340000",
+   "l1_name": "食品饮料",
+   "method": "transition",
+   "stocks": 9,
+   "share": 1.0
+  },
+  "340305": {
+   "l1_code": "340000",
+   "l1_name": "食品饮料",
+   "method": "transition",
+   "stocks": 5,
+   "share": 1.0
+  },
+  "340306": {
+   "l1_code": "340000",
+   "l1_name": "食品饮料",
+   "method": "transition",
+   "stocks": 3,
+   "share": 1.0
+  },
+  "340401": {
+   "l1_code": "340000",
+   "l1_name": "食品饮料",
+   "method": "transition",
+   "stocks": 1,
+   "share": 1.0
+  },
+  "340402": {
+   "l1_code": "340000",
+   "l1_name": "食品饮料",
+   "method": "transition",
+   "stocks": 11,
+   "share": 0.9167
+  },
+  "340403": {
+   "l1_code": "340000",
+   "l1_name": "食品饮料",
+   "method": "transition",
+   "stocks": 13,
+   "share": 1.0
+  },
+  "340404": {
+   "l1_code": "340000",
+   "l1_name": "食品饮料",
+   "method": "transition",
+   "stocks": 31,
+   "share": 0.7381
+  },
+  "350101": {
+   "l1_code": "350000",
+   "l1_name": "纺织服饰",
+   "method": "transition",
+   "stocks": 4,
+   "share": 1.0
+  },
+  "350102": {
+   "l1_code": "350000",
+   "l1_name": "纺织服饰",
+   "method": "transition",
+   "stocks": 1,
+   "share": 0.5
+  },
+  "350103": {
+   "l1_code": "350000",
+   "l1_name": "纺织服饰",
+   "method": "transition",
+   "stocks": 1,
+   "share": 0.5
+  },
+  "350104": {
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "transition",
+   "stocks": 1,
+   "share": 1.0
+  },
+  "350105": {
+   "l1_code": "110000",
+   "l1_name": "农林牧渔",
+   "method": "transition",
+   "stocks": 1,
+   "share": 1.0
+  },
+  "350106": {
+   "l1_code": "770000",
+   "l1_name": "美容护理",
+   "method": "transition",
+   "stocks": 2,
+   "share": 0.3333
+  },
+  "350201": {
+   "l1_code": "350000",
+   "l1_name": "纺织服饰",
+   "method": "level2_majority",
+   "stocks": 48,
+   "share": 0.96
+  },
+  "350202": {
+   "l1_code": "350000",
+   "l1_name": "纺织服饰",
+   "method": "transition",
+   "stocks": 12,
+   "share": 1.0
+  },
+  "350203": {
+   "l1_code": "350000",
+   "l1_name": "纺织服饰",
+   "method": "transition",
+   "stocks": 9,
+   "share": 1.0
+  },
+  "350204": {
+   "l1_code": "350000",
+   "l1_name": "纺织服饰",
+   "method": "transition",
+   "stocks": 6,
+   "share": 1.0
+  },
+  "350205": {
+   "l1_code": "350000",
+   "l1_name": "纺织服饰",
+   "method": "transition",
+   "stocks": 2,
+   "share": 0.6667
+  },
+  "350206": {
+   "l1_code": "350000",
+   "l1_name": "纺织服饰",
+   "method": "level2_majority",
+   "stocks": 48,
+   "share": 0.96
+  },
+  "350207": {
+   "l1_code": "350000",
+   "l1_name": "纺织服饰",
+   "method": "transition",
+   "stocks": 19,
+   "share": 0.95
+  },
+  "360101": {
+   "l1_code": "360000",
+   "l1_name": "轻工制造",
+   "method": "transition",
+   "stocks": 22,
+   "share": 0.8148
+  },
+  "360201": {
+   "l1_code": "360000",
+   "l1_name": "轻工制造",
+   "method": "transition",
+   "stocks": 36,
+   "share": 0.8372
+  },
+  "360301": {
+   "l1_code": "360000",
+   "l1_name": "轻工制造",
+   "method": "level2_majority",
+   "stocks": 58,
+   "share": 0.7436
+  },
+  "360302": {
+   "l1_code": "360000",
+   "l1_name": "轻工制造",
+   "method": "transition",
+   "stocks": 31,
+   "share": 0.9688
+  },
+  "360303": {
+   "l1_code": "360000",
+   "l1_name": "轻工制造",
+   "method": "transition",
+   "stocks": 15,
+   "share": 0.75
+  },
+  "360304": {
+   "l1_code": "350000",
+   "l1_name": "纺织服饰",
+   "method": "transition",
+   "stocks": 12,
+   "share": 0.9231
+  },
+  "360305": {
+   "l1_code": "360000",
+   "l1_name": "轻工制造",
+   "method": "transition",
+   "stocks": 12,
+   "share": 0.9231
+  },
+  "360401": {
+   "l1_code": "360000",
+   "l1_name": "轻工制造",
+   "method": "transition",
+   "stocks": 1,
+   "share": 0.5
+  },
+  "370101": {
+   "l1_code": "370000",
+   "l1_name": "医药生物",
+   "method": "transition",
+   "stocks": 9,
+   "share": 0.75
+  },
+  "370102": {
+   "l1_code": "370000",
+   "l1_name": "医药生物",
+   "method": "transition",
+   "stocks": 9,
+   "share": 0.75
+  },
+  "370103": {
+   "l1_code": "370000",
+   "l1_name": "医药生物",
+   "method": "level2_majority",
+   "stocks": 18,
+   "share": 0.75
+  },
+  "370201": {
+   "l1_code": "370000",
+   "l1_name": "医药生物",
+   "method": "transition",
+   "stocks": 5,
+   "share": 1.0
+  },
+  "370301": {
+   "l1_code": "370000",
+   "l1_name": "医药生物",
+   "method": "transition",
+   "stocks": 45,
+   "share": 0.9375
+  },
+  "370401": {
+   "l1_code": "370000",
+   "l1_name": "医药生物",
+   "method": "transition",
+   "stocks": 29,
+   "share": 1.0
+  },
+  "370501": {
+   "l1_code": "370000",
+   "l1_name": "医药生物",
+   "method": "transition",
+   "stocks": 93,
+   "share": 0.9894
+  },
+  "370601": {
+   "l1_code": "370000",
+   "l1_name": "医药生物",
+   "method": "transition",
+   "stocks": 26,
+   "share": 0.963
+  },
+  "410101": {
+   "l1_code": "410000",
+   "l1_name": "公用事业",
+   "method": "transition",
+   "stocks": 1,
+   "share": 0.3333
+  },
+  "410102": {
+   "l1_code": "410000",
+   "l1_name": "公用事业",
+   "method": "transition",
+   "stocks": 10,
+   "share": 0.8333
+  },
+  "410103": {
+   "l1_code": "410000",
+   "l1_name": "公用事业",
+   "method": "transition",
+   "stocks": 1,
+   "share": 1.0
+  },
+  "410104": {
+   "l1_code": "410000",
+   "l1_name": "公用事业",
+   "method": "transition",
+   "stocks": 1,
+   "share": 1.0
+  },
+  "410105": {
+   "l1_code": "410000",
+   "l1_name": "公用事业",
+   "method": "transition",
+   "stocks": 21,
+   "share": 0.9545
+  },
+  "410201": {
+   "l1_code": "760000",
+   "l1_name": "环保",
+   "method": "transition",
+   "stocks": 23,
+   "share": 1.0
+  },
+  "410301": {
+   "l1_code": "410000",
+   "l1_name": "公用事业",
+   "method": "transition",
+   "stocks": 1,
+   "share": 0.25
+  },
+  "410401": {
+   "l1_code": "760000",
+   "l1_name": "环保",
+   "method": "transition",
+   "stocks": 62,
+   "share": 0.9394
+  },
+  "420101": {
+   "l1_code": "420000",
+   "l1_name": "交通运输",
+   "method": "transition",
+   "stocks": 18,
+   "share": 1.0
+  },
+  "420201": {
+   "l1_code": "420000",
+   "l1_name": "交通运输",
+   "method": "transition",
+   "stocks": 21,
+   "share": 1.0
+  },
+  "420301": {
+   "l1_code": "420000",
+   "l1_name": "交通运输",
+   "method": "transition",
+   "stocks": 9,
+   "share": 1.0
+  },
+  "420401": {
+   "l1_code": "420000",
+   "l1_name": "交通运输",
+   "method": "transition",
+   "stocks": 8,
+   "share": 1.0
+  },
+  "420501": {
+   "l1_code": "420000",
+   "l1_name": "交通运输",
+   "method": "transition",
+   "stocks": 4,
+   "share": 1.0
+  },
+  "420601": {
+   "l1_code": "420000",
+   "l1_name": "交通运输",
+   "method": "transition",
+   "stocks": 12,
+   "share": 1.0
+  },
+  "420701": {
+   "l1_code": "420000",
+   "l1_name": "交通运输",
+   "method": "transition",
+   "stocks": 5,
+   "share": 1.0
+  },
+  "420801": {
+   "l1_code": "420000",
+   "l1_name": "交通运输",
+   "method": "transition",
+   "stocks": 45,
+   "share": 0.9574
+  },
+  "430101": {
+   "l1_code": "430000",
+   "l1_name": "房地产",
+   "method": "transition",
+   "stocks": 22,
+   "share": 0.4889
+  },
+  "430201": {
+   "l1_code": "430000",
+   "l1_name": "房地产",
+   "method": "transition",
+   "stocks": 11,
+   "share": 1.0
+  },
+  "440101": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "440201": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "440301": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "440401": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "450101": {
+   "l1_code": "450000",
+   "l1_name": "商贸零售",
+   "method": "level1_majority",
+   "stocks": 26,
+   "share": 0.619
+  },
+  "450102": {
+   "l1_code": "450000",
+   "l1_name": "商贸零售",
+   "method": "level1_majority",
+   "stocks": 26,
+   "share": 0.619
+  },
+  "450103": {
+   "l1_code": "450000",
+   "l1_name": "商贸零售",
+   "method": "level1_majority",
+   "stocks": 26,
+   "share": 0.619
+  },
+  "450201": {
+   "l1_code": "420000",
+   "l1_name": "交通运输",
+   "method": "transition",
+   "stocks": 3,
+   "share": 0.2727
+  },
+  "450301": {
+   "l1_code": "450000",
+   "l1_name": "商贸零售",
+   "method": "transition",
+   "stocks": 3,
+   "share": 0.75
+  },
+  "450302": {
+   "l1_code": "240000",
+   "l1_name": "有色金属",
+   "method": "transition",
+   "stocks": 1,
+   "share": 0.3333
+  },
+  "450303": {
+   "l1_code": "450000",
+   "l1_name": "商贸零售",
+   "method": "transition",
+   "stocks": 3,
+   "share": 0.6
+  },
+  "450401": {
+   "l1_code": "450000",
+   "l1_name": "商贸零售",
+   "method": "transition",
+   "stocks": 3,
+   "share": 0.6
+  },
+  "450501": {
+   "l1_code": "450000",
+   "l1_name": "商贸零售",
+   "method": "transition",
+   "stocks": 5,
+   "share": 1.0
+  },
+  "450502": {
+   "l1_code": "450000",
+   "l1_name": "商贸零售",
+   "method": "transition",
+   "stocks": 9,
+   "share": 1.0
+  },
+  "460101": {
+   "l1_code": "460000",
+   "l1_name": "社会服务",
+   "method": "transition",
+   "stocks": 2,
+   "share": 1.0
+  },
+  "460102": {
+   "l1_code": "460000",
+   "l1_name": "社会服务",
+   "method": "transition",
+   "stocks": 9,
+   "share": 1.0
+  },
+  "460201": {
+   "l1_code": "460000",
+   "l1_name": "社会服务",
+   "method": "transition",
+   "stocks": 6,
+   "share": 1.0
+  },
+  "460301": {
+   "l1_code": "460000",
+   "l1_name": "社会服务",
+   "method": "transition",
+   "stocks": 10,
+   "share": 0.8333
+  },
+  "460401": {
+   "l1_code": "460000",
+   "l1_name": "社会服务",
+   "method": "transition",
+   "stocks": 4,
+   "share": 1.0
+  },
+  "460501": {
+   "l1_code": "460000",
+   "l1_name": "社会服务",
+   "method": "transition",
+   "stocks": 3,
+   "share": 0.75
+  },
+  "470101": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "470201": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "470202": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "470203": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "470204": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "470301": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "470302": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "470303": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "470401": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "470402": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "470403": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "470404": {
+   "l1_code": "000000",
+   "l1_name": null,
+   "method": "unmapped",
+   "stocks": 0,
+   "share": 0.0
+  },
+  "480101": {
+   "l1_code": "480000",
+   "l1_name": "银行",
+   "method": "transition",
+   "stocks": 41,
+   "share": 1.0
+  },
+  "490101": {
+   "l1_code": "490000",
+   "l1_name": "非银金融",
+   "method": "transition",
+   "stocks": 2,
+   "share": 1.0
+  },
+  "490201": {
+   "l1_code": "490000",
+   "l1_name": "非银金融",
+   "method": "level1_majority",
+   "stocks": 27,
+   "share": 0.8182
+  },
+  "490301": {
+   "l1_code": "490000",
+   "l1_name": "非银金融",
+   "method": "transition",
+   "stocks": 25,
+   "share": 0.8065
+  },
+  "510101": {
+   "l1_code": "460000",
+   "l1_name": "社会服务",
+   "method": "transition",
+   "stocks": 12,
+   "share": 0.3871
+  },
+  "610101": {
+   "l1_code": "510000",
+   "l1_name": "综合",
+   "method": "transition",
+   "stocks": 2,
+   "share": 0.3333
+  },
+  "610201": {
+   "l1_code": "630000",
+   "l1_name": "电力设备",
+   "method": "transition",
+   "stocks": 3,
+   "share": 1.0
+  },
+  "610301": {
+   "l1_code": "610000",
+   "l1_name": "建筑材料",
+   "method": "level2_majority",
+   "stocks": 13,
+   "share": 0.52
+  },
+  "610302": {
+   "l1_code": "610000",
+   "l1_name": "建筑材料",
+   "method": "transition",
+   "stocks": 3,
+   "share": 0.75
+  },
+  "610303": {
+   "l1_code": "610000",
+   "l1_name": "建筑材料",
+   "method": "transition",
+   "stocks": 10,
+   "share": 0.4762
+  },
+  "620101": {
+   "l1_code": "620000",
+   "l1_name": "建筑装饰",
+   "method": "transition",
+   "stocks": 13,
+   "share": 0.8125
+  },
+  "620201": {
+   "l1_code": "620000",
+   "l1_name": "建筑装饰",
+   "method": "transition",
+   "stocks": 2,
+   "share": 0.4
+  },
+  "620301": {
+   "l1_code": "620000",
+   "l1_name": "建筑装饰",
+   "method": "transition",
+   "stocks": 3,
+   "share": 1.0
+  },
+  "620302": {
+   "l1_code": "620000",
+   "l1_name": "建筑装饰",
+   "method": "transition",
+   "stocks": 20,
+   "share": 1.0
+  },
+  "620303": {
+   "l1_code": "620000",
+   "l1_name": "建筑装饰",
+   "method": "transition",
+   "stocks": 7,
+   "share": 1.0
+  },
+  "620304": {
+   "l1_code": "620000",
+   "l1_name": "建筑装饰",
+   "method": "transition",
+   "stocks": 2,
+   "share": 1.0
+  },
+  "620305": {
+   "l1_code": "620000",
+   "l1_name": "建筑装饰",
+   "method": "transition",
+   "stocks": 6,
+   "share": 1.0
+  },
+  "620401": {
+   "l1_code": "620000",
+   "l1_name": "建筑装饰",
+   "method": "level2_majority",
+   "stocks": 3,
+   "share": 0.4286
+  },
+  "620402": {
+   "l1_code": "620000",
+   "l1_name": "建筑装饰",
+   "method": "transition",
+   "stocks": 1,
+   "share": 0.5
+  },
+  "620403": {
+   "l1_code": "620000",
+   "l1_name": "建筑装饰",
+   "method": "level2_majority",
+   "stocks": 3,
+   "share": 0.4286
+  },
+  "620404": {
+   "l1_code": "620000",
+   "l1_name": "建筑装饰",
+   "method": "transition",
+   "stocks": 2,
+   "share": 0.4
+  },
+  "620501": {
+   "l1_code": "620000",
+   "l1_name": "建筑装饰",
+   "method": "transition",
+   "stocks": 23,
+   "share": 0.8846
+  },
+  "630101": {
+   "l1_code": "240000",
+   "l1_name": "有色金属",
+   "method": "transition",
+   "stocks": 1,
+   "share": 1.0
+  },
+  "630201": {
+   "l1_code": "630000",
+   "l1_name": "电力设备",
+   "method": "transition",
+   "stocks": 18,
+   "share": 0.9474
+  },
+  "630202": {
+   "l1_code": "640000",
+   "l1_name": "机械设备",
+   "method": "transition",
+   "stocks": 16,
+   "share": 0.7619
+  },
+  "630203": {
+   "l1_code": "630000",
+   "l1_name": "电力设备",
+   "method": "transition",
+   "stocks": 13,
+   "share": 0.8125
+  },
+  "630301": {
+   "l1_code": "630000",
+   "l1_name": "电力设备",
+   "method": "level2_majority",
+   "stocks": 80,
+   "share": 0.9195
+  },
+  "630302": {
+   "l1_code": "630000",
+   "l1_name": "电力设备",
+   "method": "transition",
+   "stocks": 16,
+   "share": 1.0
+  },
+  "630303": {
+   "l1_code": "630000",
+   "l1_name": "电力设备",
+   "method": "transition",
+   "stocks": 31,
+   "share": 0.8857
+  },
+  "630304": {
+   "l1_code": "630000",
+   "l1_name": "电力设备",
+   "method": "transition",
+   "stocks": 1,
+   "share": 0.3333
+  },
+  "630305": {
+   "l1_code": "630000",
+   "l1_name": "电力设备",
+   "method": "transition",
+   "stocks": 29,
+   "share": 0.9667
+  },
+  "630306": {
+   "l1_code": "630000",
+   "l1_name": "电力设备",
+   "method": "transition",
+   "stocks": 3,
+   "share": 1.0
+  },
+  "630401": {
+   "l1_code": "630000",
+   "l1_name": "电力设备",
+   "method": "transition",
+   "stocks": 10,
+   "share": 0.9091
+  },
+  "630402": {
+   "l1_code": "630000",
+   "l1_name": "电力设备",
+   "method": "transition",
+   "stocks": 21,
+   "share": 1.0
+  },
+  "630403": {
+   "l1_code": "630000",
+   "l1_name": "电力设备",
+   "method": "transition",
+   "stocks": 11,
+   "share": 1.0
+  },
+  "630404": {
+   "l1_code": "630000",
+   "l1_name": "电力设备",
+   "method": "transition",
+   "stocks": 31,
+   "share": 0.9394
+  },
+  "640101": {
+   "l1_code": "640000",
+   "l1_name": "机械设备",
+   "method": "transition",
+   "stocks": 2,
+   "share": 1.0
+  },
+  "640102": {
+   "l1_code": "640000",
+   "l1_name": "机械设备",
+   "method": "transition",
+   "stocks": 48,
+   "share": 0.9796
+  },
+  "640103": {
+   "l1_code": "630000",
+   "l1_name": "电力设备",
+   "method": "transition",
+   "stocks": 2,
+   "share": 0.6667
+  },
+  "640104": {
+   "l1_code": "280000",
+   "l1_name": "汽车",
+   "method": "transition",
+   "stocks": 6,
+   "share": 0.8571
+  },
+  "640105": {
+   "l1_code": "630000",
+   "l1_name": "电力设备",
+   "method": "transition",
+   "stocks": 1,
+   "share": 1.0
+  },
+  "640106": {
+   "l1_code": "640000",
+   "l1_name": "机械设备",
+   "method": "transition",
+   "stocks": 15,
+   "share": 0.75
+  },
+  "640201": {
+   "l1_code": "640000",
+   "l1_name": "机械设备",
+   "method": "transition",
+   "stocks": 13,
+   "share": 1.0
+  },
+  "640202": {
+   "l1_code": "640000",
+   "l1_name": "机械设备",
+   "method": "transition",
+   "stocks": 8,
+   "share": 1.0
+  },
+  "640203": {
+   "l1_code": "620000",
+   "l1_name": "建筑装饰",
+   "method": "transition",
+   "stocks": 1,
+   "share": 0.25
+  },
+  "640204": {
+   "l1_code": "730000",
+   "l1_name": "通信",
+   "method": "transition",
+   "stocks": 1,
+   "share": 0.5
+  },
+  "640205": {
+   "l1_code": "760000",
+   "l1_name": "环保",
+   "method": "transition",
+   "stocks": 14,
+   "share": 0.9333
+  },
+  "640206": {
+   "l1_code": "350000",
+   "l1_name": "纺织服饰",
+   "method": "transition",
+   "stocks": 1,
+   "share": 1.0
+  },
+  "640207": {
+   "l1_code": "640000",
+   "l1_name": "机械设备",
+   "method": "level2_majority",
+   "stocks": 55,
+   "share": 0.5046
+  },
+  "640208": {
+   "l1_code": "630000",
+   "l1_name": "电力设备",
+   "method": "transition",
+   "stocks": 1,
+   "share": 0.5
+  },
+  "640209": {
+   "l1_code": "640000",
+   "l1_name": "机械设备",
+   "method": "transition",
+   "stocks": 32,
+   "share": 0.5
+  },
+  "640301": {
+   "l1_code": "640000",
+   "l1_name": "机械设备",
+   "method": "transition",
+   "stocks": 33,
+   "share": 0.75
+  },
+  "640401": {
+   "l1_code": "640000",
+   "l1_name": "机械设备",
+   "method": "transition",
+   "stocks": 23,
+   "share": 0.8519
+  },
+  "640501": {
+   "l1_code": "640000",
+   "l1_name": "机械设备",
+   "method": "transition",
+   "stocks": 1,
+   "share": 1.0
+  },
+  "650101": {
+   "l1_code": "650000",
+   "l1_name": "国防军工",
+   "method": "transition",
+   "stocks": 10,
+   "share": 0.9091
+  },
+  "650201": {
+   "l1_code": "650000",
+   "l1_name": "国防军工",
+   "method": "transition",
+   "stocks": 5,
+   "share": 0.625
+  },
+  "650301": {
+   "l1_code": "650000",
+   "l1_name": "国防军工",
+   "method": "transition",
+   "stocks": 11,
+   "share": 0.9167
+  },
+  "650401": {
+   "l1_code": "630000",
+   "l1_name": "电力设备",
+   "method": "transition",
+   "stocks": 2,
+   "share": 1.0
+  },
+  "710101": {
+   "l1_code": "710000",
+   "l1_name": "计算机",
+   "method": "transition",
+   "stocks": 50,
+   "share": 0.8929
+  },
+  "710201": {
+   "l1_code": "710000",
+   "l1_name": "计算机",
+   "method": "transition",
+   "stocks": 99,
+   "share": 1.0
+  },
+  "710202": {
+   "l1_code": "710000",
+   "l1_name": "计算机",
+   "method": "transition",
+   "stocks": 109,
+   "share": 0.916
+  },
+  "720101": {
+   "l1_code": "720000",
+   "l1_name": "传媒",
+   "method": "transition",
+   "stocks": 25,
+   "share": 0.9615
+  },
+  "720102": {
+   "l1_code": "720000",
+   "l1_name": "传媒",
+   "method": "transition",
+   "stocks": 24,
+   "share": 0.9231
+  },
+  "720103": {
+   "l1_code": "720000",
+   "l1_name": "传媒",
+   "method": "transition",
+   "stocks": 12,
+   "share": 1.0
+  },
+  "720104": {
+   "l1_code": "460000",
+   "l1_name": "社会服务",
+   "method": "transition",
+   "stocks": 13,
+   "share": 0.8667
+  },
+  "720201": {
+   "l1_code": "720000",
+   "l1_name": "传媒",
+   "method": "transition",
+   "stocks": 31,
+   "share": 0.7949
+  },
+  "720301": {
+   "l1_code": "720000",
+   "l1_name": "传媒",
+   "method": "transition",
+   "stocks": 17,
+   "share": 0.8095
+  },
+  "720302": {
+   "l1_code": "720000",
+   "l1_name": "传媒",
+   "method": "transition",
+   "stocks": 32,
+   "share": 0.8649
+  },
+  "720303": {
+   "l1_code": "720000",
+   "l1_name": "传媒",
+   "method": "transition",
+   "stocks": 1,
+   "share": 1.0
+  },
+  "730101": {
+   "l1_code": "730000",
+   "l1_name": "通信",
+   "method": "transition",
+   "stocks": 5,
+   "share": 1.0
+  },
+  "730201": {
+   "l1_code": "730000",
+   "l1_name": "通信",
+   "method": "transition",
+   "stocks": 29,
+   "share": 0.8529
+  },
+  "730202": {
+   "l1_code": "730000",
+   "l1_name": "通信",
+   "method": "transition",
+   "stocks": 41,
+   "share": 0.9318
+  },
+  "730203": {
+   "l1_code": "730000",
+   "l1_name": "通信",
+   "method": "transition",
+   "stocks": 27,
+   "share": 0.9
+  }
+ }
+}
