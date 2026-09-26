@@ -320,3 +320,16 @@ def test_full_reload_cannot_shrink_existing_history(tmp_path: Path) -> None:
     assert manifest["status"] == "partial"
     assert "history_not_shrunk" in set(issues(tmp_path, manifest)["rule"])
     pd.testing.assert_frame_equal(bars(tmp_path, "600001"), before)
+
+
+def test_exchange_list_outage_falls_back_to_the_previous_master(tmp_path: Path) -> None:
+    provider = FakeProvider(today=date(2026, 9, 24))
+    run(tmp_path, provider, SATURDAY_NIGHT)
+
+    def unavailable():
+        raise RuntimeError("SSL: UNEXPECTED_EOF_WHILE_READING")
+
+    provider.fetch_security_lists = unavailable
+    manifest = run(tmp_path, provider, SATURDAY_NIGHT)
+    assert manifest["status"] == "complete"
+    assert "lists_available" in set(issues(tmp_path, manifest)["rule"])

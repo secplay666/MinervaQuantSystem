@@ -57,3 +57,11 @@ class MarketDataProvider(ABC):
     @abstractmethod
     def fetch_sz_name_changes(self) -> pd.DataFrame:
         raise NotImplementedError
+
+    @abstractmethod
+    def fetch_sse_bulletins(self, title: str, start: str, end: str) -> pd.DataFrame:
+        raise NotImplementedError
+
+    @abstractmethod
+    def fetch_bse_announcements(self, keyword: str, start: str, end: str) -> pd.DataFrame:
+        raise NotImplementedError

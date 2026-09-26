@@ -210,6 +210,18 @@ class FakeProvider(MarketDataProvider):
                    "市值", "公告日期", "公告时间", "证券类型", "市场类型", "是否跳过"]
         return pd.DataFrame(self.baidu_rows.get(pd.to_datetime(date).date(), []), columns=columns)
 
+    sse_bulletins: list[dict[str, object]] = field(default_factory=list)
+    bse_announcements: list[dict[str, object]] = field(default_factory=list)
+
+    def fetch_sse_bulletins(self, title: str, start: str, end: str) -> pd.DataFrame:
+        self.calls.append(("sse_bulletins", f"{title}:{start}"))
+        rows = [r for r in self.sse_bulletins if title in r["TITLE"] and start <= r["SSEDATE"] <= end]
+        return pd.DataFrame(rows, columns=["SECURITY_CODE", "SECURITY_NAME", "SSEDATE", "TITLE", "ORG_BULLETIN_ID"])
+
+    def fetch_bse_announcements(self, keyword: str, start: str, end: str) -> pd.DataFrame:
+        rows = [r for r in self.bse_announcements if keyword in r["disclosureTitle"] and start <= r["publishDate"] <= end]
+        return pd.DataFrame(rows, columns=["companyCd", "companyName", "disclosureTitle", "destFilePath", "publishDate"])
+
     def fetch_sz_name_changes(self) -> pd.DataFrame:
         return pd.DataFrame(
             [{"变更日期": "2026-09-08", "证券代码": "000001", "证券简称": "乙银行",

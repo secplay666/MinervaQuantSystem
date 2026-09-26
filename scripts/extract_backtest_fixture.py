@@ -32,8 +32,8 @@ SPECIAL = {
     "000792": "长期停牌后复牌",
     "300750": "创业板 2020-08-24 涨跌幅改制",
     "688981": "科创板 200 股起、1 股递增",
-    "600112": "上交所一字 ±5% 锁板（无 ST 历史）",
-    "600289": "上交所一字 ±5% 锁板（无 ST 历史）",
+    "600112": "上交所 ST 期间一字 ±5% 锁板（公告推导的 ST 历史）",
+    "600289": "上交所 ST 期间一字 ±5% 锁板（公告推导的 ST 历史）",
     "002052": "深市 ST 期间一字 ±5% 锁板",
     "000609": "深市 ST 期间一字 ±5% 锁板",
     "000838": "深市 2026 年被实施 *ST",
@@ -65,7 +65,7 @@ def extract(database: Path, output: Path) -> dict:
                            WHERE symbol IN ({in_list}) ORDER BY symbol, effective_date""",
             "master": f"""SELECT symbol, board, exchange, list_date, delist_date FROM security_master
                           WHERE symbol IN ({in_list}) ORDER BY symbol""",
-            "risk": f"""SELECT symbol, status, start_date, end_date, method FROM risk_warning_intervals
+            "risk": f"""SELECT symbol, status, start_date, end_date, method, source FROM risk_warning_intervals
                         WHERE symbol IN ({in_list}) ORDER BY symbol, start_date""",
             "indices": f"""SELECT symbol, trade_date, close FROM index_bars
                            WHERE symbol IN ({",".join(f"'{s}'" for s in INDICES)}) ORDER BY symbol, trade_date""",

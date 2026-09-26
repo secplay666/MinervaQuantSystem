@@ -187,6 +187,7 @@ def _audit(
     _check_limit_breaches(con, root, result)
     _check_factor_freshness(con, root, expected_latest, result)
     _check_calendar_against_index(con, root, start_date, expected_latest, result)
+    _check_risk_history(root, result)
     return result
 
 
@@ -514,3 +515,71 @@ def _check_calendar_against_index(
                 int(len(frame)),
             )
         )
+
+
+def _check_risk_history(root: Path, result: AuditResult) -> None:
+    """Risk-warning intervals vs independent evidence (ADR-004).
+
+    * names in the latest end-of-day snapshot must match the modeled status;
+    * SSE main-board risk-warned sessions before 2026-07-06 must stay inside
+      the 5% band.
+    """
+    from .risk_history import MAIN_BOARD_RISK_LIMIT_CHANGE, sse_main_price_evidence
+    from .symbols import risk_status_from_name
+
+    intervals_path = canonical_path(root, "risk_warning_intervals")
+    if not intervals_path.exists():
+        return
+    intervals = pd.read_parquet(intervals_path)
+    intervals = intervals[intervals["start_date"].notna()]
+    for column in ("start_date", "end_date"):
+        intervals[column] = pd.to_datetime(intervals[column])
+
+    def status_on(symbol_rows: pd.DataFrame, day: pd.Timestamp) -> str | None:
+        hit = symbol_rows[(symbol_rows["start_date"] <= day)
+                          & (symbol_rows["end_date"].isna() | (symbol_rows["end_date"] > day))]
+        return hit["status"].iloc[0] if len(hit) else None
+
+    grouped = {symbol: rows for symbol, rows in intervals.groupby("symbol")}
+    snapshots = sorted((root / "data" / "canonical" / "market_snapshot").glob("snapshot_date=*/data.parquet"))
+    if snapshots:
+        snapshot = pd.read_parquet(snapshots[-1], columns=["symbol", "name", "snapshot_date"])
+        day = pd.Timestamp(snapshot["snapshot_date"].iloc[0])
+        mismatched = []
+        for symbol, name in zip(snapshot["symbol"], snapshot["name"]):
+            named = risk_status_from_name(name)
+            modeled = status_on(grouped[symbol], day) if symbol in grouped else None
+            if (named or None) != (modeled or None):
+                mismatched.append(f"{symbol}:{name}/{modeled}")
+        result.summary["risk_name_mismatches"] = {"snapshot": str(day.date()), "count": len(mismatched)}
+        if mismatched:
+            result.issues.append(QualityIssue(
+                "risk_warning_intervals", "matches_snapshot_names", "warning",
+                f"{len(mismatched)} 只证券的风险警示状态与 {day.date()} 快照名称不一致: " + "; ".join(mismatched[:20]),
+                len(mismatched)))
+    master_path = canonical_path(root, "security_master")
+    calendar_path = canonical_path(root, "trading_calendar")
+    if not master_path.exists() or not calendar_path.exists():
+        return
+    master = pd.read_parquet(master_path, columns=["symbol", "board"])
+    main = set(master.loc[master["board"] == "SSE_MAIN", "symbol"])
+    warned = intervals[intervals["symbol"].isin(main) & intervals["status"].isin(["ST", "*ST"])
+                       & (intervals["start_date"] < pd.Timestamp(MAIN_BOARD_RISK_LIMIT_CHANGE))]
+    if warned.empty:
+        return
+    sessions = sorted(pd.to_datetime(pd.read_parquet(calendar_path)["trade_date"]).dt.strftime("%Y-%m-%d"))
+    evidence = sse_main_price_evidence(root, sessions, sorted(set(warned["symbol"])))
+    evidence = evidence[evidence["beyond"]]
+    evidence["trade_date"] = pd.to_datetime(evidence["trade_date"])
+    breaks = []
+    for row in warned.itertuples(index=False):
+        rows = evidence[(evidence["symbol"] == row.symbol) & (evidence["trade_date"] >= row.start_date)]
+        if not pd.isna(row.end_date):
+            rows = rows[rows["trade_date"] < row.end_date]
+        breaks.extend(f"{row.symbol}:{d.date()}" for d in rows["trade_date"])
+    result.summary["risk_price_band_breaks"] = len(breaks)
+    if breaks:
+        result.issues.append(QualityIssue(
+            "risk_warning_intervals", "consistent_with_price_limits", "warning",
+            f"上交所主板风险警示区间内有 {len(breaks)} 个交易日超出 5% 涨跌幅: " + ", ".join(breaks[:20]),
+            len(breaks)))

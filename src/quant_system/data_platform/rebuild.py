@@ -33,8 +33,8 @@ from .normalization import (
     SOURCE_SINA_RAW_DAILY,
     SOURCE_TENCENT_DAILY,
     SOURCE_TENCENT_INDEX,
+    SCHEMA_VERSION,
     as_date,
-    build_risk_warning_intervals,
     calendar_open_dates,
     clip_bars,
     drop_invalid_price_rows,
@@ -52,6 +52,13 @@ from .normalization import (
     recompute_bar_derived_fields,
 )
 from .quality import QualityIssue, has_blocking, issues_frame, validate_adjustment_factors, validate_bars, validate_volume_units
+from .risk_history import (
+    RISK_KEYWORDS,
+    derive_risk_intervals,
+    merge_bulletins,
+    normalize_bse_announcements,
+    normalize_sse_bulletins,
+)
 from .sessions import latest_final_session, parse_hhmm
 from .storage import (
     CatalogError,
@@ -123,6 +130,7 @@ class CanonicalRebuilder:
         LOGGER.info("Rebuilding canonical layer into %s", self.staging)
         started_at = utc_now_iso()
         open_dates, calendar_end = self._rebuild_calendar()
+        self.open_dates, self.calendar_end = open_dates, calendar_end
         master = self._rebuild_security_master()
         self._rebuild_daily_bars(master, calendar_end)
         self._rebuild_factors(open_dates)
@@ -378,10 +386,44 @@ class CanonicalRebuilder:
                                                 run_id_to_iso(run_id))
             if not changes.empty:
                 write_canonical_frame(self.staging, "security_name_changes", changes)
-        if master is not None and "status" in master.columns and runs:
-            intervals = build_risk_warning_intervals(changes, master, runs[-1][0])
-            if not intervals.empty:
-                write_canonical_frame(self.staging, "risk_warning_intervals", intervals)
+        bulletins, bulletin_runs = self._rebuild_risk_bulletins(master)
+        if master is not None and "status" in master.columns and (runs or bulletin_runs):
+            run_id = max([run for run, _ in runs] + bulletin_runs)
+            sessions = [day.isoformat() for day in self.open_dates]
+            combined = derive_risk_intervals(self.staging, sessions, master, changes, bulletins, run_id,
+                                             SCHEMA_VERSION, str(self.calendar_end))
+            if not combined.intervals.empty:
+                write_canonical_frame(self.staging, "risk_warning_intervals", combined.intervals)
+            if not combined.adjustments.empty:
+                write_canonical_frame(self.staging, "risk_warning_adjustments", combined.adjustments)
+
+    def _rebuild_risk_bulletins(self, master: pd.DataFrame | None) -> tuple[pd.DataFrame | None, list[str]]:
+        """Replay raw exchange-bulletin windows (named EXCHANGE_slug_start_end)."""
+        keywords = {slug: keyword for keyword, slug in RISK_KEYWORDS.items()}
+        bulletins, log_rows, run_ids = None, [], []
+        for run_id, directory in _raw_runs(self.raw_root, "risk_bulletins"):
+            run_ids.append(run_id)
+            for path in sorted(directory.glob("*.parquet")):
+                parts = path.stem.split("_")
+                exchange, start, end, slug = parts[0], parts[-2], parts[-1], "_".join(parts[1:-2])
+                keyword = keywords[slug]
+                raw = pd.read_parquet(path)
+                if exchange == "SSE":
+                    frame = normalize_sse_bulletins(raw, keyword, run_id, SCHEMA_VERSION)
+                elif master is not None:
+                    frame, _ = normalize_bse_announcements(raw, keyword, run_id, SCHEMA_VERSION, master)
+                else:
+                    continue
+                bulletins = merge_bulletins(bulletins, frame)
+                log_rows.append({"exchange": exchange, "keyword": keyword, "window_start": start,
+                                 "window_end": end, "rows": len(frame), "run_id": run_id})
+        if bulletins is not None and not bulletins.empty:
+            write_canonical_frame(self.staging, "risk_warning_bulletins", bulletins)
+        if log_rows:
+            log = pd.DataFrame(log_rows).drop_duplicates(["exchange", "keyword", "window_start", "window_end"],
+                                                         keep="last")
+            write_canonical_frame(self.staging, "bulletin_fetch_log", log)
+        return bulletins, run_ids
 
     # ---------------------------------------------------------------- diff
 

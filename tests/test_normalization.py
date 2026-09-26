@@ -7,7 +7,6 @@ import pytest
 
 from fakes import OPEN_DATES, at
 from quant_system.data_platform.normalization import (
-    build_risk_warning_intervals,
     clip_bars,
     drop_invalid_price_rows,
     merge_daily_bars,
@@ -19,6 +18,7 @@ from quant_system.data_platform.normalization import (
     normalize_security_master,
     normalize_sz_name_changes,
     normalize_tfp_suspensions,
+    risk_intervals_from_names,
     tencent_volume_scale,
 )
 from quant_system.data_platform.sessions import latest_final_session, session_offset, snapshot_session
@@ -235,11 +235,10 @@ def test_name_changes_to_intervals() -> None:
         {"变更日期": "2022-05-06", "证券代码": "000100", "证券简称": "x", "变更前简称": "ST甲", "变更后简称": "甲公司"},
     ])
     changes = normalize_sz_name_changes(raw, "r", "t")
-    master = pd.DataFrame([
-        {"symbol": "000100", "name": "甲公司", "status": "listed"},
-        {"symbol": "600100", "name": "*ST乙", "status": "listed"},
-    ])
-    intervals = build_risk_warning_intervals(changes, master, "r")
+    intervals = pd.concat([
+        risk_intervals_from_names(changes, {"000100": "甲公司"}, "r", "szse_name_change"),
+        risk_intervals_from_names(changes.iloc[0:0], {"600100": "*ST乙"}, "r", "current_name_only"),
+    ], ignore_index=True)
     rows = intervals.sort_values(["symbol", "start_date"], na_position="first").to_dict("records")
     assert [(r["symbol"], r["status"], r["start_date"], r["end_date"], r["method"]) for r in rows] == [
         ("000100", "*ST", date(2020, 5, 6), date(2021, 5, 6), "szse_name_change"),

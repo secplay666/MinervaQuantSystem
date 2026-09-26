@@ -20,7 +20,8 @@
 | `index_bars` | 主要指数日线 |
 | `market_snapshot` | 收盘后的全市场快照 |
 | `suspension_events` | 停复牌事件（东方财富数据中心 + 百度日历，2023 年起） |
-| `security_name_changes` / `risk_warning_intervals` | 深市简称变更，以及由此得到的 ST 区间；沪市、北交所目前只有当前状态 |
+| `security_name_changes` / `risk_warning_intervals` | 风险警示（ST/\*ST/退市整理）区间，三个交易所都带生效日期：深市来自简称变更，沪市、北交所由交易所公告推导，并用名称和价格证据校正（[ADR-004](docs/adr/ADR-004-adjustment-and-point-in-time.md)） |
+| `risk_warning_bulletins` / `risk_warning_adjustments` | 上交所、北交所风险警示相关公告，以及推导 ST 区间时每一处修正的记录 |
 | `bar_gaps` | 对照交易日历检测出的日线缺口，并标注是否能被停牌事件解释 |
 
 当前数据只用于数据平台和研究原型。AKShare 官方声明其数据仅用于学术研究，不应作为无人值守实盘的唯一依据。
@@ -46,7 +47,7 @@
 2. 在市证券的日线，每次重新下载最近 3 个交易日以吸收供应商修订；
 3. 全部在市证券的复权因子（已退市证券冻结）；
 4. 指数；
-5. 停复牌事件和深市 ST 区间；
+5. 停复牌事件，以及三个交易所的 ST 区间（深市简称变更；沪市、北交所按季度或年度窗口抓取交易所公告，上交所有限流时剩余窗口顺延到下次运行）；
 6. 收盘后快照；
 7. 全量审计；
 8. 生成质量报告、数据版本和 DuckDB 目录。
@@ -106,6 +107,9 @@ df = con.execute(
 # 从原始层重建标准层：默认只写入 data/staging 并输出差异，加 --apply 才替换（旧标准层归档到 data/archive）
 .\.venv\Scripts\quant-data.exe rebuild
 .\.venv\Scripts\quant-data.exe rebuild --apply
+
+# 只运行部分步骤（交易日历、证券主数据和审计总会运行），例如只刷新停复牌与 ST 历史
+.\.venv\Scripts\quant-data.exe ingest --steps status_history
 
 # 对整个标准层做审计（只读）
 .\.venv\Scripts\quant-data.exe audit

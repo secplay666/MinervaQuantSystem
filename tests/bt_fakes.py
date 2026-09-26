@@ -78,7 +78,7 @@ class SyntheticMarket:
             + [{"symbol": symbol, "effective_date": day, "hfq_factor": value}
                for symbol, events in self.factors.items() for day, value in events]
         )
-        risk = pd.DataFrame(self.risk, columns=["symbol", "status", "start_date", "end_date", "method"])
+        risk = pd.DataFrame(self.risk, columns=["symbol", "status", "start_date", "end_date", "method", "source"])
         indices = pd.DataFrame(
             [{"symbol": "sh000300", "trade_date": day, "close": 4000.0 + index} for index, day in enumerate(self.sessions)]
         )

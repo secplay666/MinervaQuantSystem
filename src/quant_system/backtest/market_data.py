@@ -177,8 +177,12 @@ class MarketData:
         dated = set(risk_frame["symbol"])
         exchange = master["exchange"].to_numpy(dtype=object)
         # SZSE publishes complete dated name changes, so a SZSE symbol without
-        # intervals was never risk-warned; elsewhere the state is unknown.
-        risk_known = np.array([ex == "SZSE" or sym in dated for sym, ex in zip(symbols, exchange)], dtype=bool)
+        # intervals was never risk-warned.  SSE/BSE histories rebuilt from
+        # exchange bulletins (ADR-004) are complete in the same sense.
+        sources = set(risk_frame["source"]) if "source" in risk_frame.columns else set()
+        complete = {"SZSE"} | {code for code, source in (("SSE", "sse_bulletin"), ("BSE", "bse_announcement"))
+                               if source in sources}
+        risk_known = np.array([ex in complete or sym in dated for sym, ex in zip(symbols, exchange)], dtype=bool)
 
         indices: dict[str, np.ndarray] = {}
         index_frame = frames["indices"]
@@ -224,7 +228,7 @@ QUERIES = {
                FROM daily_bars ORDER BY symbol, trade_date""",
     "factors": "SELECT symbol, effective_date, hfq_factor FROM adjustment_factors ORDER BY symbol, effective_date",
     "master": "SELECT symbol, board, exchange, list_date, delist_date FROM security_master ORDER BY symbol",
-    "risk": """SELECT symbol, status, start_date, end_date, method FROM risk_warning_intervals
+    "risk": """SELECT symbol, status, start_date, end_date, method, source FROM risk_warning_intervals
                ORDER BY symbol, start_date""",
     "indices": "SELECT symbol, trade_date, close FROM index_bars ORDER BY symbol, trade_date",
 }

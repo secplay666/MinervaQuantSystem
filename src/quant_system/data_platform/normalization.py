@@ -40,7 +40,6 @@ __all__ = [
     "merge_suspension_events",
     "normalize_sz_name_changes",
     "risk_intervals_from_names",
-    "build_risk_warning_intervals",
 ]
 
 SOURCE_EASTMONEY_DAILY = "akshare.stock_zh_a_hist.eastmoney"
@@ -822,27 +821,3 @@ def _segments_to_intervals(
         intervals.append({"symbol": symbol, "status": status, "start_date": start, "end_date": end})
     return intervals
 
-
-def build_risk_warning_intervals(
-    name_changes: pd.DataFrame | None, master: pd.DataFrame, run_id: str
-) -> pd.DataFrame:
-    """Risk-warning intervals for every live symbol in ``master``.
-
-    SZSE publishes dated name changes, so its intervals have real dates.
-    SSE/BSE publish none; only their current state is known (null start)
-    until daily end-of-day snapshots accumulate a history.
-    """
-    live = master[master["status"] != "delisted"]
-    names = dict(zip(live["symbol"], live["name"]))
-    empty = pd.DataFrame(columns=NAME_CHANGE_COLUMNS)
-    if name_changes is None or name_changes.empty:
-        return risk_intervals_from_names(empty, names, run_id, "current_name_only")
-    szse = {symbol: name for symbol, name in names.items() if infer_exchange(symbol) == "SZSE"}
-    others = {symbol: name for symbol, name in names.items() if symbol not in szse}
-    return pd.concat(
-        [
-            risk_intervals_from_names(name_changes, szse, run_id, "szse_name_change"),
-            risk_intervals_from_names(empty, others, run_id, "current_name_only"),
-        ],
-        ignore_index=True,
-    )

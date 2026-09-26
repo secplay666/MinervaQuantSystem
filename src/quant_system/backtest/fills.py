@@ -81,7 +81,8 @@ def open_state(data: MarketData, rules: MarketRules, i: int, j: int) -> OpenStat
     no_limit = rules.is_no_limit_session(board, data.list_date[j], since_listing)
     if code == RISK_DELISTING and i > 0 and int(data.risk[i - 1, j]) != RISK_DELISTING:
         no_limit = no_limit or rules.delisting_first_session_unlimited(day)
-    up, down = rules.limit_prices(reference, rules.limit_ratio(board, risk, day))
+    ratio = rules.symbol_limit_ratio(str(data.symbols[j]), day) or rules.limit_ratio(board, risk, day)
+    up, down = rules.limit_prices(reference, ratio)
     state.up_fen, state.down_fen = up, down
     if no_limit:
         state.flags.append("NO_LIMIT_SESSION")

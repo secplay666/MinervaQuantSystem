@@ -3,56 +3,244 @@
   "description": "A-share trading rules by effective date. Dates are inclusive; a missing from/to is open-ended. Rates are decimal strings.",
   "tick_fen": 1,
   "price_limits": [
-    {"boards": ["SSE_MAIN", "SZSE_MAIN"], "risk": ["normal"], "ratio": "0.10",
-     "source": "沪深交易所交易规则"},
-    {"boards": ["SSE_MAIN", "SZSE_MAIN"], "risk": ["risk_warning"], "to": "2026-07-05", "ratio": "0.05",
-     "source": "沪深交易所交易规则（风险警示股票 5%）"},
-    {"boards": ["SSE_MAIN", "SZSE_MAIN"], "risk": ["risk_warning"], "from": "2026-07-06", "ratio": "0.10",
-     "source": "沪深交易所 2026-04-24 发布修订规则，2026-07-06 施行（新华网 2026-07-06）；数据中 ST 股最大涨跌幅当日由 5% 跳至 10%"},
-    {"boards": ["SSE_MAIN", "SZSE_MAIN"], "risk": ["delisting_period"], "ratio": "0.10",
-     "source": "退市整理期规则（2020-12-31）：首日不设涨跌幅，其后 10%"},
-    {"boards": ["CHINEXT"], "risk": ["normal", "delisting_period"], "to": "2020-08-23", "ratio": "0.10",
-     "source": "创业板改革前交易规则"},
-    {"boards": ["CHINEXT"], "risk": ["risk_warning"], "to": "2020-08-23", "ratio": "0.05",
-     "source": "创业板改革前交易规则"},
-    {"boards": ["CHINEXT"], "risk": ["normal", "risk_warning", "delisting_period"], "from": "2020-08-24", "ratio": "0.20",
-     "source": "创业板注册制改革 2020-08-24 施行（每经 2020-08-14）"},
-    {"boards": ["STAR"], "risk": ["normal", "risk_warning", "delisting_period"], "ratio": "0.20",
-     "source": "上交所科创板股票交易特别规定（2019-07-22 开市）"},
-    {"boards": ["BSE"], "risk": ["normal", "risk_warning", "delisting_period"], "ratio": "0.30",
-     "source": "北交所交易规则（2021-11-15 开市；精选层同为 30%）"}
+    {
+      "boards": [
+        "SSE_MAIN",
+        "SZSE_MAIN"
+      ],
+      "risk": [
+        "normal"
+      ],
+      "ratio": "0.10",
+      "source": "沪深交易所交易规则"
+    },
+    {
+      "boards": [
+        "SSE_MAIN",
+        "SZSE_MAIN"
+      ],
+      "risk": [
+        "risk_warning"
+      ],
+      "to": "2026-07-05",
+      "ratio": "0.05",
+      "source": "沪深交易所交易规则（风险警示股票 5%）"
+    },
+    {
+      "boards": [
+        "SSE_MAIN",
+        "SZSE_MAIN"
+      ],
+      "risk": [
+        "risk_warning"
+      ],
+      "from": "2026-07-06",
+      "ratio": "0.10",
+      "source": "沪深交易所 2026-04-24 发布修订规则，2026-07-06 施行（新华网 2026-07-06）；数据中 ST 股最大涨跌幅当日由 5% 跳至 10%"
+    },
+    {
+      "boards": [
+        "SSE_MAIN",
+        "SZSE_MAIN"
+      ],
+      "risk": [
+        "delisting_period"
+      ],
+      "ratio": "0.10",
+      "source": "退市整理期规则（2020-12-31）：首日不设涨跌幅，其后 10%"
+    },
+    {
+      "boards": [
+        "CHINEXT"
+      ],
+      "risk": [
+        "normal",
+        "delisting_period"
+      ],
+      "to": "2020-08-23",
+      "ratio": "0.10",
+      "source": "创业板改革前交易规则"
+    },
+    {
+      "boards": [
+        "CHINEXT"
+      ],
+      "risk": [
+        "risk_warning"
+      ],
+      "to": "2020-08-23",
+      "ratio": "0.05",
+      "source": "创业板改革前交易规则"
+    },
+    {
+      "boards": [
+        "CHINEXT"
+      ],
+      "risk": [
+        "normal",
+        "risk_warning",
+        "delisting_period"
+      ],
+      "from": "2020-08-24",
+      "ratio": "0.20",
+      "source": "创业板注册制改革 2020-08-24 施行（每经 2020-08-14）"
+    },
+    {
+      "boards": [
+        "STAR"
+      ],
+      "risk": [
+        "normal",
+        "risk_warning",
+        "delisting_period"
+      ],
+      "ratio": "0.20",
+      "source": "上交所科创板股票交易特别规定（2019-07-22 开市）"
+    },
+    {
+      "boards": [
+        "BSE"
+      ],
+      "risk": [
+        "normal",
+        "risk_warning",
+        "delisting_period"
+      ],
+      "ratio": "0.30",
+      "source": "北交所交易规则（2021-11-15 开市；精选层同为 30%）"
+    }
   ],
   "no_limit_sessions": [
-    {"boards": ["STAR"], "listed_from": "2019-07-22", "first_sessions": 5,
-     "source": "科创板新股上市前 5 个交易日不设涨跌幅"},
-    {"boards": ["CHINEXT"], "listed_from": "2020-08-24", "first_sessions": 5,
-     "source": "创业板注册制新股上市前 5 个交易日不设涨跌幅"},
-    {"boards": ["SSE_MAIN", "SZSE_MAIN"], "listed_from": "2023-04-10", "first_sessions": 5,
-     "source": "全面注册制主板新股上市前 5 个交易日不设涨跌幅（证券时报）"},
-    {"boards": ["SSE_MAIN", "SZSE_MAIN", "CHINEXT", "STAR", "BSE"], "first_sessions": 1,
-     "source": "其余新股上市首日：主板旧规按发行价 +44%/-36%（发行价未知，视为不设限）；北交所首日不设涨跌幅"}
+    {
+      "boards": [
+        "STAR"
+      ],
+      "listed_from": "2019-07-22",
+      "first_sessions": 5,
+      "source": "科创板新股上市前 5 个交易日不设涨跌幅"
+    },
+    {
+      "boards": [
+        "CHINEXT"
+      ],
+      "listed_from": "2020-08-24",
+      "first_sessions": 5,
+      "source": "创业板注册制新股上市前 5 个交易日不设涨跌幅"
+    },
+    {
+      "boards": [
+        "SSE_MAIN",
+        "SZSE_MAIN"
+      ],
+      "listed_from": "2023-04-10",
+      "first_sessions": 5,
+      "source": "全面注册制主板新股上市前 5 个交易日不设涨跌幅（证券时报）"
+    },
+    {
+      "boards": [
+        "SSE_MAIN",
+        "SZSE_MAIN",
+        "CHINEXT",
+        "STAR",
+        "BSE"
+      ],
+      "first_sessions": 1,
+      "source": "其余新股上市首日：主板旧规按发行价 +44%/-36%（发行价未知，视为不设限）；北交所首日不设涨跌幅"
+    }
   ],
-  "delisting_period_first_session_no_limit": {"from": "2020-12-31",
-    "source": "退市新规（深交所 2020-12-31 发布会）：退市整理期首日不设涨跌幅"},
-  "inferred_risk_warning": {"boards": ["SSE_MAIN"], "to": "2026-07-05", "ratio": "0.05",
-    "source": "上交所缺少带日期的 ST 历史：开盘价恰为 ±5% 且等于当日最高/最低价时按锁板处理（ADR-002）"},
+  "delisting_period_first_session_no_limit": {
+    "from": "2020-12-31",
+    "source": "退市新规（深交所 2020-12-31 发布会）：退市整理期首日不设涨跌幅"
+  },
+  "inferred_risk_warning": {
+    "boards": [
+      "SSE_MAIN"
+    ],
+    "to": "2026-07-05",
+    "ratio": "0.05",
+    "source": "上交所缺少带日期的 ST 历史：开盘价恰为 ±5% 且等于当日最高/最低价时按锁板处理（ADR-002）"
+  },
   "lots": [
-    {"boards": ["SSE_MAIN", "SZSE_MAIN", "CHINEXT"], "buy_min": 100, "buy_step": 100, "odd_lot_below": 100,
-     "source": "买入 100 股整数倍；不足 100 股部分一次性卖出"},
-    {"boards": ["STAR"], "buy_min": 200, "buy_step": 1, "odd_lot_below": 200,
-     "source": "科创板单笔申报不少于 200 股，超出部分可按 1 股递增；余额不足 200 股一次性卖出"},
-    {"boards": ["BSE"], "buy_min": 100, "buy_step": 1, "odd_lot_below": 100,
-     "source": "北交所单笔申报不少于 100 股，超出部分可按 1 股递增"}
+    {
+      "boards": [
+        "SSE_MAIN",
+        "SZSE_MAIN",
+        "CHINEXT"
+      ],
+      "buy_min": 100,
+      "buy_step": 100,
+      "odd_lot_below": 100,
+      "source": "买入 100 股整数倍；不足 100 股部分一次性卖出"
+    },
+    {
+      "boards": [
+        "STAR"
+      ],
+      "buy_min": 200,
+      "buy_step": 1,
+      "odd_lot_below": 200,
+      "source": "科创板单笔申报不少于 200 股，超出部分可按 1 股递增；余额不足 200 股一次性卖出"
+    },
+    {
+      "boards": [
+        "BSE"
+      ],
+      "buy_min": 100,
+      "buy_step": 1,
+      "odd_lot_below": 100,
+      "source": "北交所单笔申报不少于 100 股，超出部分可按 1 股递增"
+    }
   ],
   "stamp_duty": [
-    {"side": "sell", "to": "2023-08-27", "rate": "0.001", "source": "证券交易印花税，卖方单边"},
-    {"side": "sell", "from": "2023-08-28", "rate": "0.0005",
-     "source": "财政部 税务总局公告 2023 年第 39 号，2023-08-28 起减半"}
+    {
+      "side": "sell",
+      "to": "2023-08-27",
+      "rate": "0.001",
+      "source": "证券交易印花税，卖方单边"
+    },
+    {
+      "side": "sell",
+      "from": "2023-08-28",
+      "rate": "0.0005",
+      "source": "财政部 税务总局公告 2023 年第 39 号，2023-08-28 起减半"
+    }
   ],
   "transfer_fee": [
-    {"exchanges": ["SSE", "SZSE"], "to": "2022-04-28", "rate": "0.00002", "source": "过户费双向 0.02‰"},
-    {"exchanges": ["BSE"], "to": "2022-04-28", "rate": "0.000025", "source": "北交所过户费 0.025‰"},
-    {"exchanges": ["SSE", "SZSE", "BSE"], "from": "2022-04-29", "rate": "0.00001",
-     "source": "中国结算 2022-04-29 起过户费统一下调至 0.01‰"}
+    {
+      "exchanges": [
+        "SSE",
+        "SZSE"
+      ],
+      "to": "2022-04-28",
+      "rate": "0.00002",
+      "source": "过户费双向 0.02‰"
+    },
+    {
+      "exchanges": [
+        "BSE"
+      ],
+      "to": "2022-04-28",
+      "rate": "0.000025",
+      "source": "北交所过户费 0.025‰"
+    },
+    {
+      "exchanges": [
+        "SSE",
+        "SZSE",
+        "BSE"
+      ],
+      "from": "2022-04-29",
+      "rate": "0.00001",
+      "source": "中国结算 2022-04-29 起过户费统一下调至 0.01‰"
+    }
+  ],
+  "symbol_limits": [
+    {
+      "symbols": [
+        "600182"
+      ],
+      "ratio": "0.05",
+      "source": "未完成股权分置改革的 S 股涨跌幅 5%（S佳通；数据中 2020–2026 年一字板恰为 ±5%）"
+    }
   ]
 }

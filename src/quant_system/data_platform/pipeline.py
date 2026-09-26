@@ -14,8 +14,8 @@ import pandas as pd
 from .audit import run_audit
 from .config import DataPlatformConfig
 from .normalization import (
+    SCHEMA_VERSION,
     as_date,
-    build_risk_warning_intervals,
     calendar_open_dates,
     clip_bars,
     drop_invalid_price_rows,
@@ -46,6 +46,14 @@ from .quality import (
     validate_volume_units,
 )
 from .reporting import write_quality_report
+from .risk_history import (
+    RISK_KEYWORDS,
+    bulletin_windows,
+    derive_risk_intervals,
+    merge_bulletins,
+    normalize_bse_announcements,
+    normalize_sse_bulletins,
+)
 from .sessions import (
     SHANGHAI_TZ,
     latest_final_session,
@@ -68,7 +76,9 @@ from .storage import (
 from .utils import code_version, ensure_directories, json_dump, run_id_to_iso, unique_run_id, utc_now_iso
 
 MAX_RECORDED_ERRORS = 200
+STEPS = ("daily_bars", "adjustment_factors", "indices", "status_history", "market_snapshot")
 BAIDU_MAX_CONSECUTIVE_FAILURES = 10
+BULLETIN_MAX_CONSECUTIVE_FAILURES = 2
 
 
 @dataclass(frozen=True)
@@ -132,12 +142,19 @@ class IngestionPipeline:
         )
         self.clock = clock
         self.final_time = parse_hhmm(config.session_final_time)
+        self.steps: set[str] = set(STEPS)
 
     # ------------------------------------------------------------------ run
 
-    def run(self, mode: str = "incremental") -> dict[str, Any]:
+    def run(self, mode: str = "incremental", steps: set[str] | None = None) -> dict[str, Any]:
+        """``steps`` limits the run to some of STEPS (calendar, security
+        master, audit and finalization always run)."""
         if mode not in {"full", "incremental"}:
             raise ValueError("mode must be one of: full, incremental")
+        unknown = set(steps or ()) - set(STEPS)
+        if unknown:
+            raise ValueError(f"unknown steps {sorted(unknown)}; choose from {list(STEPS)}")
+        self.steps = set(steps) if steps else set(STEPS)
         ensure_directories(self.root)
         run_id = unique_run_id(self.root)
         ctx = RunContext(
@@ -170,13 +187,16 @@ class IngestionPipeline:
         self._ingest_calendar(ctx)
         self._ingest_security_master(ctx)
         universe = self._daily_universe(ctx)
-        self._ingest_daily_bars(ctx, universe)
-        if self.config.download_adjustment_factors:
+        if "daily_bars" in self.steps:
+            self._ingest_daily_bars(ctx, universe)
+        if "adjustment_factors" in self.steps and self.config.download_adjustment_factors:
             self._ingest_adjustment_factors(ctx, universe)
-        self._ingest_indices(ctx)
-        if self.config.download_status_history:
+        if "indices" in self.steps:
+            self._ingest_indices(ctx)
+        if "status_history" in self.steps and self.config.download_status_history:
             self._ingest_status_history(ctx)
-        self._ingest_market_snapshot(ctx)
+        if "market_snapshot" in self.steps:
+            self._ingest_market_snapshot(ctx)
         self._audit(ctx, universe)
 
     # ------------------------------------------------------------ helpers
@@ -232,7 +252,19 @@ class IngestionPipeline:
         return legacy
 
     def _ingest_security_master(self, ctx: RunContext) -> None:
-        lists = self.provider.fetch_security_lists()
+        try:
+            lists = self.provider.fetch_security_lists()
+        except Exception as exc:
+            previous = read_canonical(self.root, "security_master")
+            if previous is None:
+                raise
+            # A temporary outage (e.g. exchange anti-crawling) must not stop
+            # the day's bars; yesterday's master misses at most new listings.
+            ctx.error("security_master", "exchange_lists", exc)
+            ctx.issues.append(QualityIssue("security_master", "lists_available", "warning",
+                                           f"交易所证券列表暂时无法获取，沿用上一版证券主数据: {exc}"))
+            ctx.master = previous
+            return
         for name, frame in lists.items():
             self._raw(ctx, "security_lists", name, frame, f"akshare.security_lists.{name}")
         manual = [asdict(item) for item in self.config.manual_delistings]
@@ -672,9 +704,11 @@ class IngestionPipeline:
             ctx.error(step, "stock_tfp_em", exc)
             ctx.issues.append(QualityIssue(step, "tfp_snapshot", "warning", f"停复牌快照下载失败: {exc}"))
         backfill_start = pd.to_datetime(self.config.suspension_backfill_start).date()
-        done = set()
+        done, empty_before = set(), set()
         if log is not None and not log.empty:
-            done = set(log.loc[log["source"] == "baidu", "query_date"])
+            baidu = log[log["source"] == "baidu"]
+            done = set(baidu.loc[baidu["rows"] >= 0, "query_date"])
+            empty_before = set(baidu.loc[baidu["rows"] < 0, "query_date"])
         # Re-query the latest sessions: announcements can land after the day.
         recent = set(ctx.open_dates[max(0, ctx.open_dates.index(ctx.expected_latest) - 2):
                                     ctx.open_dates.index(ctx.expected_latest) + 1])
@@ -688,11 +722,15 @@ class IngestionPipeline:
                           "akshare.news_trade_notify_suspend_baidu")
                 consecutive_failures = 0
                 if raw is None or len(raw.columns) == 0:
-                    # AKShare returns a bare DataFrame() when the response has
-                    # no result (throttling, bad cookie) as well as on a day
-                    # with no events; either way it is retried next run.
-                    empty_days += 1
-                    ctx.count(step, "baidu_empty_days")
+                    # AKShare returns a bare DataFrame() both when throttled and
+                    # on a day without events.  A day is retried once in a later
+                    # run; empty twice, it is recorded as a day without events.
+                    confirmed = query_date in empty_before
+                    log_rows.append({"source": "baidu", "query_date": query_date, "rows": 0 if confirmed else -1,
+                                     "run_id": ctx.run_id})
+                    ctx.count(step, "baidu_empty_confirmed" if confirmed else "baidu_empty_days")
+                    if not confirmed:
+                        empty_days += 1
                     continue
                 part = normalize_baidu_suspensions(raw, query_date, ctx.run_id, ctx.ingested_at)
                 new_parts.append(part)
@@ -750,12 +788,79 @@ class IngestionPipeline:
             ctx.issues.append(QualityIssue("security_name_changes", "download", "warning",
                                            f"深交所简称变更下载失败，沿用上一版本: {exc}"))
             changes = read_canonical(self.root, "security_name_changes")
-        intervals = build_risk_warning_intervals(changes, ctx.master, ctx.run_id)
-        if not intervals.empty:
-            write_canonical_frame(self.root, "risk_warning_intervals", intervals)
-            ctx.summaries["risk_warning_intervals"] = {
-                str(key): int(value) for key, value in intervals["method"].value_counts().items()
-            }
+        bulletins = self._ingest_risk_bulletins(ctx)
+        sessions = [day.isoformat() for day in ctx.open_dates]
+        combined = derive_risk_intervals(self.root, sessions, ctx.master, changes, bulletins, ctx.run_id,
+                                         SCHEMA_VERSION, str(ctx.expected_latest))
+        if not combined.intervals.empty:
+            write_canonical_frame(self.root, "risk_warning_intervals", combined.intervals)
+        if not combined.adjustments.empty:
+            write_canonical_frame(self.root, "risk_warning_adjustments", combined.adjustments)
+        ctx.summaries["risk_warning_intervals"] = {
+            "by_method": {str(k): int(v) for k, v in combined.intervals["source"].value_counts().items()},
+            **combined.summary,
+        }
+        if combined.uncovered:
+            ctx.issues.append(QualityIssue(
+                "risk_warning_intervals", "dated_history_covers_live_names", "warning",
+                "以下在市证券名称带风险警示但没有带日期的区间覆盖，仅保留当前状态: "
+                + ", ".join(combined.uncovered[:30]), len(combined.uncovered)))
+
+    def _ingest_risk_bulletins(self, ctx: RunContext) -> pd.DataFrame | None:
+        """Fetch SSE/BSE risk-warning bulletins window by window (append-only)."""
+        step = "risk_warning_bulletins"
+        existing = read_canonical(self.root, step)
+        log = read_canonical(self.root, "bulletin_fetch_log")
+        today = self.clock().date().isoformat()
+        parts, log_rows, unmapped = [], [], 0
+        consecutive: dict[str, int] = {}
+        for exchange, keyword, start, end in bulletin_windows(today, log):
+            slug = RISK_KEYWORDS[keyword]
+            if consecutive.get(exchange, 0) >= BULLETIN_MAX_CONSECUTIVE_FAILURES:
+                # The exchange is refusing requests (anti-crawling); leave the
+                # remaining windows for the next run instead of hammering it.
+                ctx.count(step, "deferred_windows")
+                continue
+            try:
+                if exchange == "SSE":
+                    raw = self.provider.fetch_sse_bulletins(keyword, start, end)
+                    frame = normalize_sse_bulletins(raw, keyword, ctx.run_id, SCHEMA_VERSION)
+                else:
+                    raw = self.provider.fetch_bse_announcements(keyword, start, end)
+                    frame, dropped = normalize_bse_announcements(raw, keyword, ctx.run_id, SCHEMA_VERSION, ctx.master)
+                    unmapped += dropped
+            except Exception as exc:
+                ctx.error(step, f"{exchange}:{slug}:{start}", exc)
+                ctx.count(step, "failed_windows")
+                consecutive[exchange] = consecutive.get(exchange, 0) + 1
+                continue
+            consecutive[exchange] = 0
+            self._raw(ctx, "risk_bulletins", f"{exchange}_{slug}_{start}_{end}", raw,
+                      f"exchange_bulletins.{exchange}.{slug}")
+            parts.append(frame)
+            log_rows.append({"exchange": exchange, "keyword": keyword, "window_start": start, "window_end": end,
+                             "rows": len(frame), "run_id": ctx.run_id})
+            ctx.count(step, "windows")
+        failed = ctx.counters.get(step, {}).get("failed_windows", 0)
+        deferred = ctx.counters.get(step, {}).get("deferred_windows", 0)
+        if failed or deferred:
+            ctx.issues.append(QualityIssue(step, "fetch_windows", "warning",
+                                           f"交易所公告抓取：{failed} 个窗口失败、{deferred} 个窗口推迟，下次运行重试",
+                                           failed + deferred))
+        if unmapped:
+            ctx.count(step, "bse_unmapped_announcements", unmapped)
+        merged = existing
+        for part in parts:
+            merged = merge_bulletins(merged, part)
+        if merged is not None and not merged.empty:
+            write_canonical_frame(self.root, step, merged)
+        if log_rows:
+            new_log = pd.DataFrame(log_rows)
+            if log is not None and not log.empty:
+                new_log = pd.concat([log, new_log], ignore_index=True).drop_duplicates(
+                    ["exchange", "keyword", "window_start", "window_end"], keep="last")
+            write_canonical_frame(self.root, "bulletin_fetch_log", new_log)
+        return merged
 
     # ------------------------------------------------------------ snapshot
 
@@ -806,7 +911,7 @@ class IngestionPipeline:
         summary = quality_summary(ctx.issues)
         daily = ctx.counters.get("daily_bars", {})
         usable = daily.get("updated", 0) + daily.get("frozen_delisted", 0)
-        if fatal is not None or usable == 0:
+        if fatal is not None or ("daily_bars" in self.steps and usable == 0):
             status = "failed"
         elif summary["blocking"]:
             status = "partial"

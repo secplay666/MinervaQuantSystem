@@ -3,6 +3,7 @@ from __future__ import annotations
 import functools
 import json
 import logging
+import math
 import threading
 import time
 from collections.abc import Callable
@@ -122,9 +123,10 @@ class AkShareProvider(MarketDataProvider):
     def version(self) -> str:
         return str(ak.__version__)
 
-    def _call(self, name: str, func: Callable[..., T], **kwargs: object) -> T:
+    def _call(self, name: str, func: Callable[..., T], attempts: int | None = None, **kwargs: object) -> T:
         last_error: Exception | None = None
-        for attempt in range(1, self.max_retries + 1):
+        max_attempts = attempts or self.max_retries
+        for attempt in range(1, max_attempts + 1):
             try:
                 result = func(**kwargs)
                 if self.request_pause_seconds:
@@ -132,12 +134,12 @@ class AkShareProvider(MarketDataProvider):
                 return result
             except Exception as exc:  # upstream errors are heterogeneous
                 last_error = exc
-                if _is_terminal(exc) or attempt >= self.max_retries:
+                if _is_terminal(exc) or attempt >= max_attempts:
                     break
                 delay = min(2 ** (attempt - 1), 8)
                 self.logger.warning(
                     "%s failed on attempt %s/%s: %s; retrying in %ss",
-                    name, attempt, self.max_retries, exc, delay,
+                    name, attempt, max_attempts, exc, delay,
                 )
                 time.sleep(delay)
         terminal = last_error is not None and _is_terminal(last_error)
@@ -289,6 +291,82 @@ class AkShareProvider(MarketDataProvider):
         return self._call(
             "stock_info_sz_change_name", ak.stock_info_sz_change_name, symbol="简称变更"
         )
+
+    # -- exchange bulletins (risk-warning history) -----------------------------
+
+    def fetch_sse_bulletins(self, title: str, start: str, end: str) -> pd.DataFrame:
+        """SSE company bulletins whose title contains ``title`` (YYYY-MM-DD).
+
+        The service returns nothing for windows longer than about a quarter,
+        so callers pass quarterly windows.
+        """
+        rows: list[dict] = []
+        page, pages = 1, 1
+        while page <= pages:
+            time.sleep(SSE_BULLETIN_PAUSE_SECONDS)  # the SSE query service throttles bursts
+            # Retrying hard during an anti-crawling block only prolongs it.
+            data, total = self._call(f"sse_bulletins:{title}:{start}:{page}", _sse_bulletin_page,
+                                     attempts=BULLETIN_ATTEMPTS, title=title, start=start, end=end, page=page)
+            rows.extend(data)
+            pages = max(1, math.ceil(total / SSE_PAGE_SIZE))
+            page += 1
+        return pd.DataFrame(rows)
+
+    def fetch_bse_announcements(self, keyword: str, start: str, end: str) -> pd.DataFrame:
+        """BSE announcements whose title contains ``keyword`` (YYYY-MM-DD)."""
+        rows: list[dict] = []
+        page, pages = 0, 1
+        while page < pages:
+            data, pages = self._call(f"bse_announcements:{keyword}:{start}:{page}", _bse_announcement_page,
+                                     attempts=BULLETIN_ATTEMPTS, keyword=keyword, start=start, end=end, page=page)
+            rows.extend(data)
+            page += 1
+        return pd.DataFrame(rows)
+
+
+SSE_PAGE_SIZE = 100
+SSE_BULLETIN_PAUSE_SECONDS = 3.0
+BULLETIN_ATTEMPTS = 2
+_BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+               "Chrome/124.0 Safari/537.36")
+
+
+def _jsonp(text: str) -> object:
+    return json.loads(text[text.find("(") + 1:text.rfind(")")])
+
+
+def _sse_bulletin_page(title: str, start: str, end: str, page: int) -> tuple[list[dict], int]:
+    params = {
+        "jsonCallBack": "jsonpCallback1", "isPagination": "true", "pageHelp.pageSize": str(SSE_PAGE_SIZE),
+        "pageHelp.cacheSize": "1", "pageHelp.pageNo": str(page), "pageHelp.beginPage": str(page),
+        "pageHelp.endPage": str(page), "START_DATE": start, "END_DATE": end, "SECURITY_CODE": "",
+        "TITLE": title, "BULLETIN_TYPE": "", "stockType": "",
+    }
+    response = requests.get(
+        "https://query.sse.com.cn/security/stock/queryCompanyBulletinNew.do", params=params,
+        headers={"Referer": "https://www.sse.com.cn/", "User-Agent": _BROWSER_UA},
+    )
+    response.raise_for_status()
+    payload = _jsonp(response.text)
+    help_ = payload["pageHelp"]
+    data = [item for row in (help_["data"] or []) for item in (row if isinstance(row, list) else [row])]
+    return data, int(help_["total"] or 0)
+
+
+def _bse_announcement_page(keyword: str, start: str, end: str, page: int) -> tuple[list[dict], int]:
+    form = {
+        "disclosureType[]": "5", "page": str(page), "companyCd": "", "isNewThree": "1", "startTime": start,
+        "endTime": end, "keyword": keyword, "xxfcbj[]": "2",
+        "needFields[]": ["companyCd", "companyName", "disclosureTitle", "destFilePath", "publishDate",
+                         "xxfcbj", "fileExt", "xxzrlx"],
+    }
+    response = requests.post(
+        "https://www.bse.cn/disclosureInfoController/companyAnnouncement.do", params={"callback": "cb"},
+        data=form, headers={"Referer": "https://www.bse.cn/disclosure/announcement.html", "User-Agent": _BROWSER_UA},
+    )
+    response.raise_for_status()
+    listing = _jsonp(response.text)[0]["listInfo"]
+    return list(listing["content"]), int(listing["totalPages"])
 
 
 def _baidu_cookie() -> str | None:

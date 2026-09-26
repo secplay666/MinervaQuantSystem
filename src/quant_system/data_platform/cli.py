@@ -36,7 +36,8 @@ def _load_config(args: argparse.Namespace) -> DataPlatformConfig:
 
 def command_ingest(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
-    manifest = IngestionPipeline(root, _load_config(args)).run(mode=args.mode)
+    steps = set(args.steps.split(",")) if args.steps else None
+    manifest = IngestionPipeline(root, _load_config(args)).run(mode=args.mode, steps=steps)
     _print_json({key: manifest.get(key) for key in (
         "run_id", "status", "mode", "expected_latest_date", "quality_summary", "counters",
         "data_version", "catalog_status", "quality_report_markdown", "fatal_error")})
@@ -109,6 +110,11 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("full", "incremental"),
         default="incremental",
         help="full replaces each selected history; incremental resumes from local partitions",
+    )
+    ingest.add_argument(
+        "--steps",
+        help="comma-separated subset of: daily_bars,adjustment_factors,indices,status_history,market_snapshot "
+             "(calendar, security master and the audit always run)",
     )
     ingest.set_defaults(handler=command_ingest)
 

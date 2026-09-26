@@ -52,7 +52,7 @@ class MomentumStrategy:
         if p.min_avg_turnover_cny > 0:
             mask &= np.nan_to_num(view.mean_turnover(p.turnover_window)) >= p.min_avg_turnover_cny
         if p.exclude_known_risk_warning:
-            mask &= view.risk_state() <= 0  # normal or unknown (SSE/BSE history)
+            mask &= view.risk_state() <= 0  # normal, or unknown where an exchange has no dated history
         return mask
 
     def scores(self, view: PanelView) -> np.ndarray:

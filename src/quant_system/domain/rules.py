@@ -98,6 +98,10 @@ class MarketRules:
         ]
         delisting = payload.get("delisting_period_first_session_no_limit")
         self.delisting_first_session_from = _day(delisting["from"]) if delisting else None
+        self.symbol_limits = [
+            (frozenset(item["symbols"]), _Window(_day(item.get("from")), _day(item.get("to"))), rate(item["ratio"]))
+            for item in payload.get("symbol_limits", [])
+        ]
         inferred = payload.get("inferred_risk_warning")
         self.inferred_risk = (
             (frozenset(inferred["boards"]), _Window(_day(inferred.get("from")), _day(inferred.get("to"))),
@@ -166,6 +170,13 @@ class MarketRules:
             if self._limit_matches(rule, board, risk, day):
                 return rule.ratio
         raise KeyError(f"no price-limit rule for {board}/{risk} on {day}")
+
+    def symbol_limit_ratio(self, symbol: str, day: date) -> Fraction | None:
+        """Security-specific limit (e.g. non-reformed S shares), if any."""
+        for symbols, window, ratio in self.symbol_limits:
+            if symbol in symbols and window.contains(day):
+                return ratio
+        return None
 
     def is_no_limit_session(
         self, board: str, list_date: date | None, sessions_since_listing: int | None

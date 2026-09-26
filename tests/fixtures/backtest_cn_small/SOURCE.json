@@ -1,7 +1,7 @@
 {
   "description": "Backtest regression fixture extracted from the canonical store.",
-  "catalog_run_id": "20260926T030645Z",
-  "data_version": "d0a2a1f8f5f37ed8341ed5f2bb3c6a816b54c13d54493742b933e2ab2247bb06",
+  "catalog_run_id": "20260926T103114Z",
+  "data_version": "f73b9f5644b20ce5868be226a1f44b8384e2c7d484d24a193868bb41cb801578",
   "symbols": [
     "000004",
     "000063",
@@ -58,8 +58,8 @@
     "000792": "长期停牌后复牌",
     "300750": "创业板 2020-08-24 涨跌幅改制",
     "688981": "科创板 200 股起、1 股递增",
-    "600112": "上交所一字 ±5% 锁板（无 ST 历史）",
-    "600289": "上交所一字 ±5% 锁板（无 ST 历史）",
+    "600112": "上交所 ST 期间一字 ±5% 锁板（公告推导的 ST 历史）",
+    "600289": "上交所 ST 期间一字 ±5% 锁板（公告推导的 ST 历史）",
     "002052": "深市 ST 期间一字 ±5% 锁板",
     "000609": "深市 ST 期间一字 ±5% 锁板",
     "000838": "深市 2026 年被实施 *ST"
@@ -70,7 +70,7 @@
     "bars": 60629,
     "factors": 725,
     "master": 40,
-    "risk": 34,
+    "risk": 46,
     "indices": 10007
   },
   "script": "scripts/extract_backtest_fixture.py"

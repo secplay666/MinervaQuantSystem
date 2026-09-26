@@ -1,23 +1,20 @@
 {
   "counters": {
-    "buy_retries_expired": 5,
-    "corporate_actions": 60,
-    "fills": 449,
-    "orders": 489,
+    "buy_retries_expired": 7,
+    "corporate_actions": 56,
+    "fills": 462,
+    "orders": 525,
     "rebalance_signals": 75,
     "rebalances_executed": 74,
-    "reduced_INSUFFICIENT_CASH": 14,
+    "reduced_INSUFFICIENT_CASH": 13,
     "reduced_PARTICIPATION_CAP": 1,
-    "rejected_INSUFFICIENT_CASH": 19,
-    "rejected_LIMIT_DOWN_AT_OPEN": 2,
-    "rejected_LIMIT_LOCK_INFERRED_ST": 2,
-    "rejected_LIMIT_UP_AT_OPEN": 1,
-    "rejected_ONE_PRICE_LIMIT_DOWN": 4,
-    "rejected_ONE_PRICE_LIMIT_UP": 1,
-    "rejected_SUSPENDED": 11,
+    "rejected_INSUFFICIENT_CASH": 31,
+    "rejected_LIMIT_DOWN_AT_OPEN": 14,
+    "rejected_LIMIT_UP_AT_OPEN": 2,
+    "rejected_SUSPENDED": 16,
     "skipped_min_lot_exceeds_target": 14
   },
-  "fingerprint": "061ca821e61a5e162ef750524b87da2e7360f39a7dcc884995ccde4008afdb07",
+  "fingerprint": "358d5afaf2ec929e6d424dac99b0b7fee67575659ca5c925134c97b3ef927362",
   "performance": {
     "sh000300（价格指数）": {
       "cagr": 0.007122046,
@@ -52,59 +49,59 @@
       "volatility": 0.215650758
     },
     "等权全收益基准": {
-      "cagr": 0.19180164,
-      "calmar": 0.625991597,
+      "cagr": 0.231846414,
+      "calmar": 0.764552575,
       "end": "2026-09-24",
-      "max_drawdown": -0.306396509,
-      "max_drawdown_peak": "2021-12-16",
-      "max_drawdown_recovery": "2023-07-28",
+      "max_drawdown": -0.303244566,
+      "max_drawdown_peak": "2021-12-31",
+      "max_drawdown_recovery": "2023-06-16",
       "max_drawdown_trough": "2022-04-26",
-      "monthly_win_rate": 0.567567568,
+      "monthly_win_rate": 0.635135135,
       "sessions": 1516,
-      "sharpe": 0.860035053,
-      "sortino": 1.301234555,
+      "sharpe": 1.037248942,
+      "sortino": 1.572086887,
       "start": "2020-07-01",
-      "total_return": 1.972704589,
-      "volatility": 0.23651114
+      "total_return": 2.649784204,
+      "volatility": 0.225573432
     },
     "策略": {
-      "cagr": 0.181524148,
-      "calmar": 0.401940123,
+      "cagr": 0.224811099,
+      "calmar": 0.547450533,
       "end": "2026-09-24",
-      "max_drawdown": -0.451619874,
-      "max_drawdown_peak": "2021-09-10",
-      "max_drawdown_recovery": "2025-08-19",
-      "max_drawdown_trough": "2022-12-23",
+      "max_drawdown": -0.410650983,
+      "max_drawdown_peak": "2023-06-20",
+      "max_drawdown_recovery": "2025-07-28",
+      "max_drawdown_trough": "2024-02-07",
       "monthly_win_rate": 0.567567568,
       "sessions": 1516,
-      "sharpe": 0.653271745,
-      "sortino": 0.974727127,
+      "sharpe": 0.765012309,
+      "sortino": 1.145072327,
       "start": "2020-07-01",
-      "total_return": 1.81706783,
-      "volatility": 0.34768986
+      "total_return": 2.52226939,
+      "volatility": 0.340902124
     }
   },
   "relative": {
     "sh000300（价格指数）": {
-      "excess_cagr": 0.174402102,
-      "information_ratio": 0.774409059,
-      "tracking_error": 0.26283532
+      "excess_cagr": 0.217689054,
+      "information_ratio": 0.901625026,
+      "tracking_error": 0.263080999
     },
     "sh000905（价格指数）": {
-      "excess_cagr": 0.138855805,
-      "information_ratio": 0.641281805,
-      "tracking_error": 0.252772063
+      "excess_cagr": 0.182142757,
+      "information_ratio": 0.772499329,
+      "tracking_error": 0.253406673
     },
     "等权全收益基准": {
-      "excess_cagr": -0.010277492,
-      "information_ratio": 0.119296303,
-      "tracking_error": 0.198900467
+      "excess_cagr": -0.007035314,
+      "information_ratio": 0.131230389,
+      "tracking_error": 0.204362092
     }
   },
   "trading": {
-    "annual_cost_drag": 0.003760415,
-    "annual_turnover": 3.034516519,
-    "fees_cny": 38752.59,
-    "traded_cny": 62543825.98
+    "annual_cost_drag": 0.003758151,
+    "annual_turnover": 3.05892372,
+    "fees_cny": 45654.62,
+    "traded_cny": 74320590.14
   }
 }

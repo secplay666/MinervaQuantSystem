@@ -22,6 +22,8 @@ SINGLE_FILE_DATASETS = (
     "suspension_events",
     "security_name_changes",
     "risk_warning_intervals",
+    "risk_warning_bulletins",
+    "risk_warning_adjustments",
     "bar_gaps",
 )
 DATE_COLUMNS = {
@@ -32,6 +34,7 @@ DATE_COLUMNS = {
     "trading_calendar": "trade_date",
     "suspension_events": "suspend_start",
     "security_name_changes": "effective_date",
+    "risk_warning_bulletins": "pub_date",
 }
 
 

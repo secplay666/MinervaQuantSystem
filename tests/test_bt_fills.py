@@ -53,6 +53,20 @@ def test_inferred_st_lock_applies_to_sse_main_only_when_history_is_unknown() -> 
     assert szse.lock_buy is None  # SZSE risk history is dated: normal stock, 10% band
 
 
+def test_bulletin_history_makes_sse_status_known_but_not_bse() -> None:
+    # One bulletin-derived SSE interval marks the whole SSE history as dated:
+    # an SSE stock without intervals is then known-normal (no inferred lock).
+    risk = [{"symbol": "600002", "status": "ST", "start_date": DAYS[3], "end_date": None,
+             "method": "bars:first_bar_after_suspension", "source": "sse_bulletin"}]
+    closes = [10.0, 10.4, 10.4, 10.4, 10.4, 10.4]
+    data = market(closes={"600001": closes, "600002": closes, "920001": closes},
+                  opens={"600001": {1: 10.5}}, highs={"600001": {1: 10.5}}, lows={"600001": {1: 10.3}},
+                  risk=risk).build()
+    known = dict(zip(data.symbols, data.risk_known))
+    assert known == {"600001": True, "600002": True, "920001": False}
+    assert open_state(data, rules(), 1, data.symbol_index("600001")).lock_buy is None
+
+
 def test_known_st_uses_the_five_percent_band() -> None:
     risk = [{"symbol": "000001", "status": "ST", "start_date": DAYS[0], "end_date": None,
              "method": "szse_name_change"}]
