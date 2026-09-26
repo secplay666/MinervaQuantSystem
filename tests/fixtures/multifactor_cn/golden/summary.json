@@ -1,0 +1,21 @@
+{
+  "counters": {
+    "buy_retries_expired": 2,
+    "corporate_actions": 44,
+    "fills": 444,
+    "orders": 463,
+    "rebalance_signals": 36,
+    "rebalances_executed": 35,
+    "reduced_INSUFFICIENT_CASH": 3,
+    "rejected_INSUFFICIENT_CASH": 4,
+    "rejected_LIMIT_DOWN_AT_OPEN": 3,
+    "rejected_SUSPENDED": 12
+  },
+  "fingerprint": "8b34a068e4ed4de20369dc830651d89cb8e8565f8fc67d524aaff33ad188ffe2",
+  "performance": {
+    "cagr": 0.082681168,
+    "max_drawdown": -0.232177249,
+    "sharpe": 0.505203359,
+    "total_return": 0.26664051
+  }
+}
