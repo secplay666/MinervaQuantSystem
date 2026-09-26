@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 from pathlib import Path
 from typing import Any
 
@@ -171,6 +170,10 @@ def dataset_summary(inventory: pd.DataFrame) -> dict[str, dict[str, object]]:
 # ---------------------------------------------------------------------------
 
 
+def _parquet_exists(directory: Path) -> bool:
+    return directory.exists() and any(directory.rglob("*.parquet"))
+
+
 def _duckdb_glob(path: Path) -> str:
     return path.resolve().as_posix().replace("'", "''")
 
@@ -218,7 +221,7 @@ WITH latest AS (
     SELECT
         symbol,
         arg_max(hfq_factor, effective_date) AS hfq_latest,
-        max(factor_as_of) AS factor_as_of
+        max({factor_as_of}) AS factor_as_of
     FROM adjustment_factors
     GROUP BY symbol
 ),
@@ -269,7 +272,7 @@ def build_duckdb_catalog(root: Path) -> Path:
         with duckdb.connect(str(temp_path)) as con:
             for dataset in PARTITIONED_DATASETS + SINGLE_FILE_DATASETS:
                 directory = canonical_root / dataset
-                if not directory.exists() or not any(directory.rglob("*.parquet")):
+                if not _parquet_exists(directory):
                     continue
                 glob_path = _duckdb_glob(directory / "**" / "*.parquet")
                 order = f" ORDER BY symbol, {DATE_COLUMNS[dataset]}" if dataset in (
@@ -284,8 +287,17 @@ def build_duckdb_catalog(root: Path) -> Path:
                     "CREATE VIEW instruments AS SELECT * FROM security_master "
                     "WHERE status <> 'delisted'"
                 )
+            elif _parquet_exists(canonical_root / "instruments"):
+                # Legacy store (before security_master): keep the old table.
+                glob_path = _duckdb_glob(canonical_root / "instruments" / "**" / "*.parquet")
+                con.execute(f"CREATE TABLE instruments AS SELECT * FROM read_parquet('{glob_path}')")
+                tables.add("instruments")
             if {"daily_bars", "adjustment_factors"} <= tables:
-                con.execute(ADJUSTED_VIEW_SQL)
+                factor_columns = {row[0] for row in con.execute("DESCRIBE adjustment_factors").fetchall()}
+                # Old-schema factor files carry no factor_as_of.
+                con.execute(ADJUSTED_VIEW_SQL.format(
+                    factor_as_of="factor_as_of" if "factor_as_of" in factor_columns else "CAST(NULL AS DATE)"
+                ))
             runs = pd.DataFrame(
                 _manifest_rows(root),
                 columns=[
@@ -324,8 +336,3 @@ def build_duckdb_catalog(root: Path) -> Path:
     return database_path
 
 
-def archive_directory(source: Path, archive_root: Path, label: str) -> Path:
-    archive_root.mkdir(parents=True, exist_ok=True)
-    target = archive_root / label
-    shutil.move(str(source), str(target))
-    return target

@@ -162,3 +162,10 @@ def test_prevclose_derivation_matches_proportional_factors() -> None:
     assert frame["hfq_factor"].tolist() == pytest.approx([1.0, 100.0 / 99.0])
     with pytest.raises(ProviderError):
         derive_hfq_events_from_prevclose(history.drop(columns=["prevclose"]))
+
+
+def test_volume_unit_rule_checks_each_ingestion_run() -> None:
+    history = pd.concat([_bars(run_id="r1")] * 50, ignore_index=True)
+    appended = _bars(run_id="r2", volume_shares=1_000)  # one new row, in lots
+    issues = validate_volume_units(pd.concat([history, appended], ignore_index=True), "000001")
+    assert issues and "r2" in issues[0].message

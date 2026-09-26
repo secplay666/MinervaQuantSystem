@@ -11,6 +11,7 @@ deleted).
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
 from collections import defaultdict
@@ -53,14 +54,16 @@ from .normalization import (
 from .quality import QualityIssue, has_blocking, issues_frame, validate_adjustment_factors, validate_bars, validate_volume_units
 from .sessions import latest_final_session, parse_hhmm
 from .storage import (
+    CatalogError,
     build_duckdb_catalog,
+    canonical_inventory,
     canonical_path,
     read_canonical,
     read_raw_source,
     write_canonical_frame,
     write_parquet_atomic,
 )
-from .utils import json_dump, make_run_id, run_id_to_iso, utc_now_iso
+from .utils import code_version, json_dump, run_id_to_iso, unique_run_id, utc_now_iso
 
 LOGGER = logging.getLogger("rebuild")
 RUN_DIR = re.compile(r"^run_id=(\d{8}T\d{6}Z)$")
@@ -107,7 +110,7 @@ class CanonicalRebuilder:
         self.config = config
         self.workers = workers
         self.raw_root = self.root / "data" / "raw" / config.provider
-        self.rebuild_id = make_run_id()
+        self.rebuild_id = unique_run_id(self.root)
         self.staging = self.root / "data" / "staging" / f"rebuild_{self.rebuild_id}"
         self.start_date = pd.to_datetime(config.start_date).date()
         self.final_time = parse_hhmm(config.session_final_time)
@@ -131,10 +134,14 @@ class CanonicalRebuilder:
         if not audit.gaps.empty:
             write_canonical_frame(self.staging, "bar_gaps", audit.gaps)
         diff = self._diff()
+        blocking = has_blocking(self.issues) or has_blocking(audit.issues)
         report = {
             "run_id": self.rebuild_id,
             "mode": "rebuild",
-            "status": "partial" if has_blocking(self.issues) else "complete",
+            "status": "partial" if blocking else "complete",
+            "provider": self.config.provider,
+            "config_hash": self.config.config_hash,
+            "code_version": code_version(self.root),
             "started_at": started_at,
             "finished_at": utc_now_iso(),
             "staging": self.staging.relative_to(self.root).as_posix(),
@@ -151,12 +158,22 @@ class CanonicalRebuilder:
         }
         write_parquet_atomic(issues_frame(self.issues), self.staging / "rebuild_issues.parquet")
         if apply:
-            if has_blocking(self.issues):
+            if blocking:
                 raise RuntimeError("Rebuild produced blocking issues; staging kept for inspection")
             report["archived_to"] = self._swap()
             report["applied"] = True
-            report["database_path"] = str(build_duckdb_catalog(self.root))
-            json_dump(self.root / "data" / "manifests" / f"{self.rebuild_id}.json", report)
+            report["data_version"] = canonical_inventory(self.root)[1]
+            manifest_path = self.root / "data" / "manifests" / f"{self.rebuild_id}.json"
+            # Written before the catalog so ingestion_runs lists this rebuild.
+            json_dump(manifest_path, report)
+            try:
+                report["database_path"] = str(build_duckdb_catalog(self.root))
+                report["catalog_status"] = "built"
+            except CatalogError as exc:
+                LOGGER.error("%s", exc)
+                report["catalog_status"] = f"failed: {exc}"
+                report["status"] = "partial"
+            json_dump(manifest_path, report)
         json_dump(self.staging.parent / f"rebuild_{self.rebuild_id}.json", report)
         return report
 
@@ -338,11 +355,16 @@ class CanonicalRebuilder:
             for run_id, directory in _raw_runs(self.raw_root, dataset):
                 for path in sorted(directory.glob("*.parquet")):
                     observed = pd.to_datetime(path.stem).date()
-                    part = normalizer(pd.read_parquet(path), observed, run_id, run_id_to_iso(run_id))
+                    raw = pd.read_parquet(path)
+                    if len(raw.columns) == 0:
+                        continue  # empty vendor response: not a completed day (see pipeline)
+                    part = normalizer(raw, observed, run_id, run_id_to_iso(run_id))
                     events = merge_suspension_events(events, part)
                     if dataset == "suspensions_baidu":
                         log_rows.append({"source": "baidu", "query_date": observed, "rows": len(part),
                                          "run_id": run_id})
+        if events is not None and master is not None:
+            events = events[events["symbol"].isin(master["symbol"])]
         if events is not None and not events.empty:
             write_canonical_frame(self.staging, "suspension_events", events)
         if log_rows:
@@ -381,37 +403,82 @@ class CanonicalRebuilder:
                     ).fetchone()[0] if files else 0
                     counts[label] = {"files": len(files), "rows": int(rows)}
                 result[dataset] = counts
-            if (live / "daily_bars").exists() and (staged / "daily_bars").exists():
-                live_glob = (live / "daily_bars" / "**" / "*.parquet").as_posix()
-                staged_glob = (staged / "daily_bars" / "**" / "*.parquet").as_posix()
-                detail = con.execute(
-                    f"""
-                    WITH a AS (SELECT symbol, trade_date, close, volume_shares FROM read_parquet('{live_glob}',
-                               union_by_name=true, hive_partitioning=false)),
-                         b AS (SELECT symbol, trade_date, close, volume_shares FROM read_parquet('{staged_glob}',
-                               union_by_name=true, hive_partitioning=false))
-                    SELECT
-                        count(*) FILTER (WHERE b.symbol IS NULL) AS only_live,
-                        count(*) FILTER (WHERE a.symbol IS NULL) AS only_rebuilt,
-                        count(*) FILTER (WHERE a.symbol IS NOT NULL AND b.symbol IS NOT NULL
-                                         AND a.close IS DISTINCT FROM b.close) AS close_changed,
-                        count(*) FILTER (WHERE a.symbol IS NOT NULL AND b.symbol IS NOT NULL
-                                         AND a.volume_shares IS DISTINCT FROM b.volume_shares) AS volume_changed,
-                        count(DISTINCT a.symbol) FILTER (WHERE a.volume_shares IS DISTINCT FROM b.volume_shares
-                                         AND b.symbol IS NOT NULL) AS symbols_volume_changed
-                    FROM a FULL OUTER JOIN b ON a.symbol = b.symbol AND a.trade_date = b.trade_date
-                    """
-                ).fetchdf().iloc[0].to_dict()
-                result["daily_bars_detail"] = {key: int(value) for key, value in detail.items()}
+            for dataset, key, spec in (
+                ("daily_bars", "trade_date", DAILY_DIFF),
+                ("index_bars", "trade_date", INDEX_DIFF),
+                ("adjustment_factors", "effective_date", FACTOR_DIFF),
+            ):
+                if (live / dataset).exists() and (staged / dataset).exists():
+                    result[f"{dataset}_detail"] = self._value_diff(
+                        con, live / dataset, staged / dataset, key, spec
+                    )
         return result
 
+    @staticmethod
+    def _value_diff(
+        con: duckdb.DuckDBPyConnection, live: Path, staged: Path, key: str, spec: dict[str, str]
+    ) -> dict[str, int]:
+        """Row-level diff on (symbol, key); ``spec`` maps label -> column SQL."""
+        def relation(directory: Path) -> str:
+            glob = (directory / "**" / "*.parquet").as_posix()
+            return f"read_parquet('{glob}', union_by_name=true, hive_partitioning=false)"
+
+        columns = {}
+        for label, directory in (("a", live), ("b", staged)):
+            columns[label] = {row[0] for row in con.execute(f"DESCRIBE SELECT * FROM {relation(directory)}").fetchall()}
+
+        def expression(side: str, sql: str) -> str:
+            # Columns renamed across schema versions: first existing wins.
+            names = [name.strip() for name in sql.split("|")]
+            present = [f"{side}.{name}" for name in names if name in columns[side]]
+            return f"COALESCE({', '.join(present)})" if present else "NULL"
+
+        changed = ",\n".join(
+            f"count(*) FILTER (WHERE a.symbol IS NOT NULL AND b.symbol IS NOT NULL AND "
+            f"{expression('a', sql)} IS DISTINCT FROM {expression('b', sql)}) AS {label}_changed"
+            for label, sql in spec.items()
+        )
+        any_changed = " OR ".join(
+            f"{expression('a', sql)} IS DISTINCT FROM {expression('b', sql)}" for sql in spec.values()
+        )
+        row = con.execute(
+            f"""
+            SELECT
+                count(*) FILTER (WHERE b.symbol IS NULL) AS only_live,
+                count(*) FILTER (WHERE a.symbol IS NULL) AS only_rebuilt,
+                {changed},
+                count(DISTINCT a.symbol) FILTER (WHERE b.symbol IS NOT NULL AND ({any_changed})) AS symbols_changed
+            FROM {relation(live)} AS a
+            FULL OUTER JOIN {relation(staged)} AS b ON a.symbol = b.symbol AND a.{key} = b.{key}
+            """
+        ).fetchdf().iloc[0].to_dict()
+        return {name: int(value) for name, value in row.items()}
+
     def _swap(self) -> str:
+        """Archive the live store and move the rebuilt one in, or change nothing.
+
+        Plain renames fail atomically when a file is held open (Windows);
+        shutil.move would fall back to copy+delete and could leave the live
+        store half deleted.
+        """
         live = self.root / "data" / "canonical"
         archive = self.root / "data" / "archive" / f"canonical_before_rebuild_{self.rebuild_id}"
         archive.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(live), str(archive))
-        shutil.move(str(self.staging / "data" / "canonical"), str(live))
+        os.rename(live, archive)
+        try:
+            os.rename(self.staging / "data" / "canonical", live)
+        except OSError:
+            os.rename(archive, live)
+            raise
         return archive.relative_to(self.root).as_posix()
+
+
+DAILY_DIFF = {
+    "open": "open", "high": "high", "low": "low", "close": "close",
+    "volume": "volume_shares", "turnover": "turnover_cny",
+}
+INDEX_DIFF = {"close": "close", "volume": "volume_shares | volume", "turnover": "turnover_cny"}
+FACTOR_DIFF = {"hfq": "hfq_factor"}
 
 
 def rebuild_canonical(root: Path, config: DataPlatformConfig, apply: bool = False) -> dict[str, Any]:

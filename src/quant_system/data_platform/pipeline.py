@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-import shutil
+import os
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
@@ -46,7 +46,14 @@ from .quality import (
     validate_volume_units,
 )
 from .reporting import write_quality_report
-from .sessions import latest_final_session, parse_hhmm, session_offset, shanghai_now, snapshot_session
+from .sessions import (
+    SHANGHAI_TZ,
+    latest_final_session,
+    parse_hhmm,
+    session_offset,
+    shanghai_now,
+    snapshot_session,
+)
 from .storage import (
     CatalogError,
     build_duckdb_catalog,
@@ -58,7 +65,7 @@ from .storage import (
     write_parquet_atomic,
     write_raw_frame,
 )
-from .utils import code_version, ensure_directories, json_dump, make_run_id, run_id_to_iso, utc_now_iso
+from .utils import code_version, ensure_directories, json_dump, run_id_to_iso, unique_run_id, utc_now_iso
 
 MAX_RECORDED_ERRORS = 200
 BAIDU_MAX_CONSECUTIVE_FAILURES = 10
@@ -132,7 +139,7 @@ class IngestionPipeline:
         if mode not in {"full", "incremental"}:
             raise ValueError("mode must be one of: full, incremental")
         ensure_directories(self.root)
-        run_id = make_run_id()
+        run_id = unique_run_id(self.root)
         ctx = RunContext(
             run_id=run_id,
             mode=mode,
@@ -151,6 +158,12 @@ class IngestionPipeline:
             self.logger.exception("Ingestion run %s aborted", run_id)
             fatal = exc
             ctx.issues.append(QualityIssue("run", "completed", "blocking", f"运行中止: {exc}"))
+        except BaseException as exc:  # Ctrl+C / SystemExit: record, then propagate
+            json_dump(manifest_path, {"run_id": run_id, "status": "aborted", "mode": mode,
+                                      "started_at": ctx.started_at, "finished_at": utc_now_iso(),
+                                      "fatal_error": f"{type(exc).__name__}: {exc}",
+                                      "counters": ctx.counters})
+            raise
         return self._finalize(ctx, manifest_path, fatal)
 
     def _run_steps(self, ctx: RunContext) -> None:
@@ -164,7 +177,7 @@ class IngestionPipeline:
         if self.config.download_status_history:
             self._ingest_status_history(ctx)
         self._ingest_market_snapshot(ctx)
-        self._audit(ctx)
+        self._audit(ctx, universe)
 
     # ------------------------------------------------------------ helpers
 
@@ -226,6 +239,14 @@ class IngestionPipeline:
         master = normalize_security_master(lists, manual, ctx.run_id, ctx.ingested_at)
         previous = self._previous_master()
         issues = validate_security_master(master, previous, self.config.max_listing_shrink_ratio)
+        empty_lists = sorted(name for name, frame in lists.items() if frame is None or frame.empty)
+        if empty_lists:
+            # Every list (including the delisting lists) is always non-empty
+            # upstream; an empty one means a failed or truncated response.
+            issues.append(
+                QualityIssue("security_master", "lists_not_empty", "blocking",
+                             f"交易所列表返回为空: {', '.join(empty_lists)}", len(empty_lists))
+            )
         ctx.issues.extend(issues)
         if has_blocking(issues):
             if previous is None or "list_date" not in previous.columns:
@@ -241,7 +262,11 @@ class IngestionPipeline:
             # Superseded by security_master; kept (not deleted) for audit.
             target = self.root / "data" / "archive" / f"instruments_{ctx.run_id}"
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(legacy), str(target))
+            try:
+                os.rename(legacy, target)
+            except OSError as exc:  # e.g. a file held open on Windows
+                ctx.issues.append(QualityIssue("security_master", "legacy_instruments_archived", "warning",
+                                               f"旧 instruments 目录归档失败，保留原处: {exc}"))
         ctx.master = master
         counts = master["status"].value_counts().to_dict()
         ctx.summaries["security_master"] = {key: int(value) for key, value in counts.items()}
@@ -249,13 +274,27 @@ class IngestionPipeline:
     def _carry_forward_removed(
         self, ctx: RunContext, master: pd.DataFrame, previous: pd.DataFrame
     ) -> pd.DataFrame:
-        """Symbols that vanish from every list without a delisting record.
+        """Keep every previously known security that is missing now.
 
-        BSE delistings are not published by any endpoint, so a disappearing
-        code is kept as delisted (unknown date) and flagged for review.
+        A master row is never dropped: that would reintroduce survivorship
+        bias.  Previously delisted rows are kept as they were.  A live code
+        that vanishes without a delisting record (BSE publishes none) is kept
+        as delisted with an unknown date and flagged for review.
         """
-        live_before = previous[previous["status"] != "delisted"]
-        removed = live_before[~live_before["symbol"].isin(master["symbol"])]
+        missing = previous[~previous["symbol"].isin(master["symbol"])]
+        kept = missing[missing["status"] == "delisted"]
+        if not kept.empty:
+            ctx.issues.append(
+                QualityIssue(
+                    "security_master",
+                    "delisted_record_missing",
+                    "warning",
+                    "以下已退市证券不再出现在退市列表中，沿用上一版本记录: " + ", ".join(kept["symbol"].head(50)),
+                    int(len(kept)),
+                )
+            )
+            master = pd.concat([master, kept.reindex(columns=master.columns)], ignore_index=True)
+        removed = missing[missing["status"] != "delisted"]
         if removed.empty:
             return master
         rows = []
@@ -319,11 +358,11 @@ class IngestionPipeline:
         return start, end
 
     def _fetch_start(
-        self, ctx: RunContext, window_start: date, bounds: tuple[date, date] | None
+        self, ctx: RunContext, window_start: date, bounds: tuple[date, date, date | None] | None
     ) -> date:
         if ctx.mode == "full" or bounds is None:
             return window_start
-        existing_min, existing_max = bounds
+        existing_min, existing_max, _ = bounds
         first_session = next((d for d in ctx.open_dates if d >= window_start), window_start)
         if existing_min > first_session:
             return window_start  # head missing (e.g. start_date moved earlier)
@@ -331,12 +370,34 @@ class IngestionPipeline:
         overlap_start = session_offset(ctx.open_dates, existing_max, self.config.overlap_sessions)
         return max(window_start, overlap_start)
 
-    def _partition_bounds(self, dataset: str, symbol: str) -> tuple[date, date] | None:
+    def _partition_bounds(self, dataset: str, symbol: str) -> tuple[date, date, date | None] | None:
+        """(first bar, last bar, Shanghai date of the latest ingestion)."""
         path = canonical_path(self.root, dataset, f"symbol={symbol}")
         if not path.exists():
             return None
-        dates = pd.read_parquet(path, columns=["trade_date"])["trade_date"]
-        return (dates.min(), dates.max()) if not dates.empty else None
+        frame = pd.read_parquet(path, columns=["trade_date", "ingested_at"])
+        if frame.empty:
+            return None
+        ingested = pd.to_datetime(frame["ingested_at"], errors="coerce", utc=True).max()
+        ingested_date = None if pd.isna(ingested) else ingested.tz_convert(SHANGHAI_TZ).date()
+        return frame["trade_date"].min(), frame["trade_date"].max(), ingested_date
+
+    @staticmethod
+    def _delisted_history_final(
+        ctx: RunContext, item: UniverseItem, last_date: date | None, fetched_on: date | None
+    ) -> bool:
+        """A delisted symbol's history is final, so it need not be fetched again.
+
+        Final when it already reaches the last session before delisting, or
+        was fetched on/after the delisting date (covers names whose trading
+        stopped weeks earlier, e.g. merger suspensions).
+        """
+        if not item.is_delisted or item.delist_date is None:
+            return False
+        before = [d for d in ctx.open_dates if d < item.delist_date]
+        if last_date is not None and before and last_date >= before[-1]:
+            return True
+        return fetched_on is not None and fetched_on >= item.delist_date
 
     def _ingest_daily_bars(self, ctx: RunContext, universe: list[UniverseItem]) -> None:
         step = "daily_bars"
@@ -351,37 +412,43 @@ class IngestionPipeline:
             if window_end < window_start:
                 ctx.count(step, "empty_window")
                 continue
-            if ctx.mode == "incremental" and item.is_delisted and bounds is not None:
+            if (ctx.mode == "incremental" and bounds is not None
+                    and self._delisted_history_final(ctx, item, bounds[1], bounds[2])):
                 ctx.count(step, "frozen_delisted")
                 continue
             pending[item.symbol] = (item, self._fetch_start(ctx, window_start, bounds), window_end)
         ctx.count(step, "requested", len(pending))
 
         def fetch(symbol: str) -> FetchResult:
-            _, fetch_start, window_end = pending[symbol]
-            return self.provider.fetch_daily_bars(symbol, self._date_str(fetch_start), self._date_str(window_end))
+            item, fetch_start, window_end = pending[symbol]
+            return self.provider.fetch_daily_bars(
+                symbol, self._date_str(fetch_start), self._date_str(window_end), delisted=item.is_delisted
+            )
 
         with ThreadPoolExecutor(max_workers=self.config.max_workers) as executor:
             futures = {executor.submit(fetch, symbol): symbol for symbol in pending}
-            for done, future in enumerate(as_completed(futures), start=1):
-                symbol = futures[future]
-                item, fetch_start, window_end = pending[symbol]
-                try:
-                    result = future.result()
-                    existing = (
-                        read_canonical(self.root, step, f"symbol={symbol}")
-                        if ctx.mode == "incremental" else None
-                    )
-                    status = self._store_daily_bars(ctx, item, fetch_start, window_end, existing, result)
-                    checkpoint["completed"].append({"symbol": symbol, "status": status})
-                except Exception as exc:
-                    self.logger.warning("Daily bars failed for %s: %s", symbol, exc)
-                    ctx.error(step, symbol, exc)
-                    ctx.count(step, "failed")
-                    checkpoint["failed"].append({"symbol": symbol, "error": str(exc)})
-                if done % 100 == 0 or done == len(futures):
-                    self.logger.info("Daily bars progress: %s/%s", done, len(futures))
-                    self._checkpoint(ctx, step, checkpoint)
+            try:
+                for done, future in enumerate(as_completed(futures), start=1):
+                    symbol = futures[future]
+                    item, fetch_start, window_end = pending[symbol]
+                    try:
+                        result = future.result()
+                        previous = read_canonical(self.root, step, f"symbol={symbol}")
+                        existing = previous if ctx.mode == "incremental" else None
+                        status = self._store_daily_bars(ctx, item, fetch_start, window_end, existing,
+                                                        result, previous)
+                        checkpoint["completed"].append({"symbol": symbol, "status": status})
+                    except Exception as exc:
+                        self.logger.warning("Daily bars failed for %s: %s", symbol, exc)
+                        ctx.error(step, symbol, exc)
+                        ctx.count(step, "failed")
+                        checkpoint["failed"].append({"symbol": symbol, "error": str(exc)})
+                    if done % 100 == 0 or done == len(futures):
+                        self.logger.info("Daily bars progress: %s/%s", done, len(futures))
+                        self._checkpoint(ctx, step, checkpoint)
+            except BaseException:
+                executor.shutdown(wait=False, cancel_futures=True)
+                raise
         self._checkpoint(ctx, step, checkpoint)
         failed = ctx.counters.get(step, {}).get("failed", 0)
         if pending and failed / len(pending) > 1 - self.config.min_latest_coverage:
@@ -403,6 +470,7 @@ class IngestionPipeline:
         window_end: date,
         existing: pd.DataFrame | None,
         result: FetchResult,
+        previous: pd.DataFrame | None = None,
     ) -> str:
         step = "daily_bars"
         symbol = item.symbol
@@ -425,6 +493,17 @@ class IngestionPipeline:
             ctx.count(step, "no_data")
             return "no_data"
         issues = validate_bars(merged, step, symbol) + validate_volume_units(merged, symbol)
+        if previous is not None and not previous.empty:
+            # A full reload must not lose sessions we already hold (truncated
+            # vendor responses); incremental merges are supersets by design.
+            held, _ = clip_bars(previous[["trade_date"]], window_start, window_end)
+            lost = sorted(set(held["trade_date"]) - set(merged["trade_date"]))
+            if lost:
+                issues.append(
+                    QualityIssue(step, "history_not_shrunk", "blocking",
+                                 f"{symbol} 新数据缺少已有的 {len(lost)} 个交易日（最早 {lost[0]}）",
+                                 len(lost), symbol=symbol)
+                )
         ctx.issues.extend(issues)
         if has_blocking(issues):
             self._quarantine(ctx, step, f"symbol={symbol}", merged)
@@ -443,10 +522,11 @@ class IngestionPipeline:
         step = "adjustment_factors"
         pending: list[UniverseItem] = []
         for item in universe:
-            path = canonical_path(self.root, step, f"symbol={item.symbol}")
             # Factors are re-anchored snapshots, not an append-only log, so
-            # every live symbol is refreshed each run; delisted ones are final.
-            if ctx.mode == "incremental" and item.is_delisted and path.exists():
+            # every live symbol is refreshed each run; delisted ones become
+            # final once refreshed with factor_as_of on/after the delisting.
+            if ctx.mode == "incremental" and self._delisted_history_final(
+                    ctx, item, None, self._factor_as_of(item.symbol)):
                 ctx.count(step, "frozen_delisted")
                 continue
             if item.symbol not in ctx.first_bar_dates:
@@ -461,19 +541,23 @@ class IngestionPipeline:
                 executor.submit(self.provider.fetch_adjustment_factors, item.symbol): item
                 for item in pending
             }
-            for done, future in enumerate(as_completed(futures), start=1):
-                item = futures[future]
-                try:
-                    status = self._store_factors(ctx, item, future.result())
-                    checkpoint["completed"].append({"symbol": item.symbol, "status": status})
-                except Exception as exc:
-                    self.logger.warning("Adjustment factors failed for %s: %s", item.symbol, exc)
-                    ctx.error(step, item.symbol, exc)
-                    ctx.count(step, "failed")
-                    checkpoint["failed"].append({"symbol": item.symbol, "error": str(exc)})
-                if done % 200 == 0 or done == len(futures):
-                    self.logger.info("Adjustment factors progress: %s/%s", done, len(futures))
-                    self._checkpoint(ctx, step, checkpoint)
+            try:
+                for done, future in enumerate(as_completed(futures), start=1):
+                    item = futures[future]
+                    try:
+                        status = self._store_factors(ctx, item, future.result())
+                        checkpoint["completed"].append({"symbol": item.symbol, "status": status})
+                    except Exception as exc:
+                        self.logger.warning("Adjustment factors failed for %s: %s", item.symbol, exc)
+                        ctx.error(step, item.symbol, exc)
+                        ctx.count(step, "failed")
+                        checkpoint["failed"].append({"symbol": item.symbol, "error": str(exc)})
+                    if done % 200 == 0 or done == len(futures):
+                        self.logger.info("Adjustment factors progress: %s/%s", done, len(futures))
+                        self._checkpoint(ctx, step, checkpoint)
+            except BaseException:
+                executor.shutdown(wait=False, cancel_futures=True)
+                raise
         self._checkpoint(ctx, step, checkpoint)
         refreshed = ctx.counters.get(step, {}).get("refreshed", 0)
         if pending and refreshed / len(pending) < self.config.min_factor_success_ratio:
@@ -481,6 +565,15 @@ class IngestionPipeline:
                 QualityIssue(step, "refresh_success_ratio", "blocking",
                              f"仅 {refreshed}/{len(pending)} 只证券复权因子刷新成功", len(pending) - refreshed)
             )
+
+    def _factor_as_of(self, symbol: str) -> date | None:
+        path = canonical_path(self.root, "adjustment_factors", f"symbol={symbol}")
+        if not path.exists():
+            return None
+        frame = pd.read_parquet(path)
+        if "factor_as_of" not in frame.columns:
+            return None  # legacy partition: refresh once
+        return as_date(frame["factor_as_of"].dropna().max()) if frame["factor_as_of"].notna().any() else None
 
     def _store_factors(self, ctx: RunContext, item: UniverseItem, result: FetchResult) -> str:
         step = "adjustment_factors"
@@ -541,6 +634,12 @@ class IngestionPipeline:
                     continue
                 write_canonical_frame(self.root, step, merged, partition=f"symbol={item.symbol}")
                 ctx.count(step, "updated")
+                if merged["trade_date"].max() < ctx.expected_latest:
+                    ctx.issues.append(
+                        QualityIssue(step, "latest_trade_date", "warning",
+                                     f"{item.symbol} 最新指数日期 {merged['trade_date'].max()} 早于 "
+                                     f"{ctx.expected_latest}", symbol=item.symbol)
+                    )
             except Exception as exc:
                 self.logger.warning("Index %s failed: %s", item.symbol, exc)
                 ctx.error(step, item.symbol, exc)
@@ -581,20 +680,28 @@ class IngestionPipeline:
                                     ctx.open_dates.index(ctx.expected_latest) + 1])
         dates = [d for d in ctx.open_dates
                  if backfill_start <= d <= ctx.expected_latest and (d not in done or d in recent)]
-        consecutive_failures = 0
+        consecutive_failures = failures = empty_days = 0
         for index, query_date in enumerate(dates, start=1):
             try:
                 raw = self.provider.fetch_suspension_events(self._date_str(query_date))
                 self._raw(ctx, "suspensions_baidu", self._date_str(query_date), raw,
                           "akshare.news_trade_notify_suspend_baidu")
+                consecutive_failures = 0
+                if raw is None or len(raw.columns) == 0:
+                    # AKShare returns a bare DataFrame() when the response has
+                    # no result (throttling, bad cookie) as well as on a day
+                    # with no events; either way it is retried next run.
+                    empty_days += 1
+                    ctx.count(step, "baidu_empty_days")
+                    continue
                 part = normalize_baidu_suspensions(raw, query_date, ctx.run_id, ctx.ingested_at)
                 new_parts.append(part)
                 log_rows.append({"source": "baidu", "query_date": query_date, "rows": len(part),
                                  "run_id": ctx.run_id})
-                consecutive_failures = 0
                 ctx.count(step, "baidu_days")
             except Exception as exc:
                 consecutive_failures += 1
+                failures += 1
                 ctx.error(step, f"baidu:{query_date}", exc)
                 if consecutive_failures >= BAIDU_MAX_CONSECUTIVE_FAILURES:
                     ctx.issues.append(
@@ -605,9 +712,21 @@ class IngestionPipeline:
                     break
             if index % 100 == 0:
                 self.logger.info("Baidu suspension calendar progress: %s/%s", index, len(dates))
+        if failures and consecutive_failures < BAIDU_MAX_CONSECUTIVE_FAILURES:
+            ctx.issues.append(QualityIssue(step, "baidu_backfill", "warning",
+                                           f"百度停复牌 {failures}/{len(dates)} 个交易日下载失败，下次运行重试", failures))
+        if empty_days:
+            ctx.issues.append(
+                QualityIssue(step, "baidu_empty_response", "warning",
+                             f"百度停复牌 {empty_days}/{len(dates)} 个交易日返回空结果（可能被限流），下次运行重试",
+                             empty_days)
+            )
         merged = events
         for part in new_parts:
             merged = merge_suspension_events(merged, part)
+        if merged is not None and ctx.master is not None:
+            # Baidu tags some NEEQ companies as BJ; keep exchange securities only.
+            merged = merged[merged["symbol"].isin(ctx.master["symbol"])]
         if merged is not None and not merged.empty:
             write_canonical_frame(self.root, step, merged)
             ctx.summaries[step] = {"events": int(len(merged))}
@@ -669,14 +788,17 @@ class IngestionPipeline:
 
     # --------------------------------------------------------------- audit
 
-    def _audit(self, ctx: RunContext) -> None:
+    def _audit(self, ctx: RunContext, universe: list[UniverseItem]) -> None:
         assert ctx.expected_latest is not None
+        scope = {item.symbol for item in universe} if self.config.daily_universe == "configured" else None
         result = run_audit(self.root, ctx.expected_latest, ctx.start_date,
-                           self.config.min_latest_coverage, ctx.run_id)
+                           self.config.min_latest_coverage, ctx.run_id, universe=scope)
         ctx.issues.extend(result.issues)
         ctx.summaries["audit"] = result.summary
         if not result.gaps.empty:
             write_canonical_frame(self.root, "bar_gaps", result.gaps)
+        else:
+            canonical_path(self.root, "bar_gaps").unlink(missing_ok=True)
 
     # ------------------------------------------------------------ finalize
 

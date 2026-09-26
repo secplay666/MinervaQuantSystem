@@ -19,13 +19,25 @@ import pandas as pd
 from .quality import QualityIssue
 from .storage import canonical_path
 
+# Board from the security master, falling back to the code range (mirrors
+# symbols.infer_board) so the rule still works before a master exists.
+BOARD_SQL = """
+COALESCE(m.board, CASE
+    WHEN x.symbol LIKE '688%' OR x.symbol LIKE '689%' THEN 'STAR'
+    WHEN x.symbol LIKE '300%' OR x.symbol LIKE '301%' OR x.symbol LIKE '302%' THEN 'CHINEXT'
+    WHEN x.symbol LIKE '92%' OR x.symbol LIKE '43%' OR x.symbol LIKE '83%'
+         OR x.symbol LIKE '87%' OR x.symbol LIKE '88%' THEN 'BSE'
+    ELSE 'MAIN'
+END)
+"""
+
 # Daily price-limit ratios by board; ST names have tighter limits, so using
 # the ordinary limit only under-reports breaches.
-LIMIT_SQL = """
+LIMIT_SQL = f"""
 CASE
-    WHEN m.board = 'STAR' THEN 0.20
-    WHEN m.board = 'CHINEXT' AND x.trade_date >= DATE '2020-08-24' THEN 0.20
-    WHEN m.board = 'BSE' THEN 0.30
+    WHEN {BOARD_SQL} = 'STAR' THEN 0.20
+    WHEN {BOARD_SQL} = 'CHINEXT' AND x.trade_date >= DATE '2020-08-24' THEN 0.20
+    WHEN {BOARD_SQL} = 'BSE' THEN 0.30
     ELSE 0.10
 END
 """
@@ -67,7 +79,9 @@ def run_audit(
     start_date: date,
     min_latest_coverage: float,
     run_id: str,
+    universe: set[str] | None = None,
 ) -> AuditResult:
+    """``universe`` limits the latest-session coverage rule (configured mode)."""
     result = AuditResult()
     bars_glob = _glob(root, "daily_bars")
     if bars_glob is None:
@@ -75,7 +89,8 @@ def run_audit(
         return result
     con = duckdb.connect()
     try:
-        return _audit(con, root, bars_glob, expected_latest, start_date, min_latest_coverage, run_id, result)
+        return _audit(con, root, bars_glob, expected_latest, start_date, min_latest_coverage, run_id, result,
+                      universe)
     finally:
         con.close()
 
@@ -89,12 +104,16 @@ def _audit(
     min_latest_coverage: float,
     run_id: str,
     result: AuditResult,
+    universe: set[str] | None = None,
 ) -> AuditResult:
+    source = f"read_parquet('{bars_glob}', union_by_name=true, hive_partitioning=false)"
+    columns = {row[0] for row in con.execute(f"DESCRIBE SELECT * FROM {source}").fetchall()}
+    run_id_column = "run_id" if "run_id" in columns else "CAST(NULL AS VARCHAR) AS run_id"
     con.execute(
         f"""
         CREATE TEMP TABLE bars AS
-        SELECT symbol, trade_date, open, high, low, close, volume_shares, turnover_cny
-        FROM read_parquet('{bars_glob}', union_by_name=true, hive_partitioning=false)
+        SELECT symbol, trade_date, open, high, low, close, volume_shares, turnover_cny, {run_id_column}
+        FROM {source}
         """
     )
     calendar = _as_datetimes(
@@ -161,7 +180,7 @@ def _audit(
         """
     )
     _check_units(con, result)
-    _check_latest_coverage(con, expected_latest, min_latest_coverage, result)
+    _check_latest_coverage(con, expected_latest, min_latest_coverage, result, universe)
     _find_gaps(con, expected_latest, start_date, run_id, result)
     _check_limit_breaches(con, root, result)
     _check_factor_freshness(con, root, expected_latest, result)
@@ -172,22 +191,23 @@ def _audit(
 def _check_units(con: duckdb.DuckDBPyConnection, result: AuditResult) -> None:
     frame = con.execute(
         """
-        SELECT symbol, median(turnover_cny / (volume_shares * close)) AS ratio, count(*) AS rows
+        SELECT symbol, run_id, median(turnover_cny / (volume_shares * close)) AS ratio, count(*) AS rows
         FROM bars
         WHERE volume_shares > 0 AND close > 0 AND turnover_cny > 0
-        GROUP BY symbol
+        GROUP BY symbol, run_id
         HAVING ratio NOT BETWEEN 0.5 AND 2.0
-        ORDER BY symbol
+        ORDER BY symbol, run_id
         """
     ).fetchdf()
-    result.summary["volume_unit_outliers"] = int(len(frame))
+    result.summary["volume_unit_outliers"] = int(frame["symbol"].nunique())
     if not frame.empty:
         result.issues.append(
             QualityIssue(
                 "daily_bars",
                 "volume_unit_consistency",
                 "blocking",
-                f"{len(frame)} 只证券成交量单位异常: {_examples(frame, ['symbol', 'ratio'])}",
+                f"{frame['symbol'].nunique()} 只证券存在成交量单位异常的批次: "
+                f"{_examples(frame, ['symbol', 'run_id', 'ratio'])}",
                 int(frame["rows"].sum()),
             )
         )
@@ -198,7 +218,9 @@ def _check_latest_coverage(
     expected_latest: date,
     min_latest_coverage: float,
     result: AuditResult,
+    universe: set[str] | None = None,
 ) -> None:
+    con.register("scope_frame", pd.DataFrame({"symbol": sorted(universe or [])}, dtype="object"))
     frame = con.execute(
         """
         WITH active AS (
@@ -207,6 +229,7 @@ def _check_latest_coverage(
             WHERE m.status <> 'delisted'
               AND (m.delist_date IS NULL OR m.delist_date > $d)
               AND COALESCE(m.list_date, DATE '1900-01-01') <= $d
+              AND (NOT $scoped OR m.symbol IN (SELECT CAST(symbol AS VARCHAR) FROM scope_frame))
         ),
         latest_bar AS (
             SELECT symbol, max(trade_date) AS last_bar, bool_or(trade_date = $d) AS has_bar
@@ -224,7 +247,7 @@ def _check_latest_coverage(
         LEFT JOIN latest_bar l USING (symbol)
         LEFT JOIN suspended s USING (symbol)
         """,
-        {"d": expected_latest},
+        {"d": expected_latest, "scoped": universe is not None},
     ).fetchdf()
     if frame.empty:
         return
@@ -277,7 +300,9 @@ def _find_gaps(
         win AS (
             SELECT b.symbol,
                    greatest($start, COALESCE(m.list_date, b.first_bar)) AS win_start,
-                   CASE WHEN m.status = 'delisted' THEN b.last_bar
+                   CASE WHEN m.status = 'delisted' AND m.delist_date IS NULL THEN b.last_bar
+                        WHEN m.status = 'delisted'
+                            THEN least($latest, CAST(m.delist_date - INTERVAL 1 DAY AS DATE))
                         ELSE least($latest, COALESCE(m.delist_date, $latest)) END AS win_end
             FROM bounds b LEFT JOIN master m USING (symbol)
         ),
@@ -378,8 +403,10 @@ def _check_limit_breaches(con: duckdb.DuckDBPyConnection, root: Path, result: Au
         LEFT JOIN master m USING (symbol)
         WHERE x.rn > 5
           AND x.prev_date = cal.prev_session
-          AND (x.close > round(x.prev_close * (1 + {LIMIT_SQL}), 2) + 0.0001
-               OR x.close < round(x.prev_close * (1 - {LIMIT_SQL}), 2) - 0.0001)
+          -- Exchanges round limit prices half-up; the epsilon keeps binary
+          -- floats such as 4.345 from rounding down.
+          AND (x.close > round(x.prev_close * (1 + {LIMIT_SQL}) + 1e-6, 2) + 0.0001
+               OR x.close < round(x.prev_close * (1 - {LIMIT_SQL}) + 1e-6, 2) - 0.0001)
           AND NOT EXISTS (SELECT 1 FROM factor_events f
                           WHERE f.symbol = x.symbol AND f.effective_date = x.trade_date)
         ORDER BY x.trade_date DESC
@@ -405,10 +432,16 @@ def _check_factor_freshness(
     factors_glob = _glob(root, "adjustment_factors")
     if factors_glob is None:
         return
+    columns = {
+        row[0] for row in con.execute(
+            f"DESCRIBE SELECT * FROM read_parquet('{factors_glob}', union_by_name=true, hive_partitioning=false)"
+        ).fetchall()
+    }
+    as_of = "CAST(factor_as_of AS DATE)" if "factor_as_of" in columns else "CAST(NULL AS DATE)"
     frame = con.execute(
         f"""
         WITH f AS (
-            SELECT symbol, max(factor_as_of) AS factor_as_of
+            SELECT symbol, max({as_of}) AS factor_as_of
             FROM read_parquet('{factors_glob}', union_by_name=true, hive_partitioning=false)
             GROUP BY symbol
         ),

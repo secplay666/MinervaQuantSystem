@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,22 @@ def utc_now_iso() -> str:
 
 def make_run_id() -> str:
     return utc_now().strftime("%Y%m%dT%H%M%SZ")
+
+
+def unique_run_id(root: Path) -> str:
+    """A run id not used by any earlier run under ``root``.
+
+    Ids have one-second resolution and name the immutable raw directories,
+    so two runs in the same second would overwrite each other's raw files.
+    """
+    while True:
+        run_id = make_run_id()
+        taken = (root / "data" / "manifests" / f"{run_id}.json").exists() or any(
+            (root / "data" / "raw").glob(f"*/*/run_id={run_id}")
+        )
+        if not taken:
+            return run_id
+        time.sleep(0.2)
 
 
 def run_id_to_iso(run_id: str) -> str:

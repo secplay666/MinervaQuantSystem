@@ -173,26 +173,33 @@ class AkShareProvider(MarketDataProvider):
 
     # -- bars ----------------------------------------------------------------
 
-    def fetch_daily_bars(self, symbol: str, start_date: str, end_date: str) -> FetchResult:
+    def fetch_daily_bars(
+        self, symbol: str, start_date: str, end_date: str, delisted: bool = False
+    ) -> FetchResult:
         prefixed = market_prefix(symbol)
         if infer_exchange(symbol) == "BSE":
-            try:
-                frame = self._call(
-                    "stock_zh_a_daily", ak.stock_zh_a_daily,
-                    symbol=prefixed, start_date=start_date, end_date=end_date, adjust="",
-                )
-                return FetchResult(frame, "akshare.stock_zh_a_daily.sina")
-            except ProviderError as exc:
-                # The wrapper's second (share-capital) request fails for
-                # delisted codes; the plain history endpoint still works.
-                self.logger.warning("Sina daily wrapper failed for %s, using raw history: %s", symbol, exc)
-                frame = self.fetch_sina_raw_history(symbol)
-                if not frame.empty:
-                    dates = pd.to_datetime(frame["date"])
-                    frame = frame[
-                        (dates >= pd.Timestamp(start_date)) & (dates <= pd.Timestamp(end_date))
-                    ].reset_index(drop=True)
-                return FetchResult(frame, "akshare.stock_zh_a_cdr_daily.sina")
+            # The wrapper's second (share-capital) request fails for delisted
+            # codes, so they go straight to the plain history endpoint.  Live
+            # codes only fall back on a deterministic failure: the fallback
+            # has no share capital, so turnover_rate_pct would be lost.
+            if not delisted:
+                try:
+                    frame = self._call(
+                        "stock_zh_a_daily", ak.stock_zh_a_daily,
+                        symbol=prefixed, start_date=start_date, end_date=end_date, adjust="",
+                    )
+                    return FetchResult(frame, "akshare.stock_zh_a_daily.sina")
+                except ProviderError as exc:
+                    if not exc.terminal:
+                        raise
+                    self.logger.warning("Sina daily wrapper failed for %s, using raw history: %s", symbol, exc)
+            frame = self.fetch_sina_raw_history(symbol)
+            if not frame.empty:
+                dates = pd.to_datetime(frame["date"])
+                frame = frame[
+                    (dates >= pd.Timestamp(start_date)) & (dates <= pd.Timestamp(end_date))
+                ].reset_index(drop=True)
+            return FetchResult(frame, "akshare.stock_zh_a_cdr_daily.sina")
         frame = self._call(
             "stock_zh_a_hist_tx", ak.stock_zh_a_hist_tx,
             symbol=prefixed, start_date=start_date, end_date=end_date, adjust="",

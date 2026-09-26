@@ -56,16 +56,19 @@ def validate_security_master(
             )
         )
     if previous is not None and not previous.empty:
-        previous_live = int((previous["status"] != "delisted").sum())
-        current_live = int(live.sum())
-        if previous_live and current_live < previous_live * (1 - max_shrink_ratio):
+        # A delisting moves a code into the delisting lists; codes that vanish
+        # from every list at once point to a truncated upstream response.
+        previous_live = set(previous.loc[previous["status"] != "delisted", "symbol"])
+        vanished = previous_live - set(frame["symbol"])
+        if previous_live and len(vanished) > len(previous_live) * max_shrink_ratio:
             issues.append(
                 QualityIssue(
                     dataset,
                     "listing_not_shrunk",
                     "blocking",
-                    f"在市证券数量从 {previous_live} 降至 {current_live}，疑似上游列表不完整",
-                    previous_live - current_live,
+                    f"{len(vanished)}/{len(previous_live)} 只在市证券从全部列表中消失，疑似上游列表不完整: "
+                    + ", ".join(sorted(vanished)[:20]),
+                    len(vanished),
                 )
             )
     return issues
@@ -140,22 +143,28 @@ def volume_unit_ratio(frame: pd.DataFrame) -> pd.Series:
 
 
 def validate_volume_units(frame: pd.DataFrame, symbol: str) -> list[QualityIssue]:
-    ratio = volume_unit_ratio(frame).dropna()
-    if ratio.empty:
+    """Median turnover/(volume*close) per ingestion run must be ~1.
+
+    Checked per run so a few appended rows in the wrong unit are not hidden
+    by years of correct history.
+    """
+    ratio = volume_unit_ratio(frame)
+    groups = frame["run_id"] if "run_id" in frame.columns else pd.Series("all", index=frame.index)
+    medians = ratio.groupby(groups).median().dropna()
+    bad = medians[(medians < 0.5) | (medians > 2.0)]
+    if bad.empty:
         return []
-    median = float(ratio.median())
-    if not 0.5 <= median <= 2.0:
-        return [
-            QualityIssue(
-                "daily_bars",
-                "volume_unit_consistency",
-                "blocking",
-                f"{symbol} 成交额/(成交量*收盘价) 中位数为 {median:.4g}，成交量单位不是股",
-                int(len(ratio)),
-                symbol=symbol,
-            )
-        ]
-    return []
+    detail = ", ".join(f"{run}={value:.4g}" for run, value in bad.items())
+    return [
+        QualityIssue(
+            "daily_bars",
+            "volume_unit_consistency",
+            "blocking",
+            f"{symbol} 成交额/(成交量*收盘价) 中位数异常（按批次）: {detail}，成交量单位不是股",
+            int(ratio[groups.isin(bad.index)].notna().sum()),
+            symbol=symbol,
+        )
+    ]
 
 
 def validate_adjustment_factors(

@@ -49,7 +49,9 @@ def test_first_run_builds_survivorship_free_store(tmp_path: Path) -> None:
     assert master.loc["600002", "status"] == "delisted"
     assert master.loc["920002", "status"] == "delisted"  # manual BSE seed
     assert master.loc["300001", "board"] == "CHINEXT"
-    # Delisted names keep their history up to the last trading day.
+    # Delisted names keep their history up to the last trading day and are
+    # fetched through the delisted path.
+    assert ("daily_delisted", "920002") in provider.calls
     assert bars(tmp_path, "600002")["trade_date"].max() == date(2026, 9, 17)
     assert bars(tmp_path, "920002")["trade_date"].max() == date(2026, 9, 15)
     # sz000 volume arrives in lots from the adapter and is stored in shares.
@@ -69,7 +71,7 @@ def test_first_run_builds_survivorship_free_store(tmp_path: Path) -> None:
 
 def _extend_to(provider: FakeProvider, today: date) -> None:
     provider.today = today
-    for symbol in ("600001", "000001", "300001", "920001"):
+    for symbol in ("600001", "000001", "300001", "920001", "688001"):
         for day in OPEN_DATES:
             if day <= today and day not in provider.bars[symbol]:
                 index = OPEN_DATES.index(day)
@@ -93,6 +95,7 @@ def test_incremental_run_refreshes_factors_and_keeps_hfq_continuous(tmp_path: Pa
     assert manifest["status"] == "complete", blocking(tmp_path, manifest)
     assert ("factors", "600001") in provider.calls
     assert ("daily", "600002") not in provider.calls  # delisted history is final
+    assert ("daily_delisted", "600002") not in provider.calls
     assert ("factors", "600002") not in provider.calls
     factors = pd.read_parquet(canonical_path(tmp_path, "adjustment_factors", "symbol=600001"))
     assert date(2026, 9, 28) in set(factors["effective_date"])
@@ -229,3 +232,91 @@ def test_audit_runs_on_a_legacy_store_without_master_or_events(tmp_path: Path) -
     write_canonical_frame(tmp_path, "daily_bars", frame, partition="symbol=600001")
     result = run_audit(tmp_path, OPEN_DATES[2], OPEN_DATES[0], 0.98, "adhoc")
     assert result.gaps["gap_start"].tolist() == [OPEN_DATES[1]]
+
+
+def test_limit_breach_rule_uses_code_board_and_half_up_rounding(tmp_path: Path) -> None:
+    from quant_system.data_platform.audit import run_audit
+    from quant_system.data_platform.storage import write_canonical_frame
+
+    days = OPEN_DATES[:8]
+    write_canonical_frame(tmp_path, "trading_calendar", pd.DataFrame({"trade_date": days}))
+    closes = {
+        "300001": [10.0] * 6 + [11.5, 11.5],   # +15%: legal on ChiNext, no master needed
+        "600001": [3.95] * 6 + [4.345, 4.35],  # 3.95 * 1.1 = 4.345 rounds half-up to 4.35
+        "600009": [10.0] * 6 + [11.2, 11.2],   # +12% on the main board: a real breach
+    }
+    for symbol, values in closes.items():
+        frame = pd.DataFrame({"symbol": symbol, "trade_date": days, "open": values, "high": values,
+                              "low": values, "close": values, "volume_shares": 100, "turnover_cny": 100.0})
+        write_canonical_frame(tmp_path, "daily_bars", frame, partition=f"symbol={symbol}")
+    factors = pd.DataFrame({"symbol": "600009", "effective_date": [date(1900, 1, 1)], "hfq_factor": [1.0],
+                            "qfq_factor": [1.0], "factor_as_of": days[-1]})
+    write_canonical_frame(tmp_path, "adjustment_factors", factors, partition="symbol=600009")
+    result = run_audit(tmp_path, days[-1], days[0], 0.98, "adhoc")
+    assert result.summary["unexplained_limit_breaches"] == 1
+
+
+def test_recently_delisted_symbol_is_completed_before_it_freezes(tmp_path: Path) -> None:
+    provider = FakeProvider(today=date(2026, 9, 24))
+    run(tmp_path, provider, SATURDAY_NIGHT)
+    _extend_to(provider, date(2026, 10, 12))
+    # 600001 trades until 10-09 and is delisted on 10-12, after our last run.
+    provider.bars["600001"] = {d: b for d, b in provider.bars["600001"].items() if d <= date(2026, 10, 9)}
+    name, listed = provider.listed.pop("600001")
+    provider.delisted_sse["600001"] = (name, listed, "2026-10-12")
+    provider.calls.clear()
+
+    run(tmp_path, provider, at(date(2026, 10, 12), 17))
+    assert ("daily_delisted", "600001") in provider.calls
+    assert bars(tmp_path, "600001")["trade_date"].max() == date(2026, 10, 9)
+
+    provider.calls.clear()
+    run(tmp_path, provider, at(date(2026, 10, 12), 18))
+    assert ("daily_delisted", "600001") not in provider.calls  # now final
+    assert ("factors", "600001") not in provider.calls
+
+
+def test_security_master_never_drops_known_securities(tmp_path: Path) -> None:
+    provider = FakeProvider(today=date(2026, 9, 24))
+    run(tmp_path, provider, SATURDAY_NIGHT)
+    provider.delisted_sse = {"600003": ("退市旧股", "2001-01-01", "2026-09-01")}  # 600002 vanished
+
+    manifest = run(tmp_path, provider, SATURDAY_NIGHT)
+    master = pd.read_parquet(canonical_path(tmp_path, "security_master")).set_index("symbol")
+    assert master.loc["600002", "status"] == "delisted"
+    assert "delisted_record_missing" in set(issues(tmp_path, manifest)["rule"])
+
+    provider.delisted_sse = {}  # an empty delisting list is a broken response
+    manifest = run(tmp_path, provider, SATURDAY_NIGHT)
+    assert manifest["status"] == "partial"
+    master = pd.read_parquet(canonical_path(tmp_path, "security_master")).set_index("symbol")
+    assert {"600002", "600003"} <= set(master.index)
+
+
+def test_empty_baidu_response_is_retried_next_run(tmp_path: Path) -> None:
+    provider = FakeProvider(today=date(2026, 9, 24))
+    event = {"股票代码": "600001", "股票简称": "甲股份", "交易所代码": "SH", "停牌时间": "2026-09-15",
+             "复牌时间": "2026-09-16", "停牌事项说明": "重要公告"}
+    original = provider.fetch_suspension_events
+    provider.fetch_suspension_events = lambda date_text: pd.DataFrame()  # throttled
+    manifest = run(tmp_path, provider, SATURDAY_NIGHT)
+    assert "baidu_empty_response" in set(issues(tmp_path, manifest)["rule"])
+
+    provider.fetch_suspension_events = original
+    provider.baidu_rows[date(2026, 9, 15)] = [event]
+    run(tmp_path, provider, SATURDAY_NIGHT)
+    events = pd.read_parquet(canonical_path(tmp_path, "suspension_events"))
+    assert "600001" in set(events["symbol"])
+
+
+def test_full_reload_cannot_shrink_existing_history(tmp_path: Path) -> None:
+    provider = FakeProvider(today=date(2026, 9, 24))
+    run(tmp_path, provider, SATURDAY_NIGHT)
+    before = bars(tmp_path, "600001")
+    provider.bars["600001"] = {d: b for d, b in provider.bars["600001"].items() if d >= date(2026, 9, 20)}
+
+    manifest = run(tmp_path, provider, SATURDAY_NIGHT, mode="full")
+
+    assert manifest["status"] == "partial"
+    assert "history_not_shrunk" in set(issues(tmp_path, manifest)["rule"])
+    pd.testing.assert_frame_equal(bars(tmp_path, "600001"), before)

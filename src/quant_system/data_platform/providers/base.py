@@ -29,7 +29,9 @@ class MarketDataProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def fetch_daily_bars(self, symbol: str, start_date: str, end_date: str) -> FetchResult:
+    def fetch_daily_bars(
+        self, symbol: str, start_date: str, end_date: str, delisted: bool = False
+    ) -> FetchResult:
         raise NotImplementedError
 
     @abstractmethod

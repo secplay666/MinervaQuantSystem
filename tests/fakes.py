@@ -82,6 +82,7 @@ class FakeProvider(MarketDataProvider):
         "000001": ("乙银行", "1991-04-03"),
         "300001": ("丙科技", "2026-09-10"),
         "920001": ("丁精密", "2022-01-01"),
+        "688001": ("己科创", "2019-07-22"),
     })
     delisted_sse: dict[str, tuple[str, str, str]] = field(default_factory=lambda: {
         "600002": ("退市戊", "2001-01-01", "2026-09-18"),
@@ -117,7 +118,8 @@ class FakeProvider(MarketDataProvider):
         return pd.DataFrame({"trade_date": [d for d in OPEN_DATES]})
 
     def fetch_security_lists(self) -> dict[str, pd.DataFrame]:
-        sse = [(s, n, d) for s, (n, d) in self.listed.items() if s.startswith("6")]
+        sse = [(s, n, d) for s, (n, d) in self.listed.items() if s.startswith("6") and not s.startswith("68")]
+        star = [(s, n, d) for s, (n, d) in self.listed.items() if s.startswith("68")]
         szse = [(s, n, d) for s, (n, d) in self.listed.items() if s.startswith(("0", "3"))]
         bse = [(s, n, d) for s, (n, d) in self.listed.items() if s.startswith("9")]
         return {
@@ -125,7 +127,9 @@ class FakeProvider(MarketDataProvider):
                 [{"证券代码": s, "证券简称": n, "上市日期": pd.to_datetime(d).date()} for s, n, d in sse]
                 + [{"证券代码": "900901", "证券简称": "某B股", "上市日期": date(1995, 1, 1)}]
             ),
-            "sse_star": pd.DataFrame(columns=["证券代码", "证券简称", "上市日期"]),
+            "sse_star": pd.DataFrame(
+                [{"证券代码": s, "证券简称": n, "上市日期": pd.to_datetime(d).date()} for s, n, d in star]
+            ),
             "szse": pd.DataFrame(
                 [{"板块": "创业板" if s.startswith("3") else "主板", "A股代码": s, "A股简称": n,
                   "A股上市日期": d} for s, n, d in szse]
@@ -137,7 +141,11 @@ class FakeProvider(MarketDataProvider):
                 [{"公司代码": s, "公司简称": n, "上市日期": pd.to_datetime(ld).date(),
                   "暂停上市日期": pd.to_datetime(dd).date()} for s, (n, ld, dd) in self.delisted_sse.items()]
             ),
-            "szse_delisted": pd.DataFrame(columns=["证券代码", "证券简称", "上市日期", "终止上市日期"]),
+            # A delisting long before the ingestion window: listed, never fetched.
+            "szse_delisted": pd.DataFrame(
+                [{"证券代码": "000003", "证券简称": "PT金田Ａ", "上市日期": date(1991, 1, 14),
+                  "终止上市日期": date(2002, 6, 14)}]
+            ),
         }
 
     # bars -----------------------------------------------------------------
@@ -146,8 +154,10 @@ class FakeProvider(MarketDataProvider):
         start, end = pd.to_datetime(start_date).date(), pd.to_datetime(end_date).date()
         return [(d, b) for d, b in sorted(self.bars.get(symbol, {}).items()) if start <= d <= end]
 
-    def fetch_daily_bars(self, symbol: str, start_date: str, end_date: str) -> FetchResult:
-        self.calls.append(("daily", symbol))
+    def fetch_daily_bars(
+        self, symbol: str, start_date: str, end_date: str, delisted: bool = False
+    ) -> FetchResult:
+        self.calls.append(("daily_delisted" if delisted else "daily", symbol))
         if symbol in self.empty_daily:
             return FetchResult(pd.DataFrame(), "akshare.stock_zh_a_hist_tx.tencent")
         rows = self._rows(symbol, start_date, end_date)

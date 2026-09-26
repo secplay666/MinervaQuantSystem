@@ -28,10 +28,10 @@ def test_rebuild_from_raw_reproduces_the_canonical_layer(tmp_path: Path) -> None
     report = rebuild_canonical(tmp_path, make_config())
 
     assert report["status"] == "complete"
-    detail = report["diff"]["daily_bars_detail"]
-    assert detail == {"only_live": 0, "only_rebuilt": 0, "close_changed": 0, "volume_changed": 0,
-                      "symbols_volume_changed": 0}
-    datasets = {key for key in report["diff"] if key != "daily_bars_detail"}
+    for dataset in ("daily_bars", "index_bars", "adjustment_factors"):
+        detail = report["diff"][f"{dataset}_detail"]
+        assert set(detail.values()) == {0}, (dataset, detail)
+    datasets = {key for key in report["diff"] if not key.endswith("_detail")}
     assert {"daily_bars", "adjustment_factors", "index_bars", "security_master", "suspension_events",
             "risk_warning_intervals", "trading_calendar", "market_snapshot"} <= datasets
     for dataset in datasets:
@@ -51,8 +51,33 @@ def test_rebuild_repairs_legacy_raw_units_and_applies(tmp_path: Path) -> None:
     report = rebuild_canonical(tmp_path, make_config(), apply=True)
 
     assert report["applied"]
-    assert report["diff"]["daily_bars_detail"]["symbols_volume_changed"] == 1
+    detail = report["diff"]["daily_bars_detail"]
+    assert detail["symbols_changed"] == 1 and detail["volume_changed"] > 0
+    assert detail["close_changed"] == detail["open_changed"] == detail["turnover_changed"] == 0
+    assert report["data_version"] and report["catalog_status"] == "built"
     rebuilt = pd.read_parquet(canonical_path(tmp_path, "daily_bars", "symbol=000001"))
     assert rebuilt["volume_shares"].iloc[0] == 100_000
     assert (tmp_path / report["archived_to"] / "daily_bars").exists()
     assert (tmp_path / "data" / "market.duckdb").exists()
+
+
+def test_swap_with_an_open_file_changes_nothing(tmp_path: Path) -> None:
+    import sys
+
+    import pytest
+
+    from quant_system.data_platform.rebuild import CanonicalRebuilder
+
+    if sys.platform != "win32":
+        pytest.skip("open files only block directory renames on Windows")
+    provider = FakeProvider(today=date(2026, 9, 24))
+    _ingest(tmp_path, provider)
+    rebuilder = CanonicalRebuilder(tmp_path, make_config())
+    (rebuilder.staging / "data" / "canonical").mkdir(parents=True)
+    held = canonical_path(tmp_path, "daily_bars", "symbol=600001")
+    before = sorted(p.relative_to(tmp_path) for p in (tmp_path / "data" / "canonical").rglob("*"))
+    with held.open("rb"):
+        with pytest.raises(OSError):
+            rebuilder._swap()
+    after = sorted(p.relative_to(tmp_path) for p in (tmp_path / "data" / "canonical").rglob("*"))
+    assert after == before
