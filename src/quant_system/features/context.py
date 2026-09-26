@@ -57,12 +57,12 @@ class FactorContext:
         return self.memo("adj_close", lambda: self.close() * self.market.hfq)
 
     def adj_last(self) -> np.ndarray:
-        """Adjusted close of the last bar on or before each session (as in
-        ``PanelView.adjusted_price``); NaN before the first bar."""
+        """Adjusted close (yuan x hfq) of the last bar on or before each
+        session; NaN before the first bar.  Same units as ``adj_close``."""
         def build() -> np.ndarray:
             market = self.market
             rows = np.maximum(market.last_bar, 0)
-            close = np.take_along_axis(market.close, rows, axis=0).astype(np.float64)
+            close = np.take_along_axis(market.close, rows, axis=0).astype(np.float64) / 100.0  # fen -> yuan
             hfq = np.take_along_axis(market.hfq, rows, axis=0)
             return np.where(market.last_bar >= 0, close * hfq, np.nan)
 

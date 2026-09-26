@@ -54,7 +54,7 @@ def forward_returns(ctx: FactorContext, rules: MarketRules, schedule_rows: np.nd
     market = ctx.market
     sessions = market.sessions
     last_session = max(i for i, day in enumerate(sessions) if day <= spec.end)
-    adj_open = np.where(market.has_bar, market.open.astype(np.float64) * market.hfq, np.nan)
+    adj_open = np.where(market.has_bar, market.open.astype(np.float64) / 100.0 * market.hfq, np.nan)  # yuan
     adj_last = ctx.adj_last()
     position = {int(t): k for k, t in enumerate(schedule_rows)}
     R, N = len(signal_rows), market.shape[1]

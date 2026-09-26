@@ -263,3 +263,50 @@ def test_perfect_foresight_factor_has_rank_ic_one() -> None:
     assert len(series) > 0 and np.allclose(series["rank_ic_h1"], 1.0)
     quantiles = results["quantiles"]
     assert (quantiles["q5"] >= quantiles["q1"]).all()
+
+
+def test_context_prices_and_returns_have_the_right_units() -> None:
+    market, research = synthetic_frames(29)
+    data = build(market, research)
+    ctx = FactorContext(data)
+    bars = market["bars"].copy()
+    factors = market["factors"].sort_values(["symbol", "effective_date"])
+    symbol = sorted(bars["symbol"].unique())[0]  # k = 0: an ex-rights event in the window
+    j = list(data.symbols).index(symbol)
+    rows = bars[bars["symbol"] == symbol].sort_values("trade_date")
+    hfq = pd.merge_asof(rows[["trade_date"]].assign(d=pd.to_datetime(rows["trade_date"])),
+                        factors[factors["symbol"] == symbol].assign(d=pd.to_datetime(factors["effective_date"]))
+                        [["d", "hfq_factor"]], on="d")["hfq_factor"].to_numpy()
+    adjusted = rows["close"].to_numpy() * hfq
+    expected = adjusted[1:] / adjusted[:-1] - 1
+    index = [data.sessions.index(d) for d in rows["trade_date"]]
+    got = ctx.returns()[index[1:], j]
+    np.testing.assert_allclose(got, expected, rtol=1e-12)
+    assert np.nanmax(np.abs(ctx.returns())) < 0.5  # daily returns, not price ratios
+    # Previous close in today's price terms (yuan).
+    np.testing.assert_allclose(ctx.reference_close()[index[1:], j], adjusted[:-1] / hfq[1:], rtol=1e-12)
+    np.testing.assert_allclose(ctx.adj_last()[index, j], adjusted, rtol=1e-12)
+
+
+def test_forward_returns_match_a_manual_open_to_open_calculation() -> None:
+    from pathlib import Path as _Path
+
+    from quant_system.domain.rules import MarketRules
+    from quant_system.evaluation.factor_eval import EvaluationSpec, forward_returns
+    from quant_system.research.experiments import schedule_rows
+
+    market, research = synthetic_frames(31)
+    data = build(market, research)
+    ctx = FactorContext(data)
+    rows = schedule_rows(data.sessions, {"type": "month_end"})
+    signals = rows[(rows > 60) & (rows < rows[-2])][:3]
+    universe = np.ones((len(signals), data.market.shape[1]), dtype=bool)
+    rules = MarketRules.load(_Path(__file__).resolve().parents[1] / "configs" / "market_rules" / "cn_a_share.json")
+    spec = EvaluationSpec("IS", data.sessions[0], data.sessions[-1], horizons=(1,), min_names=1)
+    forward = forward_returns(ctx, rules, rows, signals, universe, spec)
+    m = data.market
+    k, t = 0, signals[0]
+    entry, exit_ = t + 1, int(rows[list(rows).index(t) + 1]) + 1
+    for j in np.flatnonzero(forward.investable[k] & m.has_bar[exit_])[:5]:
+        manual = (m.open[exit_, j] / 100 * m.hfq[exit_, j]) / (m.open[entry, j] / 100 * m.hfq[entry, j]) - 1
+        assert forward.returns[1][k, j] == pytest.approx(manual, rel=1e-12)
