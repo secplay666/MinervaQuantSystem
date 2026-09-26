@@ -1,0 +1,30 @@
+{
+  "name": "momentum_top50",
+  "description": "示范策略：120 日动量（跳过最近 20 日）Top50 等权、月度调仓。用于验证回测引擎，不构成投资建议。",
+  "run": {"start": "2020-07-01", "end": "2026-09-24", "initial_capital_cny": "1000000"},
+  "data": {"source": "duckdb", "path": "data/market.duckdb"},
+  "market_rules": "configs/market_rules/cn_a_share.json",
+  "strategy": {
+    "id": "momentum",
+    "version": "1",
+    "params": {
+      "lookback": 120,
+      "skip": 20,
+      "top_n": 50,
+      "min_window_coverage": 0.9,
+      "min_listing_sessions": 250,
+      "min_avg_turnover_cny": 10000000,
+      "turnover_window": 20,
+      "boards": ["SSE_MAIN", "SZSE_MAIN", "CHINEXT", "STAR"],
+      "exclude_known_risk_warning": true
+    }
+  },
+  "schedule": {"type": "month_end"},
+  "portfolio": {"cash_buffer": 0.005, "band_rel": 0.25, "min_lot_policy": "skip"},
+  "execution": {"price": "open", "slippage_bps": "5", "max_participation": 0.10,
+                "buy_retry_sessions": 5, "delay_sessions": 1},
+  "costs": {"commission_rate": "0.00025", "commission_min_cny": "5"},
+  "delisting": {"settlement": "last_close"},
+  "benchmarks": {"indices": ["sh000300", "sh000905"], "equal_weight_universe": true},
+  "analytics": {"risk_free_rate": 0.0, "periods_per_year": 244}
+}

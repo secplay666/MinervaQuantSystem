@@ -18,5 +18,8 @@ data/*.duckdb
 data/*.duckdb.wal
 data/*.duckdb.building*
 
+# Backtest outputs and caches
+artifacts/
+
 # Keep directory placeholders
 !data/.gitkeep

@@ -1,6 +1,6 @@
 # 量化交易辅助系统
 
-当前仓库已完成第一阶段"数据底座"。总体设计见 [ARCHITECTURE.md](ARCHITECTURE.md)，关键决策见 [docs/adr/](docs/adr/)。
+当前仓库已完成第一阶段"数据底座"和第二阶段"可验证回测"。总体设计见 [ARCHITECTURE.md](ARCHITECTURE.md)，关键决策见 [docs/adr/](docs/adr/)。
 
 ## 数据范围
 
@@ -113,6 +113,21 @@ df = con.execute(
 # 数据库被其他进程占用、目录构建失败时，关闭占用进程后补建
 .\.venv\Scripts\quant-data.exe catalog --rebuild
 ```
+
+## 回测
+
+```powershell
+.\.venv\Scripts\quant-backtest.exe run --config configs/strategies/momentum_top50.json
+```
+
+- 输出目录为 `artifacts/backtests/<run_id>/`，包括：
+  - `report.md`：绩效、分年度收益、执行统计、会计检查、已知局限；
+  - `manifest.json`：代码版本、配置哈希、规则文件哈希、数据版本和输入指纹；
+  - 订单、成交、拒单、持仓、净值、信号等 parquet 文件。
+- 成交假设：T 日收盘后生成信号，T+1 开盘价加滑点成交；同时处理涨跌停、停牌、T+1 可卖、整手、参与率、除权和退市（[ADR-002](docs/adr/ADR-002-signal-timing-and-fills.md)）。
+- 市场规则按生效日期写在 `configs/market_rules/cn_a_share.json`，包括涨跌幅、新股无涨跌幅日、申报数量、印花税、过户费。
+- 示范策略（120 日动量 Top50）只用于验证引擎，验证方案和结果见 [ADR-006](docs/adr/ADR-006-demo-strategy-and-validation.md)。
+- 回归测试使用已提交的固定数据集 `tests/fixtures/backtest_cn_small/`（40 只股票，由 `scripts/extract_backtest_fixture.py` 生成）。更新基准文件需要显式设置 `UPDATE_GOLDEN=1`。
 
 ## 数据层约束
 

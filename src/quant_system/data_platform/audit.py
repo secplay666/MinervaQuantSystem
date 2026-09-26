@@ -32,7 +32,9 @@ END)
 """
 
 # Daily price-limit ratios by board; ST names have tighter limits, so using
-# the ordinary limit only under-reports breaches.
+# the ordinary limit only under-reports breaches.  The backtest's
+# effective-dated rules (domain/rules.py, configs/market_rules) are the
+# authoritative model; this audit heuristic should move onto them.
 LIMIT_SQL = f"""
 CASE
     WHEN {BOARD_SQL} = 'STAR' THEN 0.20

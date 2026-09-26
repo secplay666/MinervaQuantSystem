@@ -11,17 +11,20 @@ requires-python = ">=3.11,<3.13"
 dependencies = [
   "akshare==1.18.78",
   "duckdb>=1.2,<2",
+  "numpy>=2,<3",
   "pandas>=2.2,<3",
   "pyarrow>=17,<24",
 ]
 
 [project.optional-dependencies]
 dev = [
+  "hypothesis>=6,<7",
   "pytest>=8,<10",
 ]
 
 [project.scripts]
 quant-data = "quant_system.data_platform.cli:main"
+quant-backtest = "quant_system.backtest.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -29,4 +32,5 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = ["slow: needs the local market database (skipped when absent)"]
 
