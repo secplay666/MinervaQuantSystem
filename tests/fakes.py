@@ -305,6 +305,49 @@ class FakeProvider(MarketDataProvider):
         self.calls.append(("dividends", report_date))
         return pd.DataFrame([r for r in self.dividend_rows if str(r["REPORT_DATE"])[:10] == report_date])
 
+    fin_periods: tuple[str, ...] = ("2025-06-30", "2025-09-30", "2025-12-31", "2026-03-31", "2026-06-30")
+    fin_revision: bool = False  # restate 600001's 2025 annual report (new UPDATE_DATE)
+
+    def _financial_rows(self, statement: str, company_type: str) -> list[dict[str, object]]:
+        notice = {"2025-06-30": "2025-08-20", "2025-09-30": "2025-10-28", "2025-12-31": "2026-03-25",
+                  "2026-03-31": "2026-04-25", "2026-06-30": "2026-08-25"}
+        companies = {"G": [("600001", "SH", 1.0)], "B": [("000001", "SZ", 50.0)], "S": [], "I": []}
+        rows = []
+        for symbol, suffix, scale in companies[company_type]:
+            for period in self.fin_periods:
+                quarter = int(period[5:7]) // 3
+                revised = self.fin_revision and symbol == "600001" and period == "2025-12-31"
+                ytd = scale * 1e8 * quarter * (1.1 if period >= "2026" else 1.0) * (1.05 if revised else 1.0)
+                row: dict[str, object] = {
+                    "SECUCODE": f"{symbol}.{suffix}", "SECURITY_CODE": symbol, "REPORT_DATE": f"{period} 00:00:00",
+                    "REPORT_TYPE": "年报" if quarter == 4 else "季报", "NOTICE_DATE": f"{notice[period]} 00:00:00",
+                    "UPDATE_DATE": "2026-09-20 00:00:00" if revised else f"{notice[period]} 00:00:00",
+                    "SECURITY_TYPE_CODE": "058001001",
+                }
+                if statement == "income":
+                    row.update({"OPERATE_INCOME": ytd, "PARENT_NETPROFIT": 0.1 * ytd,
+                                "DEDUCT_PARENT_NETPROFIT": 0.09 * ytd, "NETPROFIT": 0.11 * ytd})
+                    if company_type == "G":
+                        row.update({"TOTAL_OPERATE_INCOME": ytd, "OPERATE_COST": 0.6 * ytd})
+                elif statement == "balance":
+                    row.update({"TOTAL_ASSETS": scale * 2e9, "TOTAL_LIABILITIES": scale * 1.2e9,
+                                "TOTAL_EQUITY": scale * 0.8e9, "TOTAL_PARENT_EQUITY": scale * 0.75e9,
+                                "SHARE_CAPITAL": 1e9})
+                else:
+                    row.update({"NETCASH_OPERATE": 0.12 * ytd, "CONSTRUCT_LONG_ASSET": 0.05 * ytd})
+                rows.append(row)
+        # A NEEQ company and a non-quarter-end period are filtered out downstream.
+        rows.append({"SECUCODE": "830001.NQ", "SECURITY_CODE": "830001", "REPORT_DATE": "2025-12-31 00:00:00",
+                     "NOTICE_DATE": "2026-03-01 00:00:00", "UPDATE_DATE": "2026-03-01 00:00:00"})
+        return rows
+
+    def fetch_financial_statement(self, statement: str, company_type: str, date_field: str, start: str,
+                                  end: str) -> pd.DataFrame:
+        self.calls.append(("financials", f"{statement}:{company_type}:{date_field}:{start}"))
+        column = {"REPORT_DATE": "REPORT_DATE", "UPDATE_DATE": "UPDATE_DATE"}[date_field]
+        rows = [r for r in self._financial_rows(statement, company_type) if start <= str(r[column])[:10] < end]
+        return pd.DataFrame(rows)
+
     def fetch_sz_name_changes(self) -> pd.DataFrame:
         return pd.DataFrame(
             [{"变更日期": "2026-09-08", "证券代码": "000001", "证券简称": "乙银行",

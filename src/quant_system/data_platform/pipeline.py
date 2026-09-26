@@ -13,6 +13,13 @@ import pandas as pd
 
 from .audit import run_audit
 from .config import DataPlatformConfig
+from .financials import (
+    SOURCE_FINANCIALS,
+    STATEMENTS,
+    financial_windows,
+    merge_financial_versions,
+    normalize_financials,
+)
 from .corporate import (
     SOURCE_DIVIDENDS,
     SOURCE_INDEX_WEIGHTS,
@@ -96,7 +103,7 @@ from .utils import code_version, ensure_directories, json_dump, run_id_to_iso, u
 
 MAX_RECORDED_ERRORS = 200
 STEPS = ("daily_bars", "adjustment_factors", "indices", "status_history", "market_snapshot", "corporate",
-         "classification")
+         "classification", "fundamentals")
 CORPORATE_MAX_CONSECUTIVE_FAILURES = 3
 BAIDU_MAX_CONSECUTIVE_FAILURES = 10
 BULLETIN_MAX_CONSECUTIVE_FAILURES = 2
@@ -222,6 +229,8 @@ class IngestionPipeline:
             self._ingest_corporate(ctx)
         if "classification" in self.steps and self.config.download_classification:
             self._ingest_classification(ctx)
+        if "fundamentals" in self.steps and self.config.download_fundamentals:
+            self._ingest_fundamentals(ctx)
         self._audit(ctx, universe)
 
     # ------------------------------------------------------------ helpers
@@ -940,6 +949,51 @@ class IngestionPipeline:
                     f"{dataset} 抓取：{failed} 个窗口失败、{deferred} 个窗口推迟，下次运行重试", failed + deferred))
         if log_rows:
             write_canonical_frame(self.root, "corporate_fetch_log", merge_fetch_log(log, log_rows))
+
+    # -------------------------------------------------------- fundamentals
+
+    def _ingest_fundamentals(self, ctx: RunContext) -> None:
+        """Financial statements, versioned.  Windows are processed in name
+        order (as the rebuild replays them) so version numbers match."""
+        log = read_canonical(self.root, "fundamentals_fetch_log")
+        today = self.clock().date()
+        log_rows: list[dict[str, Any]] = []
+        for statement in STATEMENTS:
+            dataset = f"fin_{statement}"
+            own_log = None if log is None else log[log["dataset"] == dataset]
+            merged = read_canonical(self.root, dataset)
+            consecutive = 0
+            for name, ctype, field, start, end in sorted(financial_windows(today, own_log)):
+                if consecutive >= CORPORATE_MAX_CONSECUTIVE_FAILURES:
+                    ctx.count(dataset, "deferred_windows")
+                    continue
+                try:
+                    raw = self.provider.fetch_financial_statement(statement, ctype, field, start, end)
+                    part, counts = normalize_financials(raw, statement, ctype, ctx.run_id, ctx.ingested_at)
+                except Exception as exc:
+                    ctx.error(dataset, name, exc)
+                    ctx.count(dataset, "failed_windows")
+                    consecutive += 1
+                    continue
+                consecutive = 0
+                self._raw(ctx, "financials", f"{statement}_{name}", raw, f"{SOURCE_FINANCIALS}.{ctype}")
+                merged, added = merge_financial_versions(merged, part, statement)
+                ctx.count(dataset, "windows")
+                ctx.count(dataset, "new_versions", added)
+                for key in ("not_quarter_end", "no_notice_date"):
+                    if counts[key]:
+                        ctx.count(dataset, f"dropped_{key}", counts[key])
+                log_rows.append({"dataset": dataset, "window": name, "rows": len(part), "run_id": ctx.run_id})
+            if merged is not None and not merged.empty:
+                write_canonical_frame(self.root, dataset, merged)
+            failed = ctx.counters.get(dataset, {}).get("failed_windows", 0)
+            deferred = ctx.counters.get(dataset, {}).get("deferred_windows", 0)
+            if failed or deferred:
+                ctx.issues.append(QualityIssue(
+                    dataset, "fetch_windows", "warning",
+                    f"{dataset} 抓取：{failed} 个窗口失败、{deferred} 个窗口推迟，下次运行重试", failed + deferred))
+        if log_rows:
+            write_canonical_frame(self.root, "fundamentals_fetch_log", merge_fetch_log(log, log_rows))
 
     # ------------------------------------------------------ classification
 

@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import io
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
 import requests
 
 DATACENTER_URL = "https://datacenter-web.eastmoney.com/api/data/v1/get"
 DC_PAGE_SIZE = 500  # the service caps pageSize at 500
+DC_PAGE_WORKERS = 6  # concurrent page requests per report
 # A shares and CDRs; excludes B shares (058001002) and NEEQ (058001005).
 A_SHARE_TYPES = '(SECURITY_TYPE_CODE in ("058001001","058001008"))'
 _EMPTY_MESSAGES = ("返回数据为空",)
@@ -55,17 +57,27 @@ def dc_page(report: str, filter: str, page: int, sort_columns: str, sort_types: 
     return list(result.get("data") or []), int(result.get("pages") or 0), int(result.get("count") or 0)
 
 
-def collect_pages(fetch_page, report: str, filter: str, sort_columns: str) -> pd.DataFrame:
-    """Fetch every page of a report.  ``fetch_page(page)`` returns
-    ``dc_page``'s tuple; the row count is checked against the service."""
+def collect_pages(fetch_page, report: str, filter: str, sort_columns: str, workers: int = 1) -> pd.DataFrame:
+    """Fetch every page of a report.  ``fetch_page(**kwargs)`` returns
+    ``dc_page``'s tuple.  After the first page, the remaining pages are
+    requested ``workers`` at a time (the service spends seconds per page)
+    and assembled in page order; the row count is checked against the
+    service."""
     sort_types = ",".join("1" for _ in sort_columns.split(","))
-    rows, page, pages, count = [], 1, 1, None
-    while page <= pages:
-        data, pages, total = fetch_page(report=report, filter=filter, page=page, sort_columns=sort_columns,
-                                        sort_types=sort_types)
-        count = total if count is None else count
-        rows.extend(data)
-        page += 1
+
+    def one(page: int) -> tuple[list[dict], int, int]:
+        return fetch_page(report=report, filter=filter, page=page, sort_columns=sort_columns, sort_types=sort_types)
+
+    rows, pages, count = one(1)
+    rows = list(rows)
+    if pages > 1:
+        if workers > 1:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                results = list(pool.map(one, range(2, pages + 1)))
+        else:
+            results = [one(page) for page in range(2, pages + 1)]
+        for data, _, _ in results:
+            rows.extend(data)
     frame = pd.DataFrame(rows)
     if not frame.empty:
         frame = frame.drop_duplicates(ignore_index=True)

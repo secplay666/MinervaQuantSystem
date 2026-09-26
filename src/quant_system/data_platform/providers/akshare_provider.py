@@ -15,7 +15,7 @@ import requests
 
 from ..symbols import infer_exchange, market_prefix
 from .base import FetchResult, MarketDataProvider
-from .eastmoney_dc import A_SHARE_TYPES, PaginationMismatch, collect_pages, dc_page, sw_file
+from .eastmoney_dc import A_SHARE_TYPES, DC_PAGE_WORKERS, PaginationMismatch, collect_pages, dc_page, sw_file
 
 T = TypeVar("T")
 
@@ -334,7 +334,7 @@ class AkShareProvider(MarketDataProvider):
 
         for attempt in (1, 2):
             try:
-                return collect_pages(page, report, filter, sort_columns)
+                return collect_pages(page, report, filter, sort_columns, workers=DC_PAGE_WORKERS)
             except PaginationMismatch as exc:
                 if attempt == 2:
                     raise ProviderError(str(exc), terminal=False) from exc
@@ -358,6 +358,17 @@ class AkShareProvider(MarketDataProvider):
             raise ValueError(f"unsupported share-capital date field {date_field}")
         filter = f"({date_field}>='{start}')({date_field}<'{end}'){A_SHARE_TYPES}"
         return self.fetch_datacenter("RPT_F10_EH_EQUITY", filter, "SECUCODE,END_DATE")
+
+    def fetch_financial_statement(self, statement: str, company_type: str, date_field: str, start: str,
+                                  end: str) -> pd.DataFrame:
+        names = {"income": "INCOME", "balance": "BALANCE", "cashflow": "CASHFLOW"}
+        if statement not in names or company_type not in {"G", "B", "S", "I"}:
+            raise ValueError(f"unknown statement {statement!r} / company type {company_type!r}")
+        if date_field not in {"REPORT_DATE", "UPDATE_DATE"}:
+            raise ValueError(f"unsupported financial date field {date_field}")
+        filter = f"({date_field}>='{start}')({date_field}<'{end}'){A_SHARE_TYPES}"
+        return self.fetch_datacenter(f"RPT_F10_FINANCE_{company_type}{names[statement]}", filter,
+                                     "SECUCODE,REPORT_DATE")
 
     def fetch_dividends(self, report_date: str) -> pd.DataFrame:
         return self.fetch_datacenter("RPT_SHAREBONUS_DET", f"(REPORT_DATE='{report_date}')", "SECUCODE")

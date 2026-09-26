@@ -29,6 +29,9 @@ SINGLE_FILE_DATASETS = (
     "dividends",
     "industry_sw",
     "index_weights",
+    "fin_income",
+    "fin_balance",
+    "fin_cashflow",
 )
 DATE_COLUMNS = {
     "daily_bars": "trade_date",
@@ -43,6 +46,9 @@ DATE_COLUMNS = {
     "dividends": "report_date",
     "industry_sw": "start_date",
     "index_weights": "as_of_date",
+    "fin_income": "report_date",
+    "fin_balance": "report_date",
+    "fin_cashflow": "report_date",
 }
 
 

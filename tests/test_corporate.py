@@ -166,3 +166,20 @@ def test_raw_writer_stores_mixed_type_columns_as_text(tmp_path) -> None:
     frame = pd.DataFrame({"a": [1, "x", None], "b": [1.0, 2.0, 3.0]})
     path = write_raw_frame(tmp_path, "akshare", "test", "20260101T000000Z", "mixed", frame)
     assert pd.read_parquet(path)["a"].tolist() == ["1", "x", None]
+
+
+def test_concurrent_pages_are_assembled_in_order_and_counted() -> None:
+    import time as _time
+
+    from quant_system.data_platform.providers.eastmoney_dc import PaginationMismatch, collect_pages
+
+    def fetch(report, filter, page, sort_columns, sort_types, total=25):
+        _time.sleep(0.01 * (6 - page % 6))  # later pages may finish first
+        rows = [{"k": i} for i in range((page - 1) * 5, min(page * 5, total))]
+        return rows, 5, total
+
+    frame = collect_pages(fetch, "R", "(x)", "SECUCODE,REPORT_DATE", workers=4)
+    assert frame["k"].tolist() == list(range(25))
+    with pytest.raises(PaginationMismatch):
+        collect_pages(lambda **kw: fetch(**kw, total=30) if kw["page"] == 1 else fetch(**kw), "R", "(x)", "S",
+                      workers=2)

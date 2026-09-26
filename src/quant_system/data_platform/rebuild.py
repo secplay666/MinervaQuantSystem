@@ -26,6 +26,7 @@ import pandas as pd
 
 from .audit import run_audit
 from .config import DataPlatformConfig
+from .financials import STATEMENTS, merge_financial_versions, normalize_financials
 from .corporate import (
     load_sw2014_mapping,
     merge_dividends,
@@ -150,6 +151,7 @@ class CanonicalRebuilder:
         self._rebuild_status_history(master)
         self._rebuild_corporate()
         self._rebuild_classification()
+        self._rebuild_fundamentals()
         audit = run_audit(self.staging, calendar_end, self.start_date,
                           self.config.min_latest_coverage, f"rebuild_{self.rebuild_id}")
         if not audit.gaps.empty:
@@ -461,6 +463,26 @@ class CanonicalRebuilder:
                 write_canonical_frame(self.staging, dataset, merged)
         if log_rows:
             write_canonical_frame(self.staging, "corporate_fetch_log", merge_fetch_log(None, log_rows))
+
+    def _rebuild_fundamentals(self) -> None:
+        """Replay statement windows run by run, in name order, through the
+        same version merge as ingestion."""
+        merged: dict[str, Any] = {statement: None for statement in STATEMENTS}
+        log_rows: list[dict[str, Any]] = []
+        for run_id, directory in _raw_runs(self.raw_root, "financials"):
+            for path in sorted(directory.glob("*.parquet")):
+                statement, _, name = path.stem.partition("_")
+                ctype = name.split("_", 1)[0]
+                part, _ = normalize_financials(pd.read_parquet(path), statement, ctype, run_id,
+                                               run_id_to_iso(run_id))
+                merged[statement], _ = merge_financial_versions(merged[statement], part, statement)
+                log_rows.append({"dataset": f"fin_{statement}", "window": name, "rows": len(part),
+                                 "run_id": run_id})
+        for statement, frame in merged.items():
+            if frame is not None and not frame.empty:
+                write_canonical_frame(self.staging, f"fin_{statement}", frame)
+        if log_rows:
+            write_canonical_frame(self.staging, "fundamentals_fetch_log", merge_fetch_log(None, log_rows))
 
     def _rebuild_classification(self) -> None:
         runs = [(run_id, directory) for run_id, directory in _raw_runs(self.raw_root, "industry_sw")

@@ -90,6 +90,13 @@ class MarketDataProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def fetch_financial_statement(self, statement: str, company_type: str, date_field: str, start: str,
+                                  end: str) -> pd.DataFrame:
+        """One statement (income/balance/cashflow) for one company type
+        (G/B/S/I) with ``date_field`` (REPORT_DATE or UPDATE_DATE) in [start, end)."""
+        raise NotImplementedError
+
+    @abstractmethod
     def fetch_dividends(self, report_date: str) -> pd.DataFrame:
         """Dividend and bonus-share plans for one report period (YYYY-MM-DD)."""
         raise NotImplementedError
