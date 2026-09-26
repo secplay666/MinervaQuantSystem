@@ -26,6 +26,7 @@ dev = [
 [project.scripts]
 quant-data = "quant_system.data_platform.cli:main"
 quant-backtest = "quant_system.backtest.cli:main"
+quant-research = "quant_system.research.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

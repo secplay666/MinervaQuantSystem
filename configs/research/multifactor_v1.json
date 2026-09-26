@@ -1,0 +1,23 @@
+{
+  "name": "multifactor_v1_factors",
+  "experiment": "multifactor_v1",
+  "hypothesis": "经典价值、质量、成长与量价因子在 A 股流动性池内有稳定的截面预测力（ADR-009）",
+  "data": {"source": "duckdb", "path": "data/market.duckdb"},
+  "market_rules": "configs/market_rules/cn_a_share.json",
+  "schedule": {"type": "month_end"},
+  "universe": {
+    "size": 1800,
+    "boards": ["SSE_MAIN", "SZSE_MAIN", "CHINEXT", "STAR"],
+    "min_listing_sessions": 250,
+    "coverage_window": 60,
+    "min_coverage": 0.8,
+    "min_price": 2.0,
+    "turnover_window": 20,
+    "turnover_weight": 0.5,
+    "exclude_risk_warning": true
+  },
+  "processing": {"winsorize_k": 3.0, "neutralize": true, "min_names": 30},
+  "factors": "all",
+  "samples": {"is": ["2021-01-01", "2023-12-31"], "oos": ["2024-01-01", "2026-09-30"]},
+  "evaluation": {"horizons": [1, 2, 3, 6], "quantiles": 5}
+}
