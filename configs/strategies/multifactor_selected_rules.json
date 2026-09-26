@@ -1,0 +1,109 @@
+{
+  "name": "multifactor_selected_rules",
+  "description": "多因子（样本内筛选：2021-2023 年 Rank IC t ≥ 2 且方向符合事前假设的 16 个因子，筛选依据为因子评估运行 20260926T154222568359Z-42f6），类别等权 + 规则法组合。回测区间由实验样本决定（ADR-009）。",
+  "experiment": {
+    "research_config": "configs/research/multifactor_v1.json"
+  },
+  "run": {
+    "start": "2021-01-01",
+    "end": "2023-12-31",
+    "initial_capital_cny": "10000000"
+  },
+  "data": {
+    "source": "duckdb",
+    "path": "data/market.duckdb"
+  },
+  "market_rules": "configs/market_rules/cn_a_share.json",
+  "strategy": {
+    "id": "multifactor",
+    "version": "1",
+    "params": {
+      "factors": [
+        "ivol_60",
+        "turn_vol_20",
+        "turn_20",
+        "max_20",
+        "amplitude_20",
+        "vol_60",
+        "amihud_20",
+        "abn_turn",
+        "bp",
+        "dy_ttm",
+        "accruals",
+        "rev_1m",
+        "cfp_ttm",
+        "sp_ttm",
+        "pv_corr_20",
+        "ep_ttm"
+      ],
+      "weighting": "family_equal",
+      "min_families": 4,
+      "universe": {
+        "size": 1800,
+        "boards": [
+          "SSE_MAIN",
+          "SZSE_MAIN",
+          "CHINEXT",
+          "STAR"
+        ],
+        "min_listing_sessions": 250,
+        "coverage_window": 60,
+        "min_coverage": 0.8,
+        "min_price": 2.0,
+        "turnover_window": 20,
+        "turnover_weight": 0.5,
+        "exclude_risk_warning": true
+      },
+      "processing": {
+        "winsorize_k": 3.0,
+        "neutralize": true,
+        "min_names": 30
+      },
+      "constructor": "rules",
+      "construction": {
+        "n_holdings": 100,
+        "buffer": 1.5,
+        "industry_deviation": 0.05,
+        "max_weight": 0.02,
+        "weighting": "equal",
+        "adv_participation": 0.1,
+        "liquidity_days": 1.0,
+        "lot_tolerance": 1.2
+      }
+    }
+  },
+  "schedule": {
+    "type": "month_end"
+  },
+  "portfolio": {
+    "cash_buffer": 0.005,
+    "band_rel": 0.25,
+    "min_lot_policy": "skip"
+  },
+  "execution": {
+    "price": "open",
+    "slippage_bps": "5",
+    "max_participation": 0.1,
+    "buy_retry_sessions": 5,
+    "delay_sessions": 1
+  },
+  "costs": {
+    "commission_rate": "0.00025",
+    "commission_min_cny": "5"
+  },
+  "delisting": {
+    "settlement": "last_close"
+  },
+  "benchmarks": {
+    "indices": [
+      "H00905",
+      "H00852",
+      "H00300"
+    ],
+    "equal_weight_universe": true
+  },
+  "analytics": {
+    "risk_free_rate": 0.0,
+    "periods_per_year": 244
+  }
+}

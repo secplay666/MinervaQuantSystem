@@ -77,9 +77,11 @@ FIELDS: dict[str, dict[str, tuple[str, ...]]] = {
         "amortization": ("IA_AMORTIZE",),
     },
 }
-KEY_COLUMNS = ["symbol", "report_date"]
-META_COLUMNS = ["company_type", "report_type", "notice_date", "update_date", "version", "content_hash",
-                "first_seen_run"]
+# Financial companies appear both in the general (G) table and in their own
+# (B/S/I) table with slightly different fields, so each table keeps its own
+# version lineage; the derivation prefers the specific table (pit.py).
+KEY_COLUMNS = ["symbol", "report_date", "company_type"]
+META_COLUMNS = ["report_type", "notice_date", "update_date", "version", "content_hash", "first_seen_run"]
 LINEAGE_COLUMNS = ["source", "ingested_at", "run_id", "schema_version"]
 
 
@@ -143,8 +145,8 @@ def normalize_financials(raw: pd.DataFrame, statement: str, company_type: str, r
 def merge_financial_versions(existing: pd.DataFrame | None, incoming: pd.DataFrame,
                              statement: str) -> tuple[pd.DataFrame, int]:
     """Append incoming rows whose curated values differ from the latest
-    stored version of the same (symbol, report_date).  Returns (merged,
-    new version count)."""
+    stored version of the same (symbol, report_date, company_type).
+    Returns (merged, new version count)."""
     columns = statement_columns(statement)
     if incoming is None or incoming.empty:
         base = existing if existing is not None else pd.DataFrame(columns=columns)

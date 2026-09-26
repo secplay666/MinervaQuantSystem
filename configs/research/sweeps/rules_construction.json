@@ -1,0 +1,4 @@
+{
+  "strategy.params.construction.n_holdings": [50, 100, 150],
+  "strategy.params.construction.industry_deviation": [0.03, 0.05, 0.10]
+}

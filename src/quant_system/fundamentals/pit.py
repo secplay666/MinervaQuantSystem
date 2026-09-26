@@ -34,7 +34,7 @@ import numpy as np
 import pandas as pd
 
 MAX_AGE_DAYS = 365
-RESTATEMENT_LAG_DAYS = 30
+SPECIFIC_TYPES = ("B", "S", "I")  # bank, securities, insurance tables beat the general (G) table
 STATEMENTS = ("income", "balance", "cashflow")
 INPUTS = {
     "income": ("revenue", "operate_cost", "parent_net_profit", "deducted_parent_net_profit"),
@@ -175,21 +175,26 @@ class FundamentalStore:
         return np.where(valid & fresh, value, np.nan)
 
 
-def availability(frame: pd.DataFrame, restated_from_update: bool) -> pd.Series:
+def availability(frame: pd.DataFrame) -> pd.Series:
     notice = pd.to_datetime(frame["notice_date"])
     update = pd.to_datetime(frame["update_date"])
     later = frame["version"] >= 2
-    available = notice.where(~later, np.maximum(notice, update.fillna(notice)))
-    if restated_from_update:
-        # Sensitivity: a first version revised long after its announcement
-        # is assumed known only from the revision.
-        revised = (~later) & ((update - notice).dt.days > RESTATEMENT_LAG_DAYS)
-        available = available.where(~revised, update)
-    return available
+    return notice.where(~later, np.maximum(notice, update.fillna(notice)))
+
+
+def prefer_specific_tables(frame: pd.DataFrame) -> pd.DataFrame:
+    """Drop general-table rows of companies reported in a bank, securities
+    or insurance table (the same statements, with the right fields)."""
+    if "company_type" not in frame.columns:
+        return frame
+    specific = set(frame.loc[frame["company_type"].isin(SPECIFIC_TYPES), "symbol"])
+    return frame[~((frame["company_type"] == "G") & frame["symbol"].isin(specific))]
 
 
 def derive_store(tables: dict[str, pd.DataFrame], sessions: tuple[date, ...], symbols: np.ndarray,
-                 restated_from_update: bool = False) -> FundamentalStore:
+                 extra_lag_sessions: int = 0) -> FundamentalStore:
+    """``extra_lag_sessions`` delays every statement by that many sessions
+    (timeliness sensitivity; 0 in normal use)."""
     session_days = np.array(sessions, dtype="datetime64[D]")
     columns = {str(symbol): j for j, symbol in enumerate(symbols)}
     parts = []
@@ -197,9 +202,9 @@ def derive_store(tables: dict[str, pd.DataFrame], sessions: tuple[date, ...], sy
         frame = tables.get(statement)
         if frame is None or frame.empty:
             continue
-        frame = frame[frame["symbol"].astype(str).isin(columns)]
-        available = availability(frame, restated_from_update).to_numpy(dtype="datetime64[D]")
-        eff = np.searchsorted(session_days, available, side="right")
+        frame = prefer_specific_tables(frame[frame["symbol"].astype(str).isin(columns)])
+        available = availability(frame).to_numpy(dtype="datetime64[D]")
+        eff = np.searchsorted(session_days, available, side="right") + extra_lag_sessions
         part = pd.DataFrame({"col": frame["symbol"].astype(str).map(columns).to_numpy(), "eff": eff,
                              "statement": statement, "period": pd.to_datetime(frame["report_date"]).dt.date.to_numpy(),
                              "version": frame["version"].to_numpy()})
@@ -235,10 +240,10 @@ def derive_store(tables: dict[str, pd.DataFrame], sessions: tuple[date, ...], sy
         cols=np.asarray(cols, dtype=np.int64), eff=np.asarray(effs, dtype=np.int64),
         values=np.asarray(values, dtype=np.float64).reshape(-1, len(OUTPUTS)),
         periods=np.asarray(periods, dtype="datetime64[D]").reshape(-1, 3),
-        options={"restated_from_update": restated_from_update})
+        options={"extra_lag_sessions": extra_lag_sessions})
 
 
-FIN_COLUMNS = ["symbol", "report_date", "notice_date", "update_date", "version"]
+FIN_COLUMNS = ["symbol", "report_date", "company_type", "notice_date", "update_date", "version"]
 
 
 def read_statement_tables(source: str, path: Path) -> dict[str, pd.DataFrame]:
@@ -259,9 +264,9 @@ def read_statement_tables(source: str, path: Path) -> dict[str, pd.DataFrame]:
     return tables
 
 
-def load_fundamentals(source: str, path: Path, market: Any, restated_from_update: bool = False
+def load_fundamentals(source: str, path: Path, market: Any, extra_lag_sessions: int = 0
                       ) -> FundamentalStore | None:
     tables = read_statement_tables(source, path)
     if not tables:
         return None
-    return derive_store(tables, market.sessions, market.symbols, restated_from_update)
+    return derive_store(tables, market.sessions, market.symbols, extra_lag_sessions)

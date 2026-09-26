@@ -176,11 +176,9 @@ def test_a_later_revision_only_changes_rows_after_it_is_available() -> None:
     cut = SESSIONS.index(date(2021, 6, 15))
     np.testing.assert_array_equal(a[:cut + 1], b[:cut + 1])  # usable only after the revision date
     assert np.nanmax(np.abs(a[cut + 1:] - b[cut + 1:])) > 0
-    # The sensitivity option moves a long-delayed first version to its update date.
-    late = _tables()
-    late["income"].loc[late["income"]["report_date"] == date(2020, 12, 31), "update_date"] = date(2021, 6, 15)
-    lagged = derive_store(late, SESSIONS, SYMBOLS, restated_from_update=True)
-    assert SESSIONS[_first_use(lagged)] > date(2021, 4, 28)
+    # The timeliness sensitivity delays every statement by the given sessions.
+    lagged = derive_store(_tables(), SESSIONS, SYMBOLS, extra_lag_sessions=20)
+    assert _first_use(lagged) == _first_use(plain) + 20
 
 
 def test_stale_fundamentals_expire_a_year_after_the_period() -> None:
@@ -192,3 +190,20 @@ def test_stale_fundamentals_expire_a_year_after_the_period() -> None:
     values = store.asof("ni_ttm", rows)[:, 0]
     assert np.isfinite(values[0]) and np.isnan(values[1])
     assert np.isnan(store.asof("ni_ttm", rows)[:, 1]).all()  # a symbol with no statements
+
+
+def test_financial_companies_in_two_tables_keep_one_lineage_each_and_prefer_the_specific_table() -> None:
+    provider = FakeProvider()
+    bank_rows = provider._financial_rows("income", "B")
+    general = [{**row, "TOTAL_OPERATE_INCOME": 999.0, "SALE_EXPENSE": 1.0} for row in bank_rows
+               if row["SECURITY_CODE"] == "000001"]
+    g, _ = normalize_financials(pd.DataFrame(general), "income", "G", "r1", "t")
+    b, _ = normalize_financials(pd.DataFrame(bank_rows), "income", "B", "r1", "t")
+    merged, _ = merge_financial_versions(None, b, "income")
+    merged, added = merge_financial_versions(merged, g, "income")
+    assert added == len(g) and (merged["version"] == 1).all()  # separate lineages, no fake revisions
+    tables = {"income": merged.assign(revenue=np.where(merged["company_type"] == "G", 999.0, merged["revenue"]))}
+    sessions = tuple(d.date() for d in pd.bdate_range("2025-01-02", "2026-12-31"))
+    store = derive_store(tables, sessions, np.array(["000001"], dtype=object))
+    revenue = store.asof("revenue_ttm", np.array([len(sessions) - 1]))[0, 0]
+    assert np.isfinite(revenue) and revenue != 999.0 * 4

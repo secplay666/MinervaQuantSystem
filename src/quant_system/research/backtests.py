@@ -56,6 +56,8 @@ STRESS_SCENARIOS: dict[str, Any] = {
                                              "strategy.params.construction.n_holdings", 50),
     "capital_100m": lambda p: set_path(p, "run.initial_capital_cny", "100000000"),
     "universe_800": lambda p: set_path(p, "strategy.params.universe.size", 800),
+    # Timeliness (ADR-004): every financial statement usable 20 sessions later.
+    "fundamentals_lag_20": lambda p: set_path(p, "fundamentals.extra_lag_sessions", 20),
 }
 
 
@@ -79,12 +81,17 @@ class LoadedData:
     research: ResearchData
 
 
-def load_data_for(payload: dict[str, Any], root: Path = ROOT) -> LoadedData:
+def data_key(payload: dict[str, Any], root: Path = ROOT) -> tuple:
+    return (payload["data"]["source"], str((root / payload["data"]["path"]).resolve()),
+            int(payload.get("fundamentals", {}).get("extra_lag_sessions", 0)))
+
+
+def load_data_for(payload: dict[str, Any], root: Path = ROOT, market: Any = None) -> LoadedData:
     from ..backtest.market_data import load_market_data
 
-    source, path = payload["data"]["source"], (root / payload["data"]["path"]).resolve()
-    market = load_market_data(source, path)
-    return LoadedData(market, load_research_data(source, path, market=market))
+    source, path, lag = data_key(payload, root)
+    market = market or load_market_data(source, Path(path))
+    return LoadedData(market, load_research_data(source, Path(path), market=market, fundamentals_lag_sessions=lag))
 
 
 def _experiment(payload: dict[str, Any], registry: Registry, root: Path) -> tuple[ResearchConfig, str]:
@@ -180,13 +187,17 @@ def run_stress(payload: dict[str, Any], scenarios: list[str], sample: str = "IS"
     if unknown:
         raise ValueError(f"unknown stress scenarios {sorted(unknown)}; known: {sorted(STRESS_SCENARIOS)}")
     registry = registry or Registry(root / "artifacts" / "registry.sqlite")
-    loaded = load_data_for(payload, root)
+    cache: dict[tuple, LoadedData] = {}
     rows = []
     for name in scenarios:
         trial = STRESS_SCENARIOS[name](copy.deepcopy(payload))
+        key = data_key(trial, root)
+        if key not in cache:  # the market panels are shared; research data depends on the lag
+            market = next(iter(cache.values())).market if cache else None
+            cache[key] = load_data_for(trial, root, market)
         run_dir, summary = run_backtest_experiment(trial, sample, kind="stress", confirm_oos=confirm_oos,
                                                    reason=reason or f"stress {name}", registry=registry, root=root,
-                                                   loaded=loaded)
+                                                   loaded=cache[key])
         rows.append({"scenario": name, **backtest_metrics(summary), "run": run_dir.name})
     return pd.DataFrame(rows)
 
