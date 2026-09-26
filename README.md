@@ -1,6 +1,6 @@
 # 量化交易辅助系统
 
-当前仓库已完成第一阶段"数据底座"和第二阶段"可验证回测"。总体设计见 [ARCHITECTURE.md](ARCHITECTURE.md)，关键决策见 [docs/adr/](docs/adr/)。
+当前仓库已完成第一阶段"数据底座"、第二阶段"可验证回测"，第三阶段"因子与组合"进行中（因子库、股票池、多因子策略、组合构建、风险报告、实验管理均已实现）。总体设计见 [ARCHITECTURE.md](ARCHITECTURE.md)，关键决策见 [docs/adr/](docs/adr/)。
 
 ## 数据范围
 
@@ -23,6 +23,14 @@
 | `security_name_changes` / `risk_warning_intervals` | 风险警示（ST/\*ST/退市整理）区间，三个交易所都带生效日期：深市来自简称变更，沪市、北交所由交易所公告推导，并用名称和价格证据校正（[ADR-004](docs/adr/ADR-004-adjustment-and-point-in-time.md)） |
 | `risk_warning_bulletins` / `risk_warning_adjustments` | 上交所、北交所风险警示相关公告，以及推导 ST 区间时每一处修正的记录 |
 | `bar_gaps` | 对照交易日历检测出的日线缺口，并标注是否能被停牌事件解释 |
+| `share_capital` | 股本变动（总股本、流通 A 股、限售股），变动日与公告日，覆盖已退市证券 |
+| `dividends` | 分红送转：每 10 股派现、送股、转增，股权登记日、除权日 |
+| `industry_sw` | 申万行业分类历史；2021-07-30 以前的 2014 版代码按实际迁移映射到 2021 版一级行业 |
+| `index_weights` | 沪深 300、中证 500、中证 1000 当前成分权重的快照（没有历史，逐次累积） |
+| `fin_income` / `fin_balance` / `fin_cashflow` | 三大报表（2016 年一季度起），带首次公告日、更新日和版本号；数值变化时追加新版本 |
+
+- 指数日线另含中证全收益指数 H00300、H00905、H00852。
+- 财务数据的可用时间、财报修订偏差、股本和分红的时间点规则见 [ADR-004](docs/adr/ADR-004-adjustment-and-point-in-time.md)。
 
 当前数据只用于数据平台和研究原型。AKShare 官方声明其数据仅用于学术研究，不应作为无人值守实盘的唯一依据。
 
@@ -49,8 +57,10 @@
 4. 指数；
 5. 停复牌事件，以及三个交易所的 ST 区间（深市简称变更；沪市、北交所按季度或年度窗口抓取交易所公告，上交所有限流时剩余窗口顺延到下次运行）；
 6. 收盘后快照；
-7. 全量审计；
-8. 生成质量报告、数据版本和 DuckDB 目录。
+7. 股本变动和分红（`corporate`）；申万行业分类和指数成分权重（`classification`）；
+8. 财务报表（`fundamentals`）：历史报告期只回填一次，之后每次抓取近 45 天内更新过的记录，每周重扫最近 6 个报告期；
+9. 全量审计；
+10. 生成质量报告、数据版本和 DuckDB 目录。
 
 退出码 `0` 表示 `complete`，`2` 表示 `partial` 或 `failed`，详见质量报告。
 
@@ -132,6 +142,33 @@ df = con.execute(
 - 市场规则按生效日期写在 `configs/market_rules/cn_a_share.json`，包括涨跌幅、新股无涨跌幅日、申报数量、印花税、过户费。
 - 示范策略（120 日动量 Top50）只用于验证引擎，验证方案和结果见 [ADR-006](docs/adr/ADR-006-demo-strategy-and-validation.md)。
 - 回归测试使用已提交的固定数据集 `tests/fixtures/backtest_cn_small/`（40 只股票，由 `scripts/extract_backtest_fixture.py` 生成）。更新基准文件需要显式设置 `UPDATE_GOLDEN=1`。
+
+## 因子研究与多因子策略
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[dev,optimizer]"    # 均值-方差优化需要 scipy、osqp
+.\.venv\Scripts\quant-research.exe factors list
+.\.venv\Scripts\quant-research.exe factors evaluate --config configs/research/multifactor_v1.json --sample is
+.\.venv\Scripts\quant-research.exe experiment run --config configs/strategies/multifactor_rules.json --sample is
+.\.venv\Scripts\quant-research.exe experiment sweep --config configs/strategies/multifactor_rules.json --grid grid.json
+.\.venv\Scripts\quant-research.exe experiment stress --config configs/strategies/multifactor_rules.json --sample is
+.\.venv\Scripts\quant-research.exe runs
+```
+
+- **股票池**：沪深主板、创业板、科创板中流动性和流通市值综合排名前 1,800 的股票，每个调仓日按规则重新计算。排除 ST、上市不足 250 个交易日、近期停牌多和股价低于 2 元的股票。
+- **因子库**：27 个因子，分为价值、质量、成长、动量、波动、流动性、规模、技术八类。截面处理为去极值、行业和市值中性化、标准化。
+- **组合构建**：
+  - 规则法（默认）：换手缓冲、行业持股数约束、一手替补、单股上限；
+  - 均值-方差优化：自建风险模型，OSQP 求解，失败时逐级放宽，最后回退到规则法（[ADR-007](docs/adr/ADR-007-portfolio-construction-and-limits.md)）。
+- **样本划分**：样本内 2021–2023 年，样本外 2024-01 至 2026-09。
+  - 所有运行都记入 `artifacts/registry.sqlite`；
+  - 样本外必须加 `--confirm-oos`，同一配置只允许运行一次（[ADR-009](docs/adr/ADR-009-factor-research-protocol.md)）。
+- **产物**：
+  - 因子评估：`artifacts/research/<run_id>/`；
+  - 回测：`artifacts/backtests/<run_id>/`（多因子回测的报告附风险暴露与行业归因）；
+  - 参数实验：`artifacts/sweeps/<id>/`。
+- **缓存**：原始因子值缓存在 `data/features/`，按数据指纹、因子定义和代码哈希失效。
+- **回归测试**：多因子流程使用 `tests/fixtures/multifactor_cn/`（约 150 只股票，由 `scripts/extract_multifactor_fixture.py` 生成）。
 
 ## 数据层约束
 

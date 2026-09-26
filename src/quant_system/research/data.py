@@ -202,8 +202,13 @@ def read_research_frames(database: Path) -> dict[str, pd.DataFrame]:
                 if needed[name] in tables}
 
 
-def load_research_data(source: str, path: Path, market: MarketData | None = None) -> ResearchData:
-    """Load research panels (and the market panels unless given)."""
+def load_research_data(source: str, path: Path, market: MarketData | None = None,
+                       restated_from_update: bool = False) -> ResearchData:
+    """Load research panels (and the market panels unless given).
+
+    ``restated_from_update`` is the restatement sensitivity (ADR-004): a first
+    statement version revised long after its announcement is treated as
+    known only from the revision date."""
     market = market or load_market_data(source, path)
     if source == "duckdb":
         frames = read_research_frames(path)
@@ -215,5 +220,5 @@ def load_research_data(source: str, path: Path, market: MarketData | None = None
     data = ResearchData.from_frames(market, frames, {"source": str(path), **market.metadata})
     from ..fundamentals.pit import load_fundamentals  # stage 3 (P3); absent datasets -> None
 
-    data.fundamentals = load_fundamentals(source, path, market)
+    data.fundamentals = load_fundamentals(source, path, market, restated_from_update=restated_from_update)
     return data

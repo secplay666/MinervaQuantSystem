@@ -1,0 +1,88 @@
+{
+  "name": "golden_multifactor",
+  "description": "回归测试：固定数据集（约 150 只股票）上的多因子 Top20（规则法）。输出与 tests/fixtures/multifactor_cn/golden/ 逐行比对。",
+  "run": {
+    "start": "2021-01-01",
+    "end": "2023-12-31",
+    "initial_capital_cny": "10000000"
+  },
+  "data": {
+    "source": "parquet_dir",
+    "path": "tests/fixtures/multifactor_cn"
+  },
+  "market_rules": "configs/market_rules/cn_a_share.json",
+  "strategy": {
+    "id": "multifactor",
+    "version": "1",
+    "params": {
+      "factors": "all",
+      "weighting": "family_equal",
+      "min_families": 4,
+      "universe": {
+        "size": 100,
+        "boards": [
+          "SSE_MAIN",
+          "SZSE_MAIN",
+          "CHINEXT",
+          "STAR"
+        ],
+        "min_listing_sessions": 250,
+        "coverage_window": 60,
+        "min_coverage": 0.8,
+        "min_price": 2.0,
+        "turnover_window": 20,
+        "turnover_weight": 0.5,
+        "exclude_risk_warning": true
+      },
+      "processing": {
+        "winsorize_k": 3.0,
+        "neutralize": true,
+        "min_names": 30
+      },
+      "constructor": "rules",
+      "construction": {
+        "n_holdings": 20,
+        "buffer": 1.5,
+        "industry_deviation": 0.1,
+        "max_weight": 0.08,
+        "weighting": "equal",
+        "adv_participation": 0.1,
+        "liquidity_days": 1.0,
+        "lot_tolerance": 1.2
+      },
+      "use_cache": false
+    }
+  },
+  "schedule": {
+    "type": "month_end"
+  },
+  "portfolio": {
+    "cash_buffer": 0.005,
+    "band_rel": 0.25,
+    "min_lot_policy": "skip"
+  },
+  "execution": {
+    "price": "open",
+    "slippage_bps": "5",
+    "max_participation": 0.1,
+    "buy_retry_sessions": 5,
+    "delay_sessions": 1
+  },
+  "costs": {
+    "commission_rate": "0.00025",
+    "commission_min_cny": "5"
+  },
+  "delisting": {
+    "settlement": "last_close"
+  },
+  "benchmarks": {
+    "indices": [
+      "H00905"
+    ],
+    "equal_weight_universe": true
+  },
+  "analytics": {
+    "risk_free_rate": 0.0,
+    "periods_per_year": 244
+  }
+}

@@ -54,6 +54,7 @@ class ResearchConfig:
     horizons: tuple[int, ...]
     quantiles: int
     min_names: int
+    restated_from_update: bool
     payload: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -89,6 +90,7 @@ class ResearchConfig:
             factors=ids, samples=samples,
             horizons=tuple(int(h) for h in evaluation.get("horizons", (1, 2, 3, 6))),
             quantiles=int(evaluation.get("quantiles", 5)), min_names=int(evaluation.get("min_names", 30)),
+            restated_from_update=bool(payload.get("fundamentals", {}).get("restated_from_update", False)),
             payload=payload,
         )
 
@@ -128,7 +130,8 @@ def run_factor_evaluation(config: ResearchConfig, sample: str = "IS", *, confirm
         registry.open_out_of_sample(experiment_id, config.config_hash, run_id, reason=reason, force=force)
     timings: dict[str, float] = {}
     started = time.perf_counter()
-    research = research or load_research_data(config.data_source, config.data_path)
+    research = research or load_research_data(config.data_source, config.data_path,
+                                              restated_from_update=config.restated_from_update)
     timings["load_seconds"] = round(time.perf_counter() - started, 2)
     version = code_version(root)
     start, end = config.samples[sample]
