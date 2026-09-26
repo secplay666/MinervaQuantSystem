@@ -57,4 +57,4 @@ def registered() -> list[str]:
 
 def _load_builtin() -> None:
     # Importing the modules runs their @register_strategy decorators.
-    from . import momentum  # noqa: F401
+    from . import momentum, multifactor  # noqa: F401

@@ -69,6 +69,7 @@ class BacktestResult:
     counters: dict[str, Any]
     checks: dict[str, Any]
     ledger: Ledger
+    extras: dict[str, pd.DataFrame] = field(default_factory=dict)  # strategy report tables
 
 
 class BacktestEngine:

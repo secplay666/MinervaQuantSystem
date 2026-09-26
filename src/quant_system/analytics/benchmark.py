@@ -75,5 +75,10 @@ def benchmarks_for(data: MarketData, start: int, end: int, eligible, schedule, i
         )
     for symbol in indices:
         if symbol in data.indices:
-            series[f"{symbol}（价格指数）"] = index_benchmark(data, symbol, start, end)
+            series[f"{symbol}（{index_kind(symbol)}）"] = index_benchmark(data, symbol, start, end)
     return series
+
+
+def index_kind(symbol: str) -> str:
+    """CSIndex total-return series are H-coded (H00300 = CSI 300 total return)."""
+    return "全收益指数" if symbol.upper().startswith("H") else "价格指数"

@@ -43,7 +43,10 @@ def run_backtest(
         data = context.data if context is not None else load_market_data(config.data_source, config.data_path)
     timings["load_seconds"] = round(time.perf_counter() - started, 2)
     if context is None:
-        context = StrategyContext(ROOT, data)
+        from ..research.data import load_research_data
+
+        context = StrategyContext(ROOT, data, lambda: load_research_data(config.data_source, config.data_path,
+                                                                          market=data))
     elif context.data is not data:
         raise ValueError("context.data must be the market data being backtested")
     rules = MarketRules.load(config.market_rules_path)
@@ -54,6 +57,11 @@ def run_backtest(
     started = time.perf_counter()
     result = BacktestEngine(config, data, rules, strategy, schedule).run()
     timings["engine_seconds"] = round(time.perf_counter() - started, 2)
+
+    if hasattr(strategy, "report_tables"):
+        started = time.perf_counter()
+        result.extras = strategy.report_tables()
+        timings["report_tables_seconds"] = round(time.perf_counter() - started, 2)
 
     calendar = TradingCalendar(data.sessions)
     start = calendar.index_on_or_after(config.start)
@@ -94,8 +102,12 @@ def run_backtest(
 
 
 def write_artifacts(root: Path, result: BacktestResult, summary: dict[str, Any],
-                    values: dict[str, pd.Series]) -> Path:
-    run_id, directory = create_artifact_dir(root / "artifacts" / "backtests")
+                    values: dict[str, pd.Series], directory: Path | None = None) -> Path:
+    """Write a run's tables, manifest and report (a new directory unless given)."""
+    if directory is None:
+        run_id, directory = create_artifact_dir(root / "artifacts" / "backtests")
+    else:
+        run_id = directory.name
     summary = {**summary, "run_id": run_id, "config": result.config.payload}
     for name in ("nav", "positions", "orders", "fills", "rejections", "corporate_actions", "delistings",
                  "signals", "skipped"):
@@ -105,8 +117,16 @@ def write_artifacts(root: Path, result: BacktestResult, summary: dict[str, Any],
     curves = pd.DataFrame(values)
     curves.index.name = "session"
     write_parquet_atomic(curves.reset_index(), directory / "curves.parquet")
+    for name, frame in result.extras.items():
+        if not frame.empty:
+            write_parquet_atomic(frame, directory / f"{name}.parquet")
     json_dump(directory / "manifest.json", summary)
-    (directory / "report.md").write_text(render_report(summary, values, result), encoding="utf-8")
+    report = render_report(summary, values, result)
+    if result.extras:
+        from ..analytics.risk import render_risk_section
+
+        report += render_risk_section(result.extras)
+    (directory / "report.md").write_text(report, encoding="utf-8")
     return directory
 
 
