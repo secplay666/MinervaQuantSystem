@@ -15,11 +15,11 @@ from ..analytics.benchmark import benchmarks_for
 from ..analytics.metrics import performance, relative, to_series, trading_stats
 from ..analytics.report import LIMITATIONS, render_report
 from ..data_platform.storage import write_parquet_atomic
-from ..data_platform.utils import code_version, file_sha256, json_dump, unique_run_id
+from ..data_platform.utils import code_version, create_artifact_dir, file_sha256, json_dump
 from ..domain.calendar import TradingCalendar
 from ..domain.rules import MarketRules
-from ..strategy.base import MonthEndSchedule
-from ..strategy.momentum import MomentumParams, MomentumStrategy
+from ..strategy.base import build_schedule
+from ..strategy.registry import StrategyContext, build_strategy
 from .config import BacktestConfig
 from .engine import BacktestEngine, BacktestResult
 from .market_data import MarketData, load_market_data
@@ -27,25 +27,30 @@ from .market_data import MarketData, load_market_data
 LOGGER = logging.getLogger(__name__)
 
 
-def build_strategy(config: BacktestConfig):
-    if config.strategy_id == "momentum":
-        params = dict(config.strategy_params)
-        if "boards" in params:
-            params["boards"] = tuple(params["boards"])
-        return MomentumStrategy(MomentumParams(**params), version=config.strategy_version)
-    raise ValueError(f"unknown strategy {config.strategy_id!r}")
+ROOT = Path(__file__).resolve().parents[3]
 
 
-def run_backtest(config: BacktestConfig, data: MarketData | None = None) -> tuple[BacktestResult, dict[str, Any],
-                                                                                     dict[str, pd.Series]]:
+def run_backtest(
+    config: BacktestConfig,
+    data: MarketData | None = None,
+    context: StrategyContext | None = None,
+) -> tuple[BacktestResult, dict[str, Any], dict[str, pd.Series]]:
+    """Run one backtest.  Pass ``data`` / ``context`` to reuse loaded data
+    (parameter sweeps); ``context.data`` must then be ``data``."""
     timings: dict[str, float] = {}
     started = time.perf_counter()
     if data is None:
-        data = load_market_data(config.data_source, config.data_path)
+        data = context.data if context is not None else load_market_data(config.data_source, config.data_path)
     timings["load_seconds"] = round(time.perf_counter() - started, 2)
+    if context is None:
+        context = StrategyContext(ROOT, data)
+    elif context.data is not data:
+        raise ValueError("context.data must be the market data being backtested")
     rules = MarketRules.load(config.market_rules_path)
-    strategy = build_strategy(config)
-    schedule = MonthEndSchedule()
+    started = time.perf_counter()
+    strategy = build_strategy(config, context)
+    timings["strategy_setup_seconds"] = round(time.perf_counter() - started, 2)
+    schedule = build_schedule(config.schedule)
     started = time.perf_counter()
     result = BacktestEngine(config, data, rules, strategy, schedule).run()
     timings["engine_seconds"] = round(time.perf_counter() - started, 2)
@@ -65,7 +70,7 @@ def run_backtest(config: BacktestConfig, data: MarketData | None = None) -> tupl
         "name": config.name,
         "config_hash": config.config_hash,
         "rules_sha256": file_sha256(config.market_rules_path),
-        "code_version": code_version(Path(__file__).resolve().parents[3]),
+        "code_version": code_version(ROOT),
         "data": {
             "source": data.metadata.get("source"),
             "data_version": data.metadata.get("data_version"),
@@ -90,9 +95,7 @@ def run_backtest(config: BacktestConfig, data: MarketData | None = None) -> tupl
 
 def write_artifacts(root: Path, result: BacktestResult, summary: dict[str, Any],
                     values: dict[str, pd.Series]) -> Path:
-    run_id = unique_run_id(root)
-    directory = root / "artifacts" / "backtests" / run_id
-    directory.mkdir(parents=True, exist_ok=True)
+    run_id, directory = create_artifact_dir(root / "artifacts" / "backtests")
     summary = {**summary, "run_id": run_id, "config": result.config.payload}
     for name in ("nav", "positions", "orders", "fills", "rejections", "corporate_actions", "delistings",
                  "signals", "skipped"):

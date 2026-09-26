@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import secrets
 import subprocess
 import time
 from datetime import UTC, datetime
@@ -35,6 +36,27 @@ def unique_run_id(root: Path) -> str:
         if not taken:
             return run_id
         time.sleep(0.2)
+
+
+def artifact_run_id() -> str:
+    """Id for a research artifact (backtest, factor evaluation, sweep trial).
+
+    Microseconds plus a random suffix, so runs started in the same second
+    never collide; data-ingestion run ids keep their one-second format.
+    """
+    return f"{utc_now().strftime('%Y%m%dT%H%M%S%fZ')}-{secrets.token_hex(2)}"
+
+
+def create_artifact_dir(parent: Path) -> tuple[str, Path]:
+    """Create a fresh ``parent/<artifact_run_id>`` directory (never reused)."""
+    parent.mkdir(parents=True, exist_ok=True)
+    while True:
+        run_id = artifact_run_id()
+        try:
+            (parent / run_id).mkdir()
+        except FileExistsError:
+            continue
+        return run_id, parent / run_id
 
 
 def run_id_to_iso(run_id: str) -> str:

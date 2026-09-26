@@ -36,6 +36,7 @@ class BacktestConfig:
     equal_weight_benchmark: bool
     risk_free_rate: float
     periods_per_year: int
+    schedule: dict[str, Any] = field(default_factory=lambda: {"type": "month_end"})
     payload: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -90,5 +91,6 @@ class BacktestConfig:
             equal_weight_benchmark=bool(benchmarks.get("equal_weight_universe", True)),
             risk_free_rate=float(analytics.get("risk_free_rate", 0.0)),
             periods_per_year=int(analytics.get("periods_per_year", 244)),
+            schedule=dict(payload.get("schedule", {"type": "month_end"})),
             payload=payload,
         )

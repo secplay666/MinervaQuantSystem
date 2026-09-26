@@ -38,7 +38,7 @@ from ..ledger import (
     TradeFilled,
 )
 from ..portfolio.sizing import SizedOrder, size_orders
-from ..strategy.base import MonthEndSchedule, RebalanceSchedule, Strategy
+from ..strategy.base import MonthEndSchedule, PortfolioState, RebalanceSchedule, Strategy
 from .config import BacktestConfig
 from .fills import fill_price_fen, mark_price_fen, open_state, reference_price_fen
 from .market_data import MarketData
@@ -102,6 +102,7 @@ class BacktestEngine:
         self._positions: list[dict[str, Any]] = []
         self._fees_total = 0
         self._order_seq = 0
+        self._last_target: TargetPortfolio | None = None
 
     # ------------------------------------------------------------------ run
 
@@ -127,7 +128,12 @@ class BacktestEngine:
                 traded = self._execute(i, active)
             self._close(i, day, events_before, cash_before, traded)
             if self.schedule.is_rebalance(self.calendar, i):
-                target = self.strategy.on_close(PanelView(self.data, i))
+                view = PanelView(self.data, i)
+                if getattr(self.strategy, "wants_portfolio_state", False):
+                    target = self.strategy.on_close(view, self._portfolio_state(i, day))
+                else:
+                    target = self.strategy.on_close(view)
+                self._last_target = target
                 self._record_signals(target)
                 execute_at = i + self.config.delay_sessions
                 if execute_at <= end:
@@ -355,6 +361,18 @@ class BacktestEngine:
         self._nav.append({"session": day, "cash_fen": self.ledger.cash_fen, "market_value_fen": market_value,
                           "nav_fen": self.ledger.cash_fen + market_value, "traded_fen": traded,
                           "fees_cum_fen": self._fees_total, "positions": len(self.ledger.positions)})
+
+    def _portfolio_state(self, i: int, day: date) -> PortfolioState:
+        """Holdings after the close of session ``i`` (the nav row just written)."""
+        nav_fen = self._nav[-1]["nav_fen"]
+        quantities: dict[str, int] = {}
+        weights: dict[str, float] = {}
+        for symbol, position in sorted(self.ledger.positions.items()):
+            mark = mark_price_fen(self.data, i, self.column[symbol]) or 0
+            quantities[symbol] = position.quantity
+            weights[symbol] = position.quantity * mark / nav_fen if nav_fen > 0 else 0.0
+        return PortfolioState(session=day, nav_fen=nav_fen, cash_fen=self.ledger.cash_fen,
+                              quantities=quantities, weights=weights, previous_target=self._last_target)
 
     def _record_signals(self, target: TargetPortfolio) -> None:
         self.counters["rebalance_signals"] += 1

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from ..domain.entities import TargetPortfolio
+from .registry import register_strategy
 
 if TYPE_CHECKING:  # strategies depend on the view protocol, not the engine
     from ..backtest.view import PanelView
@@ -83,3 +84,11 @@ class MomentumStrategy:
                 for rank, j in enumerate(chosen)
             },
         )
+
+
+@register_strategy("momentum")
+def _build_momentum(config, context) -> MomentumStrategy:
+    params = dict(config.strategy_params)
+    if "boards" in params:
+        params["boards"] = tuple(params["boards"])
+    return MomentumStrategy(MomentumParams(**params), version=config.strategy_version)
