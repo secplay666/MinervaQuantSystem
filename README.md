@@ -75,6 +75,26 @@ uv pip install --python .venv/bin/python --no-deps -e .
 
 退出码 `0` 表示 `complete`，`2` 表示 `partial` 或 `failed`，详见质量报告。
 
+### 服务器定时更新
+
+服务器（Linux，普通用户）上由 systemd 用户定时器每个工作日自动运行 `scripts/daily_update.sh`：
+
+- 18:17 运行一次，21:47 再触发一次作为重试。如果最近一次收盘（16:00）之后已经有完整运行，重试直接跳过。
+- 服务器在预定时间关机时，开机后补跑一次。
+- 同一时间只允许一个运行；以低优先级运行（nice 10、IO 空闲级）。
+
+```bash
+sudo loginctl enable-linger <user>          # 一次性（需要管理员）：用户未登录时定时器也运行
+deploy/install_daily_timer.sh               # 安装或更新定时器（git pull 后如单元文件有变化，重新执行）
+systemctl --user list-timers quant-daily.timer
+systemctl --user start quant-daily.service  # 立即按定时任务的方式运行一次
+scripts/daily_update.sh --force             # 或直接运行，不检查今天是否已完成
+tail -n 20 logs/daily/history.tsv           # 每次运行一行：开始时间、退出码、run_id、状态、最新交易日、阻断/警告数
+less logs/daily/$(date +%F).log             # 当天完整日志
+```
+
+服务器上的数据是主副本，每日采集只在服务器上运行。本机不要再运行 `ingest`，否则两份原始层会各自演化，无法再互相核对。本机需要最新数据时，从服务器同步。
+
 运行产物：
 
 ```text

@@ -1,0 +1,14 @@
+[Unit]
+Description=MinervaQuantSystem data update on weekday evenings (18:17, retry 21:47)
+
+[Timer]
+# After session_final_time (16:00) plus time for the vendors to settle.  The
+# 21:47 firing is a retry: scripts/daily_update.sh skips it when the 18:17 run
+# completed.  Persistent catches up once after downtime.
+OnCalendar=Mon..Fri 18:17
+OnCalendar=Mon..Fri 21:47
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

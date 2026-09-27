@@ -1,0 +1,13 @@
+[Unit]
+Description=MinervaQuantSystem daily incremental data update
+Documentation=file://@REPO@/README.md
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO@
+ExecStart=@REPO@/scripts/daily_update.sh
+# Yield to production services on the same host.
+Nice=10
+CPUSchedulingPolicy=batch
+IOSchedulingClass=idle
+TimeoutStartSec=5h

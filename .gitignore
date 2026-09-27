@@ -24,3 +24,6 @@ artifacts/
 
 # Keep directory placeholders
 !data/.gitkeep
+
+# Server logs (scripts/daily_update.sh)
+logs/
