@@ -3,8 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 
 from .events import (
+    CashAdjusted,
     CashDeposited,
     LedgerEvent,
+    PositionAdjusted,
     PositionDelisted,
     SessionClosed,
     SharesAdjusted,
@@ -46,6 +48,8 @@ class Ledger:
             SharesAdjusted: self._adjust,
             PositionDelisted: self._delist,
             SessionClosed: self._close,
+            PositionAdjusted: self._set_position,
+            CashAdjusted: self._cash,
         }[type(event)]
         handler(event)
         self._seen.add(event.event_id)
@@ -118,6 +122,18 @@ class Ledger:
         for symbol, position in list(self.positions.items()):
             if position.sellable != position.quantity:
                 self.positions[symbol] = replace(position, sellable=position.quantity)
+
+    def _set_position(self, event: PositionAdjusted) -> None:
+        if self.quantity(event.symbol) != event.old_quantity:
+            raise LedgerInvariantError(f"{event.event_id}: adjustment does not match the holding")
+        if event.new_quantity < 0 or event.cost_fen < 0:
+            raise LedgerInvariantError(f"{event.event_id}: negative quantity or cost")
+        self._store(event.symbol, Position(event.new_quantity, event.new_quantity, event.cost_fen))
+
+    def _cash(self, event: CashAdjusted) -> None:
+        if self.cash_fen + event.amount_fen < 0:
+            raise LedgerInvariantError(f"{event.event_id}: cash would go negative")
+        self.cash_fen += event.amount_fen
 
     def _store(self, symbol: str, position: Position) -> None:
         if position.quantity == 0:

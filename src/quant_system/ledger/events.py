@@ -73,4 +73,28 @@ class SessionClosed:
     session: date
 
 
-LedgerEvent = Union[CashDeposited, TradeFilled, SharesAdjusted, PositionDelisted, SessionClosed]
+@dataclass(frozen=True)
+class PositionAdjusted:
+    """A holding corrected to what the broker reports (stage 4 manual
+    accounts, ADR-008 §9).  The new quantity counts as settled (sellable) and
+    ``cost_fen`` is the cost basis of the whole new position."""
+
+    event_id: str
+    session: date
+    symbol: str
+    old_quantity: int
+    new_quantity: int
+    cost_fen: int
+
+
+@dataclass(frozen=True)
+class CashAdjusted:
+    """Signed cash correction or withdrawal; cash may not go negative."""
+
+    event_id: str
+    session: date
+    amount_fen: int
+
+
+LedgerEvent = Union[CashDeposited, TradeFilled, SharesAdjusted, PositionDelisted, SessionClosed, PositionAdjusted,
+                    CashAdjusted]

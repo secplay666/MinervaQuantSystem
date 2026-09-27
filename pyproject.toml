@@ -27,14 +27,23 @@ optimizer = [
   "osqp>=1.0,<2",
   "scipy>=1.14,<2",
 ]
+# Stage 4: business database (decisions, accounts, audit) and, later, the API (ADR-010).
+app = [
+  "alembic>=1.20,<2",
+  "sqlalchemy>=2.1,<2.2",
+]
 
 [project.scripts]
 quant-data = "quant_system.data_platform.cli:main"
 quant-backtest = "quant_system.backtest.cli:main"
 quant-research = "quant_system.research.cli:main"
+quant-decision = "quant_system.decision.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"quant_system.app.db" = ["migrations/*.py", "migrations/*.mako", "migrations/versions/*.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
