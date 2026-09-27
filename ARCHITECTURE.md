@@ -528,7 +528,7 @@ stateDiagram-v2
 | 事务存储 | SQLite 起步，PostgreSQL 演进 | 订单/账本进入实盘前建议 PostgreSQL |
 | 数据模型 | Pydantic | 统一边界校验与序列化 |
 | API | FastAPI | 提供类型化内部接口 |
-| 工作台 | Streamlit 起步 | 快速交付研究和审核界面；复杂后再换前端 |
+| 工作台 | Streamlit 起步 → 已由 ADR-010 取代：vue-vben-admin 网页 + Capacitor 安卓 App + FastAPI | 原建议用于快速交付研究和审核界面；需求扩大到 PC、App 和用户管理后更换 |
 | 任务编排 | CLI + 调度器起步，后续可用 Prefect | 先保持任务可独立、可重跑 |
 | 测试 | pytest + Hypothesis | 单元、集成、性质和回归测试 |
 | 图表/报告 | Plotly + Markdown/HTML | 可交互分析及归档报告 |
@@ -670,7 +670,9 @@ quant-system/
 5. `ADR-005`：MVP 存储采用 DuckDB/Parquet + SQLite，何时切换 PostgreSQL。
 6. `ADR-006`：首个策略、基准和样本外验证方案。
 7. `ADR-007`：账户规模对应的仓位、流动性和回撤限制。
-8. `ADR-008`：券商接入方式，以及人工审核与执行边界。
+8. `ADR-008`：券商接入方式，以及人工审核与执行边界。（已接受，2026-09-27：第一版只有人工审核和人工执行，券商接入留到阶段 5）
+9. `ADR-009`：因子研究流程与样本外纪律。
+10. `ADR-010`：前端、API 与外网接入。（2026-09-27，取代 §15 中"工作台用 Streamlit 起步"的建议）
 
 每份 ADR 应包含：背景、候选方案、决定、理由、风险、影响和复审条件。
 
