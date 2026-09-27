@@ -41,6 +41,17 @@
 .\.venv\Scripts\python.exe -m pytest
 ```
 
+`requirements-lock.txt` 锁定了研究环境全部依赖的版本（含可选的 `optimizer` 与测试依赖）。在另一台机器上复现环境（例如 Linux 服务器，用 [uv](https://docs.astral.sh/uv/)）：
+
+```bash
+uv python install 3.12.10
+uv venv --python 3.12.10 .venv
+uv pip install --python .venv/bin/python -r requirements-lock.txt
+uv pip install --python .venv/bin/python --no-deps -e .
+```
+
+数据不进 git。迁移或备份数据用 `scripts/pack_data.py` 打包并校验，恢复步骤写在包内的 README.txt（[ADR-005](docs/adr/ADR-005-storage.md)）。
+
 ## 日常更新
 
 建议在交易日北京时间 16:00 以后运行。16:00 之前运行时，当天不会被视为已收盘，不会写入未完成的日线。

@@ -14,6 +14,7 @@ import numpy as np
 from .registry import FactorSpec
 
 MAD_SCALE = 1.4826  # MAD -> standard deviation under normality
+RESIDUAL_TOL = 1e-10  # relative to max |x|; rounding noise is ~1e-15
 
 
 @dataclass(frozen=True)
@@ -55,7 +56,12 @@ def neutralize(x: np.ndarray, industry: np.ndarray | None, ln_size: np.ndarray |
         columns.append(centered[:, None])
     design = np.hstack(columns)
     beta, *_ = np.linalg.lstsq(design, x, rcond=None)
-    return x - design @ beta
+    residual = x - design @ beta
+    # Names the fit reproduces exactly (alone in their industry, or a group of
+    # identical values) have a zero residual in theory; lstsq leaves BLAS
+    # rounding noise whose sign differs between CPUs and would decide their rank.
+    residual[np.abs(residual) <= RESIDUAL_TOL * np.abs(x).max()] = 0.0
+    return residual
 
 
 def zscore(x: np.ndarray) -> np.ndarray:

@@ -186,11 +186,17 @@ def test_missing_latest_bar_needs_a_suspension_record(tmp_path: Path) -> None:
     provider.tfp_rows = [{"序号": 0, "代码": "920001", "名称": "丁精密", "停牌时间": "2026-09-24",
                           "停牌截止时间": "2026-09-24", "停牌期限": "停牌一天", "停牌原因": "刊登重要公告",
                           "所属市场": "北京证券交易所", "预计复牌时间": "2026-09-28"}]
+    provider.baidu_rows[date(2026, 9, 24)] = [
+        {"股票代码": "920001", "股票简称": "丁精密", "交易所代码": "BJ", "停牌时间": "2026-09-24",
+         "复牌时间": "2026-09-28", "停牌事项说明": "重要公告"}
+    ]
     manifest = run(tmp_path, provider, SATURDAY_NIGHT)
     assert manifest["status"] == "complete", blocking(tmp_path, manifest)
     gaps = pd.read_parquet(canonical_path(tmp_path, "bar_gaps")).set_index("symbol")
     assert gaps.loc["920001", "position"] == "tail"
     assert bool(gaps.loc["920001", "explained"])
+    # Sorted, so a rebuild reproduces the value byte for byte.
+    assert gaps.loc["920001", "explained_by"] == "akshare.news_trade_notify_suspend_baidu,akshare.stock_tfp_em.eastmoney"
 
 
 def test_internal_gap_is_detected_and_explained_by_baidu(tmp_path: Path) -> None:

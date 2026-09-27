@@ -151,6 +151,22 @@ def test_processing_winsorizes_neutralizes_and_standardizes() -> None:
     assert winsorize(raw, 3.0).max() < 50
 
 
+def test_names_the_neutralization_fits_exactly_get_an_exact_zero_residual() -> None:
+    # Rounding noise left there differs between CPUs (BLAS kernels) and would
+    # decide the rank of those names, so rank IC would depend on the machine.
+    rng = np.random.default_rng(1)
+    x = rng.normal(size=60) * 1e-9  # tiny units (Amihud-like): the tolerance is relative
+    industry = np.repeat(np.arange(6), 10).astype(np.int16)
+    industry[[0, 1]] = [7, 8]       # alone in their industries
+    x[[20, 21]] = x[20]             # a two-name industry with identical values
+    industry[[20, 21]] = 9
+    with_size = neutralize(x, industry, rng.normal(size=60))
+    assert (with_size[[0, 1]] == 0.0).all() and (with_size[2:] != 0.0).all()
+    industry_only = neutralize(x, industry, None)
+    assert (industry_only[[0, 1, 20, 21]] == 0.0).all()
+    assert np.count_nonzero(industry_only) == 56
+
+
 def test_pct_rank_uses_average_ranks() -> None:
     np.testing.assert_allclose(pct_rank(np.array([3.0, 1.0, 1.0, np.nan, 2.0])), [1.0, 0.375, 0.375, np.nan, 0.75],
                                equal_nan=True)

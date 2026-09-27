@@ -330,7 +330,7 @@ def _find_gaps(
                CASE WHEN g.gap_start = g.win_start THEN 'head'
                     WHEN g.gap_end = g.win_end THEN 'tail'
                     ELSE 'internal' END AS position,
-               (SELECT string_agg(DISTINCT s.source, ',') FROM suspensions s
+               (SELECT string_agg(DISTINCT s.source, ',' ORDER BY s.source) FROM suspensions s
                  WHERE s.symbol = g.symbol AND s.start_date <= g.gap_end
                    AND COALESCE(s.end_date, g.gap_end) >= g.gap_start) AS explained_by
         FROM grouped g
