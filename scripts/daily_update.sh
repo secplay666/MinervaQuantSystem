@@ -14,6 +14,7 @@
 # quality report named in the log).
 set -uo pipefail
 export TZ=Asia/Shanghai
+export TQDM_DISABLE=1   # AKShare's per-request progress bars would flood the log
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON="$REPO/.venv/bin/python"

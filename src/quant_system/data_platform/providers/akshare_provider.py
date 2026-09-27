@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import importlib
 import json
 import logging
 import math
@@ -75,6 +76,45 @@ def install_default_timeout(seconds: float) -> None:
         session_cls.request = request
 
 
+class _FastDemjson:
+    """Stands in for the ``demjson`` module inside AKShare's Tencent functions.
+
+    demjson is a pure-Python parser: 0.1-0.5 s per ~65 KB kline response, all
+    of it holding the GIL, so the download workers queued on it (0.3 symbols/s
+    with 12 workers on the server).  Tencent's responses are strict JSON, for
+    which ``json.loads`` returns the same objects about 300x faster; anything
+    it rejects still goes to demjson.
+    """
+
+    def __init__(self, fallback: object) -> None:
+        self._fallback = fallback
+
+    def decode(self, text: str, *args: object, **kwargs: object) -> object:
+        if not args and not kwargs:
+            try:
+                return json.loads(text)
+            except ValueError:
+                pass
+        return self._fallback.decode(text, *args, **kwargs)  # type: ignore[attr-defined]
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._fallback, name)
+
+
+FAST_JSON_MODULES = ("akshare.stock_feature.stock_hist_tx", "akshare.index.index_stock_zh")
+
+
+def install_fast_json_decoder() -> None:
+    """Point the Tencent history modules (daily bars, index bars, start-year
+    lookup) at :class:`_FastDemjson`; idempotent."""
+    with _TIMEOUT_LOCK:
+        for name in FAST_JSON_MODULES:
+            module = importlib.import_module(name)
+            current = getattr(module, "demjson")
+            if not isinstance(current, _FastDemjson):
+                module.demjson = _FastDemjson(current)
+
+
 class ProviderError(RuntimeError):
     """A vendor call failed; ``terminal`` means retrying cannot help."""
 
@@ -119,6 +159,7 @@ class AkShareProvider(MarketDataProvider):
         self.logger = logging.getLogger(self.__class__.__name__)
         self._baidu_cookie: str | None = None
         install_default_timeout(timeout_seconds)
+        install_fast_json_decoder()
 
     @property
     def version(self) -> str:

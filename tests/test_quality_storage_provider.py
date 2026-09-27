@@ -11,9 +11,11 @@ import requests
 from quant_system.data_platform.providers.akshare_provider import (
     AkShareProvider,
     ProviderError,
+    _FastDemjson,
     _is_terminal,
     derive_hfq_events_from_prevclose,
     install_default_timeout,
+    install_fast_json_decoder,
 )
 from quant_system.data_platform.quality import (
     validate_adjustment_factors,
@@ -126,6 +128,23 @@ def test_default_timeout_applies_only_when_missing(monkeypatch: pytest.MonkeyPat
     session.request("GET", "http://example.invalid", timeout=3)
     session.request("GET", "http://example.invalid", None, None, None, None, None, None, None)
     assert seen == [5.0, 3, 5.0]
+
+
+def test_fast_json_decoder_matches_demjson_and_falls_back() -> None:
+    from akshare.index import index_stock_zh
+    from akshare.stock_feature import stock_hist_tx
+    from akshare.utils import demjson
+
+    install_fast_json_decoder()
+    install_fast_json_decoder()  # idempotent: no stacking
+    patched = stock_hist_tx.demjson
+    assert isinstance(patched, _FastDemjson) and patched._fallback is demjson
+    assert index_stock_zh.demjson._fallback is demjson
+    strict = '{"code":0,"data":{"sz000001":{"day":[["2026-09-24","11.50","11.62",1.5e3,null,true]]}}}'
+    assert patched.decode(strict) == demjson.decode(strict)
+    loose = "{data: {'day': [1, 2]}}"  # not JSON: demjson still handles it
+    assert patched.decode(loose) == demjson.decode(loose) == {"data": {"day": [1, 2]}}
+    assert patched.encode is demjson.encode
 
 
 def test_error_classification() -> None:
