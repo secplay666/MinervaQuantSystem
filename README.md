@@ -95,6 +95,32 @@ less logs/daily/$(date +%F).log             # 当天完整日志
 
 服务器上的数据是主副本，每日采集只在服务器上运行。本机不要再运行 `ingest`，否则两份原始层会各自演化，无法再互相核对。本机需要最新数据时，从服务器同步。
 
+### 备份与恢复
+
+每次定时采集之后，`scripts/backup_data.sh` 把无法重新生成的数据做成当天的快照，写到第二块盘 `/mnt/data_hdd/quant/backup/snapshots/<日期>/`。备份目录可以用环境变量 `QUANT_BACKUP_ROOT` 指定。
+
+- 快照内容：
+  - 原始层、清单、质量报告、检查点、隔离区；
+  - 标准层（恢复时省去约 11 分钟的重建）；
+  - 研究产物，其中实验登记表通过 SQLite 的在线备份接口复制；
+  - 日志。
+- 不备份：`market.duckdb`、因子缓存、staging、archive，这些都能重新生成。
+- 存储方式：与前一份快照相同的文件用硬链接，所以每份快照都是完整副本，但只占当天变化的空间。
+- 防误删：检出目录里的文件被误删或损坏，不影响已有的快照。
+- 保留策略：保留最近 14 份快照，以及最近 12 个月中每月的第一份。
+- 安全检查：备份盘未挂载、备份目录与数据在同一块盘，或者采集正在运行时，拒绝执行。
+- 记录：每次备份写一行到 `logs/backup/history.tsv`。
+
+```bash
+scripts/backup_data.sh                                   # 手动备份一次（同一天重跑会替换当天的快照）
+ls /mnt/data_hdd/quant/backup/snapshots/                 # 可用的快照；latest 指向最新一份
+# 恢复：恢复到新的检出目录，或者先移走损坏的目录，然后
+rsync -a /mnt/data_hdd/quant/backup/snapshots/<日期>/ ~/L1/MinervaQuantSystem/
+.venv/bin/quant-data catalog --rebuild && .venv/bin/quant-data audit
+```
+
+备份盘与数据在同一台机器上，能防硬盘损坏和误删，防不了整机或机房故障。异地备份（例如定期传到 OSS）留待以后。
+
 运行产物：
 
 ```text
