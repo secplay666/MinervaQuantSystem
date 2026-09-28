@@ -55,6 +55,10 @@ def fingerprint(certificate: x509.Certificate) -> str:
 
 def init_ca(directory: Path, name: str = "Minerva Private CA") -> x509.Certificate:
     directory.mkdir(parents=True, exist_ok=True)
+    try:
+        directory.chmod(0o700)  # holds the CA key
+    except OSError:
+        pass
     cert_path, key_path = directory / "ca.crt", directory / "ca.key"
     if cert_path.exists():
         return x509.load_pem_x509_certificate(cert_path.read_bytes())

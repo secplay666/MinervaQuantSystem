@@ -55,11 +55,19 @@ def read_env_file(path: Path) -> dict[str, str]:
     return values
 
 
+def _private_dir(directory: Path) -> None:
+    try:
+        directory.chmod(0o700)
+    except OSError:  # Windows: best effort
+        pass
+
+
 def init_env_file(path: Path = DEFAULT_ENV_FILE) -> bool:
     """Create the env file with a fresh secret (mode 600); False if it exists."""
     if path.exists():
         return False
     path.parent.mkdir(parents=True, exist_ok=True)
+    _private_dir(path.parent)
     path.write_text(f"MINERVA_SECRET_KEY={secrets.token_urlsafe(48)}\nMINERVA_ENV=test\n", encoding="utf-8")
     try:
         path.chmod(0o600)
