@@ -18,7 +18,7 @@ from ...decision.review import Operator, ReviewError, approve, approve_run, modi
 from ..db.base import utc_now
 from ..db.models import Account, Approval, DecisionRun, Event, OrderIntent, RiskCheck, TargetPosition
 from ..deps import Principal, api_error, get_session, require, settings_of
-from ..services import account_costs
+from ..services import account_costs, exchange_sessions
 
 router = APIRouter(tags=["决策与审核"])
 view = require("decision:view")
@@ -155,9 +155,11 @@ def approve_intent(intent_id: str, body: ReasonIn, principal: Principal = Depend
 
 
 @router.post("/intents/{intent_id}/reject")
-def reject_intent(intent_id: str, body: ReasonIn, principal: Principal = Depends(approver),
+def reject_intent(intent_id: str, body: ReasonIn, request: Request, principal: Principal = Depends(approver),
                   session: Session = Depends(get_session)) -> dict:
-    return _review(session, lambda: reject(session, intent_id, operator(principal), utc_now(), body.reason or ""))
+    sessions = exchange_sessions(settings_of(request).root)
+    return _review(session, lambda: reject(session, intent_id, operator(principal), utc_now(), body.reason or "",
+                                           sessions=sessions))
 
 
 @router.post("/intents/{intent_id}/modify")
@@ -170,8 +172,10 @@ def modify_intent(intent_id: str, body: ModifyIn, request: Request, principal: P
     fees, rules = account_costs(settings_of(request).root, account)
     security = request.app.state.market.security(intent.symbol) or {}
     lot = rules.lot_rule(security.get("board") or "SSE_MAIN")
+    sessions = exchange_sessions(settings_of(request).root)
     return _review(session, lambda: modify(session, intent_id, body.qty, operator(principal), utc_now(),
-                                           body.reason, lot, fees, security.get("exchange") or "SSE"))
+                                           body.reason, lot, fees, security.get("exchange") or "SSE",
+                                           sessions=sessions))
 
 
 @router.post("/intents/{intent_id}/override")
@@ -213,6 +217,11 @@ def trigger_decision(body: TriggerIn, request: Request, principal: Principal = D
             outcomes = run_daily(settings.root, db_path=settings.db_path, account_ids=[body.account_id],
                                  force_reason=body.reason, rerun=body.rerun, actor=principal.actor)
             jobs[job_id].update(status="done", result=[vars(o) for o in outcomes])
+            if settings.notify.channels():  # the evening digest has already gone out
+                from ..notify import dispatch
+
+                with request.app.state.sessions() as db:
+                    dispatch(db, settings.notify, settings.environment_label)
         except Exception as exc:  # reported through the job status
             jobs[job_id].update(status="failed", result=f"{type(exc).__name__}: {exc}")
         jobs[job_id]["finished_at"] = utc_now().isoformat()

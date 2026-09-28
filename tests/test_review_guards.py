@@ -216,3 +216,69 @@ def test_reauthentication_counts_towards_lockout_and_totp_needs_the_password(env
         from quant_system.app.db.models import User
 
         assert session.get(User, dave_id).totp_secret is None
+
+
+def test_paper_lock_follows_the_exchange_calendar(tmp_path: Path, loaded) -> None:
+    """A retrying intent booked through the last session before a holiday is
+    not locked during the holiday, only from the next session's cutoff."""
+    market = loaded[0]
+    day, execute_on = market.sessions[300], market.sessions[301]
+    root = make_root(tmp_path)
+    _manual_intent(root, day, execute_on, str(market.symbols[0]), 100)
+    holiday = execute_on + timedelta(days=1)
+    while holiday.weekday() >= 5:
+        holiday += timedelta(days=1)
+    reopen = holiday + timedelta(days=7)
+    sessions = [d for d in market.sessions if d <= execute_on] + [reopen]  # a week off after execute_on
+    _, factory = open_database(root / "app.sqlite")
+    with factory() as session:
+        intent = session.get(OrderIntent, "i-1")
+        session.get(Account, "paper").paper_through = execute_on  # tried on execute_on, still open
+        assert not review.paper_locked(session, intent, at(holiday, 10), sessions)
+        assert review.paper_locked(session, intent, at(holiday, 10))  # weekday fallback: conservative
+        assert not review.paper_locked(session, intent, at(reopen, 9, 0), sessions)
+        assert review.paper_locked(session, intent, at(reopen, 9, 30), sessions)
+
+
+def test_reductions_are_never_refused_by_the_cash_check(tmp_path: Path, loaded, golden) -> None:
+    root, factory, run_id = _decided(tmp_path, loaded, golden)
+    with factory() as session:
+        run = session.get(DecisionRun, run_id)
+        run.cash_fen = 1  # as if the sells that funded the buys had been rejected
+        session.commit()
+        buy = session.scalars(select(OrderIntent).where(OrderIntent.run_id == run_id, OrderIntent.side == "buy")
+                              .order_by(OrderIntent.seq)).first()
+        with pytest.raises(review.ReviewError):
+            _modify(session, root, buy, buy.qty + 100)
+        session.rollback()
+        smaller = _modify(session, root, buy, 100)
+        session.commit()
+        checks = {c.rule_id: c.decision for c in session.scalars(
+            select(RiskCheck).where(RiskCheck.intent_id == buy.intent_id))}
+        assert smaller.status == "modified" and checks.get("R6") == "warn"
+
+
+def test_reversal_dates_are_checked(env) -> None:
+    _, _, client, sessions = env
+    add_user(sessions, "admin", ["admin"])
+    admin = auth(login(client, "admin"))
+    client.post("/api/v1/accounts", headers=admin, json={
+        "account_id": "real", "name": "实盘", "mode": "manual", "cash": "100000", "strategy_config": CONFIG,
+        "start_date": "2026-09-23"})
+    assert client.post("/api/v1/accounts/real/fills", headers=admin, json={
+        "trade_date": "2026-09-25", "symbol": "600000", "side": "buy", "qty": 100, "price": "10"}).status_code == 201
+    event = next(e["event_id"] for e in client.get("/api/v1/accounts/real/events", headers=admin).json()
+                 if e["kind"] == "fill")
+    future = client.post(f"/api/v1/position-events/{event}/reverse", headers=admin,
+                         json={"reason": "x", "trade_date": "2099-01-02"})
+    assert future.json()["detail"]["code"] == "future_date"
+    earlier = client.post(f"/api/v1/position-events/{event}/reverse", headers=admin,
+                          json={"reason": "x", "trade_date": "2026-09-24"})
+    assert earlier.json()["detail"]["code"] == "invalid_date"
+
+
+def test_space_separated_holdings_keep_thousands_separators() -> None:
+    rows, errors = review.parse_holdings_text("600000 1,000 10.50\n600036, 200, 40\n000001，300\n")
+    assert not errors
+    assert [(r["symbol"], r["qty"], r["cost_price"]) for r in rows] == [
+        ("600000", 1000, 10.5), ("600036", 200, 40.0), ("000001", 300, None)]

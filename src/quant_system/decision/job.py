@@ -390,6 +390,12 @@ def _run_account(factory: sessionmaker[Session], shared: _Shared, account_id: st
         config, config_hash = load_strategy_config(shared.root, account.strategy_config, day)
         rules = shared.rules(config.market_rules_path)
         paper = run_paper(session, account, market, rules, config, through=day) if account.mode == "paper" else None
+        if paper is not None and paper.sessions and (paper.fills or paper.unfilled):
+            # Recorded with the paper execution itself, so a later failure of the decision cannot lose it.
+            _event(session, f"paper-{account_id}-{paper.sessions[0]:%Y%m%d}-{paper.sessions[-1]:%Y%m%d}", "info",
+                   "account", f"模拟成交 {paper.fills} 笔" + (f"，{paper.unfilled} 笔未能成交" if paper.unfilled else ""),
+                   f"处理交易日 {', '.join(d.isoformat() for d in paper.sessions)}", None, day, account_id,
+                   "在账户页查看成交与持仓")
         # Paper execution stands on its own (paper_through makes it idempotent).  Commit it now, so the
         # strategy build below (tens of seconds) does not hold SQLite's write lock against the API.
         session.commit()
@@ -426,6 +432,12 @@ def _run_account(factory: sessionmaker[Session], shared: _Shared, account_id: st
             summary["paper"] = {"sessions": [d.isoformat() for d in paper.sessions], "fills": paper.fills,
                                 "closed_unfilled": paper.unfilled}
         summary["seconds"] = round(time.perf_counter() - started, 2)
+        # Another run (the timer, or a trigger from the API) may have finished during the build.
+        existing = _existing(session, account_id, day)
+        complete = [run for run in existing if run.status == "complete"]
+        if complete and not rerun:
+            last = complete[-1]
+            return RunOutcome(account_id, last.run_id, "skipped", last.kind, "构建期间另一次运行已完成当日决策")
         for run in existing:  # blocked / failed runs are replaced without asking
             supersede(session, run, actor)
         run_id = _new_run_id(session, account_id, day)
@@ -473,11 +485,6 @@ def _run_account(factory: sessionmaker[Session], shared: _Shared, account_id: st
                    f"交易清单已生成：卖出 {sells} 笔，买入 {len(intents) - sells} 笔，待审核",
                    f"执行日 {next_day}，审核截止 {valid_until:%Y-%m-%d %H:%M}", run_id, day, account_id,
                    "在每日决策页审核")
-        if paper is not None and (paper.fills or paper.unfilled):
-            _event(session, f"{run_id}-paper", "info", "account",
-                   f"模拟成交 {paper.fills} 笔" + (f"，{paper.unfilled} 笔未能成交" if paper.unfilled else ""),
-                   f"处理交易日 {', '.join(d.isoformat() for d in paper.sessions)}", run_id, day, account_id,
-                   "在账户页查看成交与持仓")
         write_snapshots(session, account_id, marked)
         audit(session, actor, "decision.run", "decision_run", run_id,
               after={"status": status, "kind": kind, "intents": len(intents)}, reason=force_reason)

@@ -232,7 +232,9 @@ def account_exposure(account_id: str, request: Request, _: Principal = Depends(v
     return {"as_of": market.latest_session().isoformat() if market.available() else None, "nav_fen": nav,
             "cash_weight": ledger.cash_fen / nav if nav else None,
             "target_run_id": run.run_id if run else None, "target_date": run.trade_date.isoformat() if run else None,
-            "top10_weight": sum(weights[:10]), "effective_names": 1 / sum(w * w for w in weights) if weights else 0,
+            # Effective names over the invested part, so cash does not inflate it: (Σw)² / Σw².
+            "top10_weight": sum(weights[:10]),
+            "effective_names": sum(weights) ** 2 / sum(w * w for w in weights) if weights else 0,
             "industries": sorted(({"name": k, **v} for k, v in rows.items()),
                                  key=lambda r: (-max(r["weight"], r["target_weight"]), r["name"]))}
 

@@ -8,7 +8,7 @@ reads them from ``market.duckdb`` with a read-only connection.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import duckdb
@@ -77,8 +77,13 @@ class FrameReference:
         return {str(symbol): str(status) for symbol, status in zip(rows["symbol"], rows["status"])}
 
 
+REPORT_LOOKBACK = timedelta(days=31)  # reports announced since the previous session, holidays included
+
+
 def load_reference(database: Path, since: date) -> FrameReference:
-    """Rows from ``since`` onwards (the decision only looks at T and T+1)."""
+    """Rows from ``since`` onwards (the decision only looks at T and T+1);
+    periodic reports from a month earlier, so announcements on weekends and
+    holidays before T are still seen."""
     with duckdb.connect(str(database), read_only=True) as con:
         dividends = con.execute("SELECT symbol, ex_date FROM dividends WHERE ex_date >= ?", [since]).fetchdf()
         suspensions = con.execute(
@@ -90,5 +95,5 @@ def load_reference(database: Path, since: date) -> FrameReference:
         if con.execute("SELECT count(*) FROM information_schema.tables WHERE table_name = 'fin_income'").fetchone()[0]:
             reports = con.execute(
                 "SELECT symbol, report_date, MIN(notice_date) AS notice_date FROM fin_income "
-                "GROUP BY symbol, report_date HAVING MIN(notice_date) >= ?", [since]).fetchdf()
+                "GROUP BY symbol, report_date HAVING MIN(notice_date) >= ?", [since - REPORT_LOOKBACK]).fetchdf()
     return FrameReference(dividends, suspensions, risk, reports)

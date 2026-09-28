@@ -13,6 +13,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from bisect import bisect_right
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 
@@ -82,33 +84,40 @@ def _today(now: datetime) -> date:
     return now.astimezone(SHANGHAI_TZ).date()
 
 
-def _last_cutoff_day(now: datetime) -> date:
-    """The latest weekday whose 09:15 cutoff has passed.  Holidays count as
-    sessions here, which only ever locks a paper intent earlier (the safe side)."""
-    day = _today(now)
-    if now < cutoff(day):
-        day -= timedelta(days=1)
+def _last_cutoff_day(now: datetime, sessions: Sequence[date] | None = None) -> date:
+    """The latest session whose 09:15 cutoff has passed, from the exchange
+    calendar; without one, weekdays stand in for sessions (a holiday then
+    locks a paper intent until the next real session is booked)."""
+    today = _today(now)
+    if sessions:
+        k = bisect_right(sessions, today)
+        if k and now < cutoff(sessions[k - 1]):
+            k -= 1
+        return sessions[k - 1] if k else date.min
+    day = today if now >= cutoff(today) else today - timedelta(days=1)
     while day.weekday() >= 5:
         day -= timedelta(days=1)
     return day
 
 
-def paper_locked(session: Session, intent: OrderIntent, now: datetime) -> bool:
+def paper_locked(session: Session, intent: OrderIntent, now: datetime,
+                 sessions: Sequence[date] | None = None) -> bool:
     """An executable paper intent is locked from the cutoff of the session it
     trades in until the paper job has booked that session: changing it in
     between would decide with knowledge of the open (ADR-008 §6)."""
     account = session.get(Account, intent.account_id)
     if account is None or account.mode != "paper" or intent.status not in EXECUTABLE:
         return False
-    day = _last_cutoff_day(now)
+    day = _last_cutoff_day(now, sessions)
     approved = approved_at(session, intent.intent_id)
     if day < intent.execute_on or approved is None or approved > cutoff(day):
         return False
     return account.paper_through is None or account.paper_through < day
 
 
-def _check_paper_lock(session: Session, intent: OrderIntent, now: datetime) -> None:
-    if paper_locked(session, intent, now):
+def _check_paper_lock(session: Session, intent: OrderIntent, now: datetime,
+                      sessions: Sequence[date] | None = None) -> None:
+    if paper_locked(session, intent, now, sessions):
         raise ReviewError("paper_locked", "模拟账户：该意图按当日开盘模拟成交，09:15 之后到晚间模拟成交入账之前不能再改")
 
 
@@ -126,7 +135,8 @@ def approve(session: Session, intent_id: str, op: Operator, now: datetime, reaso
     return intent
 
 
-def reject(session: Session, intent_id: str, op: Operator, now: datetime, reason: str) -> OrderIntent:
+def reject(session: Session, intent_id: str, op: Operator, now: datetime, reason: str,
+           sessions: Sequence[date] | None = None) -> OrderIntent:
     if not reason or not reason.strip():
         raise ReviewError("reason_required", "拒绝需要填写原因")
     intent = _intent(session, intent_id)
@@ -134,7 +144,7 @@ def reject(session: Session, intent_id: str, op: Operator, now: datetime, reason
         raise ReviewError("invalid_state", f"当前状态 {intent.status} 不能拒绝")
     if intent.status in EXECUTABLE and _filled_qty(session, intent_id):
         raise ReviewError("already_filled", "已有成交回填，不能拒绝")
-    _check_paper_lock(session, intent, now)
+    _check_paper_lock(session, intent, now, sessions)
     before = _snapshot(intent)
     intent.status = "rejected"
     session.add(Approval(intent_id=intent_id, action="reject", qty_before=intent.qty, qty_after=intent.qty,
@@ -145,7 +155,7 @@ def reject(session: Session, intent_id: str, op: Operator, now: datetime, reason
 
 
 def modify(session: Session, intent_id: str, qty: int, op: Operator, now: datetime, reason: str, lot: LotRule,
-           fees: FeeSchedule, exchange: str) -> OrderIntent:
+           fees: FeeSchedule, exchange: str, sessions: Sequence[date] | None = None) -> OrderIntent:
     """Approve with a different quantity (lot-legal; a sell may not exceed the
     holding), after re-running the quantity-dependent checks (ADR-008 §7)."""
     if not reason or not reason.strip():
@@ -156,7 +166,7 @@ def modify(session: Session, intent_id: str, qty: int, op: Operator, now: dateti
     _open(intent, now)
     if _filled_qty(session, intent_id):
         raise ReviewError("already_filled", "已有成交回填，不能修改数量")
-    _check_paper_lock(session, intent, now)
+    _check_paper_lock(session, intent, now, sessions)
     if qty <= 0:
         raise ReviewError("invalid_qty", "数量必须为正；不交易请用拒绝")
     if intent.side == "buy":
@@ -193,9 +203,10 @@ def modify(session: Session, intent_id: str, qty: int, op: Operator, now: dateti
 
 
 def _recheck(session: Session, intent: OrderIntent, qty: int, notional: int, est_fees: int) -> list[Check] | None:
-    """R4/R5 for the new quantity and R6 for the run with it; a reject refuses
-    the modification.  Runs from before the limits were recorded may only be
-    reduced (None: keep their checks)."""
+    """R4/R5 for the new quantity and R6 for the run with it.  A reject refuses
+    an increase; a reduction never adds risk, so its rejects are kept as
+    warnings.  Runs from before the limits were recorded may only be reduced
+    (None: keep their checks)."""
     run = session.get(DecisionRun, intent.run_id)
     limits = (run.summary or {}).get("limits") if run else None
     if not limits:
@@ -221,9 +232,10 @@ def _recheck(session: Session, intent: OrderIntent, qty: int, notional: int, est
         checks.append(cash if intent.side == "buy" else replace(cash, decision="warn",
                                                                 message="减少卖出后，本次买入金额加费用超过可用资金"))
     rejected = [c for c in checks if c.decision == "reject"]
-    if rejected:
+    if rejected and qty > intent.qty:
         raise ReviewError("risk_reject", "修改后不通过风控：" + "；".join(f"{c.rule_id} {c.message}" for c in rejected))
-    return checks
+    return [replace(c, decision="warn", message=f"{c.message}（减少数量后仍未通过，仅提示）")
+            if c.decision == "reject" else c for c in checks]
 
 
 def override(session: Session, intent_id: str, op: Operator, now: datetime, reason: str) -> OrderIntent:
@@ -354,9 +366,14 @@ def reverse(session: Session, account: Account, event_id: str, op: Operator, rea
                                                      PositionEvent.account_id == account.account_id))
     if row is None:
         raise ReviewError("not_found", "记录不存在")
-    _check_entry_date(account, row.trade_date, now or utc_now(), "被冲销记录的")
+    now = now or utc_now()
+    effective = trade_date or row.trade_date
+    _check_entry_date(account, row.trade_date, now, "被冲销记录的")
+    if effective < row.trade_date:
+        raise ReviewError("invalid_date", "冲销日期不能早于原记录的日期")
+    _check_entry_date(account, effective, now, "冲销")
     try:
-        reversal = reverse_event(session, account.account_id, event_id, trade_date=trade_date or row.trade_date,
+        reversal = reverse_event(session, account.account_id, event_id, trade_date=effective,
                                  actor=op.actor, reason=reason)
     except ValueError as exc:
         raise ReviewError("ledger", str(exc)) from exc
@@ -381,9 +398,12 @@ def parse_holdings_text(text: str) -> tuple[list[dict], list[str]]:
     Codes may carry exchange prefixes or suffixes (sh600000, 600000.SH)."""
     rows, errors = [], []
     for number, line in enumerate(text.splitlines(), start=1):
-        # Excel pastes are tab-separated and may show 1,000: the commas then belong to the numbers.
-        separator = r"\t+" if "\t" in line else r"[,\s;，]+"
-        parts = [p.strip().replace(",", "") for p in re.split(separator, line.strip()) if p.strip()]
+        # Tabs (Excel) or spaces separate the columns when present; the commas then belong to the
+        # numbers (1,000).  Otherwise the line is comma separated.
+        line = line.strip()
+        separator = r"\t+" if "\t" in line else r"[\s;]+" if len(line.split()) > 1 else r"[,;，]+"
+        parts = [p.strip(" ,，").replace(",", "") for p in re.split(separator, line)]
+        parts = [p for p in parts if p]
         if not parts:
             continue
         match = SYMBOL.search(parts[0])

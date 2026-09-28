@@ -18,6 +18,8 @@ from quant_system.app.db.models import AuditLog, Event, EventPush  # noqa: E402
 from quant_system.app.notify import (  # noqa: E402
     MAX_ATTEMPTS,
     NotifyConfig,
+    _claim,
+    _pending,
     dispatch,
     digest,
 )
@@ -214,3 +216,34 @@ def test_cli_event_add_and_dispatch(tmp_path: Path, monkeypatch, capsys) -> None
     capsys.readouterr()
     assert run("notify", "status") == 0
     assert WECOM_KEY not in capsys.readouterr().out
+
+
+def test_events_between_dispatches_are_not_lost_to_the_lookback(sessions) -> None:
+    config = NotifyConfig(wecom_key=WECOM_KEY, lookback_hours=24)
+    transport = Transport()
+    friday = utc_now() - timedelta(days=3)
+    with sessions() as session:
+        add_event(session, "fri-evening", age=timedelta(days=3, hours=1))
+        assert dispatch(session, config, "测试环境", transport, now=friday)[0].events == 1
+        add_event(session, "fri-late", age=timedelta(days=2, hours=22))  # after Friday's dispatch
+        add_event(session, "ancient", age=timedelta(days=40))
+        [result] = dispatch(session, config, "测试环境", transport)  # Monday: 70 hours later
+        assert (result.status, result.events) == ("sent", 1)
+        assert session.get(EventPush, ("fri-late", "wecom")).status == "sent"
+        assert session.get(EventPush, ("ancient", "wecom")) is None
+
+
+def test_a_row_claimed_elsewhere_is_left_out(sessions) -> None:
+    config = NotifyConfig(wecom_key=WECOM_KEY)
+    with sessions() as first, sessions() as second:
+        add_event(first, "e1")
+        first.add(EventPush(event_id="e1", channel="wecom", status="failed", attempts=1, attempted_at=utc_now()))
+        first.commit()
+        pending = _pending(first, "wecom", config, utc_now())
+        assert [(e.event_id, seen) for e, seen in pending] == [("e1", ("failed", 1))]
+        other = second.get(EventPush, ("e1", "wecom"))
+        other.status, other.attempts = "sending", 2  # the other dispatcher got there first
+        second.commit()
+        assert _claim(first, "wecom", pending, utc_now()) == []
+        first.expire_all()
+        assert first.get(EventPush, ("e1", "wecom")).attempts == 2

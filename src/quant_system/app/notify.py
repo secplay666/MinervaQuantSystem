@@ -7,8 +7,9 @@ Only event titles leave the server; risk alerts, whose titles name held
 securities, are reduced to a count per account.  Bodies, amounts and holdings
 stay in the app.  Delivery is tracked per event and channel in
 ``event_pushes``: a failed digest is retried by later dispatches (up to
-MAX_ATTEMPTS), and events older than the lookback window are never sent, so
-enabling a channel does not replay history.
+MAX_ATTEMPTS), each dispatch picks up what arrived since the previous one,
+and a newly enabled channel starts with the lookback window only, so it does
+not replay history.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from datetime import datetime, timedelta
 from typing import ClassVar, Protocol
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -35,6 +36,7 @@ LEVELS = {"info": 0, "warning": 1, "critical": 2}
 LEVEL_NAMES = {"critical": "严重", "warning": "警告", "info": "消息"}
 MAX_ATTEMPTS = 3
 STALE_SENDING = timedelta(minutes=10)  # a "sending" claim older than this was lost (crash) and is retried
+MAX_CATCH_UP = timedelta(days=14)  # events after a long gap between dispatches (holidays, a paused timer)
 MAX_LINES = 15
 WECOM_PREFIX = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key="
 WECOM_MAX_BYTES = 4096
@@ -228,22 +230,71 @@ class DispatchResult:
     error: str | None = None
 
 
-def _pending(session: Session, channel: str, config: NotifyConfig, now: datetime) -> list[Event]:
-    since = now - timedelta(hours=config.lookback_hours)
+Seen = tuple[str, int] | None  # (status, attempts) of the delivery row when read; None: no row yet
+
+
+def _pending(session: Session, channel: str, config: NotifyConfig, now: datetime) -> list[tuple[Event, Seen]]:
+    """Events not yet delivered on ``channel``, with the state of their row:
+    new ones since the channel's previous dispatch (less the lookback, and
+    never more than MAX_CATCH_UP back; only the lookback when the channel is
+    new), plus failed ones with attempts left, whatever their age."""
+    lookback = timedelta(hours=config.lookback_hours)
+    last = session.scalar(select(func.max(EventPush.attempted_at)).where(EventPush.channel == channel))
+    since = now - lookback if last is None else max(min(now, last) - lookback, now - MAX_CATCH_UP)
+    retry = select(EventPush.event_id).where(EventPush.channel == channel, EventPush.status != "sent",
+                                             EventPush.attempts < MAX_ATTEMPTS)
     threshold = LEVELS[config.min_level]
-    events = [e for e in session.scalars(select(Event).where(Event.at >= since).order_by(Event.at, Event.event_id))
+    events = [e for e in session.scalars(select(Event).where(or_(Event.at >= since, Event.event_id.in_(retry)))
+                                         .order_by(Event.at, Event.event_id))
               if LEVELS.get(e.level, 0) >= threshold]
-    pushes = {p.event_id: p for p in session.scalars(select(EventPush).where(
-        EventPush.channel == channel, EventPush.event_id.in_([e.event_id for e in events])))}
+    rows = {event_id: (status, attempts, attempted_at) for event_id, status, attempts, attempted_at in session.execute(
+        select(EventPush.event_id, EventPush.status, EventPush.attempts, EventPush.attempted_at).where(
+            EventPush.channel == channel, EventPush.event_id.in_([e.event_id for e in events])))}
+    out: list[tuple[Event, Seen]] = []
+    for event in events:
+        row = rows.get(event.event_id)
+        if row is None:
+            out.append((event, None))
+            continue
+        status, attempts, attempted_at = row
+        if status == "sent" or attempts >= MAX_ATTEMPTS:
+            continue
+        if status == "failed" or attempted_at < now - STALE_SENDING:
+            out.append((event, (status, attempts)))
+    return out
 
-    def due(push: EventPush | None) -> bool:
-        if push is None:
-            return True
-        if push.status == "sent" or push.attempts >= MAX_ATTEMPTS:
-            return False
-        return push.status == "failed" or push.attempted_at < now - STALE_SENDING
 
-    return [e for e in events if due(pushes.get(e.event_id))]
+def _claim(session: Session, channel: str, pending: list[tuple[Event, Seen]], now: datetime) -> list[Event]:
+    """Mark the events as being sent on ``channel``, provided their row is
+    still as it was read: a row another dispatcher changed meanwhile is left
+    out, and a new row it inserted first abandons the round (nothing claimed)."""
+    claimed = []
+    for event, seen in pending:
+        if seen is None:
+            session.add(EventPush(event_id=event.event_id, channel=channel, status="sending", attempts=1,
+                                  attempted_at=now))
+            try:
+                session.flush()
+            except IntegrityError:  # another dispatcher is at work: leave this round to it
+                session.rollback()
+                return []
+        else:
+            status, attempts = seen
+            taken = session.execute(update(EventPush).where(
+                EventPush.event_id == event.event_id, EventPush.channel == channel, EventPush.status == status,
+                EventPush.attempts == attempts).values(status="sending", attempts=attempts + 1, attempted_at=now,
+                                                       error=None))
+            if taken.rowcount != 1:
+                continue
+        claimed.append(event)
+    session.commit()
+    return claimed
+
+
+def _finish(session: Session, channel: str, events: list[Event], **values: object) -> None:
+    session.execute(update(EventPush).where(EventPush.channel == channel,
+                                            EventPush.event_id.in_([e.event_id for e in events])).values(**values))
+    session.commit()
 
 
 def dispatch(session: Session, config: NotifyConfig, environment_label: str, post: Post | None = None,
@@ -252,38 +303,19 @@ def dispatch(session: Session, config: NotifyConfig, environment_label: str, pos
     now = now or utc_now()
     results = []
     for channel in config.channels(post):
-        events = _pending(session, channel.name, config, now)
+        pending = _pending(session, channel.name, config, now)
+        events = _claim(session, channel.name, pending, now) if pending else []
         if not events:
-            results.append(DispatchResult(channel.name, "nothing"))
-            continue
-        # Claim the events first, so a concurrent dispatcher does not send them too.
-        claimed = []
-        for event in events:
-            push = session.get(EventPush, (event.event_id, channel.name))
-            if push is None:
-                push = EventPush(event_id=event.event_id, channel=channel.name, attempts=0)
-                session.add(push)
-            push.status, push.attempts, push.attempted_at, push.error = "sending", push.attempts + 1, now, None
-            claimed.append(push)
-        try:
-            session.commit()
-        except IntegrityError:
-            session.rollback()
-            results.append(DispatchResult(channel.name, "busy"))
+            results.append(DispatchResult(channel.name, "busy" if pending else "nothing"))
             continue
         title, lines = digest(events, environment_label, config.link)
         try:
             channel.send(title, lines)
         except NotifyError as exc:
-            for push in claimed:
-                push.status, push.error = "failed", str(exc)[:500]
-            session.commit()
+            _finish(session, channel.name, events, status="failed", error=str(exc)[:500])
             results.append(DispatchResult(channel.name, "failed", len(events), str(exc)))
             continue
-        sent_at = utc_now()
-        for push in claimed:
-            push.status, push.sent_at = "sent", sent_at
-        session.commit()
+        _finish(session, channel.name, events, status="sent", sent_at=utc_now())
         results.append(DispatchResult(channel.name, "sent", len(events)))
     return results
 

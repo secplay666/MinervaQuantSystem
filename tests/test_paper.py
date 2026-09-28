@@ -19,6 +19,7 @@ from quant_system.app.db.models import (  # noqa: E402
     AccountSnapshot,
     Approval,
     DecisionRun,
+    Event,
     Fill,
     OrderIntent,
     PositionEvent,
@@ -200,3 +201,27 @@ def test_holdings_follow_corporate_actions(tmp_path: Path, loaded) -> None:
         assert "corporate_action" in kinds
         snapshots = session.scalars(select(AccountSnapshot).where(AccountSnapshot.account_id == "paper")).all()
         assert len(snapshots) == 5  # one per simulated session, the start date included
+
+
+def test_the_paper_outcome_survives_a_failing_decision(tmp_path: Path, loaded, golden, monkeypatch) -> None:
+    import quant_system.decision.job as job
+
+    market = loaded[0]
+    day = rebalance_days(golden)[10]
+    first = market.sessions[market.session_index(day) + 1]
+    root = make_root(tmp_path)
+    paper_account(root, day)
+    run(root, loaded, day)
+    approve_all(root, at(first, 8))
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("monitor broke")
+
+    monkeypatch.setattr(job, "monitor_holdings", broken)
+    (outcome,) = run(root, loaded, first)
+    assert outcome.status == "failed"
+    _, factory = open_database(root / "app.sqlite")
+    with factory() as session:
+        assert session.scalars(select(Fill)).all()
+        titles = [e.title for e in session.scalars(select(Event).where(Event.category == "account"))]
+        assert any(t.startswith("模拟成交") for t in titles)

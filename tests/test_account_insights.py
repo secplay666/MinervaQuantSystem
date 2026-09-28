@@ -61,7 +61,7 @@ def test_exposure_and_signals(tmp_path: Path, loaded, golden) -> None:
     assert held_weight + exposure["cash_weight"] == pytest.approx(1.0)
     assert sum(r["target_weight"] for r in exposure["industries"]) == pytest.approx(1.0, abs=0.1)
     assert sum(r["count"] for r in exposure["industries"]) == len(held)
-    assert 0 < exposure["top10_weight"] <= 1 and exposure["effective_names"] > 1
+    assert 0 < exposure["top10_weight"] <= 1 and 1 < exposure["effective_names"] <= len(held)
 
     scores = pd.read_csv(Path(outcome.report_dir) / "scores.csv", dtype={"symbol": str})
     best = str(scores.iloc[0]["symbol"])
@@ -74,3 +74,21 @@ def test_exposure_and_signals(tmp_path: Path, loaded, golden) -> None:
     unknown = client.get("/api/v1/instruments/000000/signals", headers=viewer).json()
     assert unknown["row"] is None and unknown["history"] == []
     assert client.get("/api/v1/instruments/..%2Fx/signals", headers=viewer).status_code == 404
+
+
+def test_reports_announced_on_non_trading_days_are_loaded(tmp_path: Path) -> None:
+    from datetime import date
+
+    from quant_system.decision.reference import load_reference
+
+    path = tmp_path / "market.duckdb"
+    with duckdb.connect(str(path)) as con:
+        con.execute("CREATE TABLE dividends (symbol VARCHAR, ex_date DATE)")
+        con.execute("CREATE TABLE suspension_events (symbol VARCHAR, suspend_start DATE, suspend_end DATE, "
+                    "expected_resume DATE)")
+        con.execute("CREATE TABLE risk_warning_intervals (symbol VARCHAR, status VARCHAR, start_date DATE, "
+                    "end_date DATE)")
+        con.execute("CREATE TABLE fin_income (symbol VARCHAR, report_date DATE, notice_date DATE)")
+        con.execute("INSERT INTO fin_income VALUES ('600000', DATE '2026-06-30', DATE '2026-08-29')")  # a Saturday
+    reference = load_reference(path, date(2026, 8, 31))  # Monday's decision
+    assert reference.reports_published(date(2026, 8, 28), date(2026, 8, 31)) == {"600000": [date(2026, 6, 30)]}
