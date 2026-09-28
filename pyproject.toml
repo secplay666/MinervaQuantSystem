@@ -19,6 +19,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  "httpx>=0.28,<1",  # FastAPI TestClient
   "hypothesis>=6,<7",
   "pytest>=8,<10",
 ]
@@ -27,10 +28,16 @@ optimizer = [
   "osqp>=1.0,<2",
   "scipy>=1.14,<2",
 ]
-# Stage 4: business database (decisions, accounts, audit) and, later, the API (ADR-010).
+# Stage 4: business database (decisions, accounts, audit) and the API (ADR-010).
 app = [
   "alembic>=1.20,<2",
+  "argon2-cffi>=25,<26",
+  "fastapi>=0.118,<1",
+  "pyjwt>=2.10,<3",
+  "pyotp>=2.9,<3",
+  "python-multipart>=0.0.20",
   "sqlalchemy>=2.1,<2.2",
+  "uvicorn>=0.37,<1",
 ]
 
 [project.scripts]
@@ -38,6 +45,7 @@ quant-data = "quant_system.data_platform.cli:main"
 quant-backtest = "quant_system.backtest.cli:main"
 quant-research = "quant_system.research.cli:main"
 quant-decision = "quant_system.decision.cli:main"
+quant-app = "quant_system.app.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -261,6 +261,30 @@ quant-decision show --account paper1            # 最近的决策和交易清单
   - 业务库 `data/app/app.sqlite`；
   - 报告 `artifacts/decisions/<run_id>/`，包括 `report.md`、`intents.csv`、`targets.csv` 和 `manifest.json`。同一输入重跑时，报告和 CSV 逐字节相同。
 
+### 后端 API（`quant-app`）
+
+```bash
+quant-app init-secret                                   # 生成 ~/.config/minerva/app.env（签名密钥，权限 600，不进仓库）
+quant-app user create --username admin --display-name 管理员 --role admin   # 打印一次性临时密码
+quant-app serve --host 127.0.0.1 --port 8000             # 接口文档：http://127.0.0.1:8000/api/docs
+quant-app openapi --out web/openapi.json                 # 导出接口定义，供前端生成客户端
+```
+
+- **接口**：均在 `/api/v1` 下，包括：
+  - 认证、用户与角色、审计；
+  - 通知（含 WebSocket 推送）；
+  - 行情概览、K 线、财务；
+  - 账户：持仓、净值、成交回填、持仓录入；
+  - 决策：审核、导出 CSV、强制调仓。
+- **安全**（[ADR-010](docs/adr/ADR-010-frontend-api-access.md)）：
+  - 密码用 argon2id 哈希；访问令牌 15 分钟过期；刷新令牌 7 天，每次使用后轮换，发现旧令牌被重复使用时吊销该用户的全部会话。
+  - 连续 5 次登录失败锁定 15 分钟；首次登录必须修改临时密码；可选 TOTP 两步验证。
+  - 服务只监听 127.0.0.1，外网经 Caddy（TLS）和 frp 访问。
+- **权限**：
+  - 内置角色：管理员、审核员、只读；
+  - 自定义角色：可以逐项开关权限；
+  - 保护措施：管理员不能停用自己或移除自己的管理员角色，并且至少保留一名启用的管理员。
+
 ## 数据层约束
 
 - 原始层不可变，每次采集使用独立的 `run_id`。标准层可以从原始层完整重建（[ADR-005](docs/adr/ADR-005-storage.md)）。

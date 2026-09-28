@@ -1,0 +1,83 @@
+"""FastAPI application factory (ADR-010).
+
+    app = create_app(load_settings(root))
+
+API under /api/v1 (OpenAPI at /api/openapi.json, docs at /api/docs); the
+built PC frontend, when configured, is served at / with an SPA fallback.
+The server binds to 127.0.0.1 only; Caddy terminates TLS in front of it.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+from .api import accounts, auth, decisions, events, market, system, users
+from .db.base import open_database
+from .market import MarketQueries
+from .rbac import sync_roles
+from .settings import AppSettings
+
+API_PREFIX = "/api/v1"
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+}
+
+
+def create_app(settings: AppSettings) -> FastAPI:
+    engine, sessions = open_database(settings.db_path)
+    with sessions() as session:
+        sync_roles(session)
+        session.commit()
+    app = FastAPI(title="Minerva 决策辅助 API", version="1.0", docs_url="/api/docs", redoc_url=None,
+                  openapi_url="/api/openapi.json")
+    app.state.settings = settings
+    app.state.engine = engine
+    app.state.sessions = sessions
+    app.state.market = MarketQueries(settings.market_db, settings.root / "configs" / "market_rules" / "cn_a_share.json")
+    app.state.jobs = {}
+    if settings.cors_origins:
+        app.add_middleware(CORSMiddleware, allow_origins=list(settings.cors_origins), allow_credentials=False,
+                           allow_methods=["*"], allow_headers=["*"])
+
+    @app.middleware("http")
+    async def headers(request: Request, call_next):  # type: ignore[no-untyped-def]
+        response = await call_next(request)
+        for key, value in SECURITY_HEADERS.items():
+            response.headers.setdefault(key, value)
+        if request.url.path.startswith("/api/"):
+            response.headers.setdefault("Cache-Control", "no-store")
+        response.headers["X-Environment"] = settings.environment
+        return response
+
+    @app.exception_handler(ValueError)
+    async def value_error(_request: Request, exc: ValueError) -> JSONResponse:
+        return JSONResponse(status_code=400, content={"detail": {"code": "invalid", "message": str(exc)}})
+
+    for module in (system, auth, users, events, market, accounts, decisions):
+        app.include_router(module.router, prefix=API_PREFIX)
+    if settings.web_dir is not None and (settings.web_dir / "index.html").is_file():
+        _mount_frontend(app, settings.web_dir)
+    return app
+
+
+def _mount_frontend(app: FastAPI, web_dir: Path) -> None:
+    assets = web_dir / "assets"
+    if assets.is_dir():
+        app.mount("/assets", StaticFiles(directory=assets), name="assets")
+    index = web_dir / "index.html"
+
+    @app.get("/{path:path}", include_in_schema=False)
+    async def spa(path: str):  # type: ignore[no-untyped-def]  # client-side routes fall back to index.html
+        if path.startswith("api/"):
+            return JSONResponse(status_code=404, content={"detail": {"code": "not_found", "message": "接口不存在"}})
+        candidate = (web_dir / path).resolve()
+        if path and candidate.is_file() and web_dir.resolve() in candidate.parents:
+            return FileResponse(candidate)
+        return FileResponse(index)
