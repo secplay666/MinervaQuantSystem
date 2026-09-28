@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Minerva 决策</string>
+    <string name="title_activity_main">Minerva 决策</string>
+    <string name="package_name">com.minerva.decision</string>
+    <string name="custom_url_scheme">com.minerva.decision</string>
+</resources>

@@ -1,0 +1,32 @@
+{
+  "name": "@minerva/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Minerva mobile app (Vue 3 + Vant, packaged for Android with Capacitor)",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "vue-tsc --noEmit",
+    "android:sync": "node scripts/prepare-android.mjs && cap sync android",
+    "android:apk": "node scripts/prepare-android.mjs && cap sync android && cd android && gradlew assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/app": "^8.0.0",
+    "@capacitor/core": "^8.5.2",
+    "dayjs": "catalog:",
+    "klinecharts": "^10.0.3",
+    "vant": "^4.10.2",
+    "vue": "catalog:",
+    "vue-router": "catalog:"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.2",
+    "@vitejs/plugin-vue": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vue-tsc": "catalog:"
+  }
+}

@@ -64,6 +64,9 @@ def create_app(settings: AppSettings) -> FastAPI:
 
     for module in (system, auth, users, events, market, accounts, decisions):
         app.include_router(module.router, prefix=API_PREFIX)
+    if settings.mobile_dir is not None and (settings.mobile_dir / "index.html").is_file():
+        # Mounted before the PC catch-all; relative asset paths and hash routes need nothing else.
+        app.mount("/m", StaticFiles(directory=settings.mobile_dir, html=True), name="mobile")
     if settings.web_dir is not None and (settings.web_dir / "index.html").is_file():
         _mount_frontend(app, settings.web_dir)
     return app

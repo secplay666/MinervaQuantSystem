@@ -32,7 +32,8 @@ class AppSettings:
     min_password_length: int = 10
     cors_origins: tuple[str, ...] = ()
     trusted_proxies: tuple[str, ...] = ("127.0.0.1", "::1")
-    web_dir: Path | None = None  # built frontend served at /, if present
+    web_dir: Path | None = None  # built PC frontend served at /, if present
+    mobile_dir: Path | None = None  # built mobile frontend served at /m/ (phones without the app)
     extra: dict[str, str] = field(default_factory=dict)
 
     @property
@@ -84,9 +85,10 @@ def load_settings(root: Path, env_file: Path | None = None, **overrides: object)
         raise SettingsError("MINERVA_SECRET_KEY is missing or too short; run `quant-app init-secret`")
     db = overrides.pop("db_path", None) or values.get("MINERVA_DB")
     web = overrides.pop("web_dir", None) or values.get("MINERVA_WEB_DIR")
+    mobile = overrides.pop("mobile_dir", None) or values.get("MINERVA_MOBILE_DIR")
     cors = values.get("MINERVA_CORS", "")
     return AppSettings(
         root=root, db_path=Path(db) if db else root / DEFAULT_DB, secret_key=secret,
         environment=str(overrides.pop("environment", None) or values.get("MINERVA_ENV", "test")),
         cors_origins=tuple(o.strip() for o in cors.split(",") if o.strip()),
-        web_dir=Path(web) if web else None, **overrides)  # type: ignore[arg-type]
+        web_dir=Path(web) if web else None, mobile_dir=Path(mobile) if mobile else None, **overrides)  # type: ignore[arg-type]

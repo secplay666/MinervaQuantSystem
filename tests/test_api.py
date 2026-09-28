@@ -239,6 +239,22 @@ def test_manual_holdings_entry_fills_and_reversal(env) -> None:
     assert fills[0]["symbol"] == "600036"
 
 
+def test_frontends_are_served_with_spa_fallback(tmp_path: Path) -> None:
+    root = make_root(tmp_path / "root")
+    for name, html in (("web", "<p>pc</p>"), ("mobile", "<p>mobile</p>")):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "index.html").write_text(html, encoding="utf-8")
+    (tmp_path / "web" / "app.js").write_text("console.log(1)", encoding="utf-8")
+    settings = AppSettings(root=root, db_path=root / "app.sqlite", secret_key="s" * 48, web_dir=tmp_path / "web",
+                           mobile_dir=tmp_path / "mobile")
+    client = TestClient(create_app(settings))
+    assert "pc" in client.get("/").text and "pc" in client.get("/decisions/x").text  # client-side route
+    assert client.get("/app.js").text == "console.log(1)"
+    assert "mobile" in client.get("/m/").text
+    assert client.get("/api/v1/nope").status_code == 404
+    assert client.get("/../secret").status_code in (200, 404) and "pc" in client.get("/%2e%2e/x").text
+
+
 def test_health_meta_and_headers(env) -> None:
     _, _, client, _ = env
     response = client.get("/api/v1/health")

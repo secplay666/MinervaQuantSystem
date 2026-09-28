@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  HTTPS only.  Besides the system CAs, the app trusts Minerva's private CA
+  (res/raw/minerva_ca.crt, copied from the server's ~/.config/minerva/tls/ca.crt
+  by scripts/prepare-android.mjs before a build; not committed).  The server
+  is reached by IP without a domain, so the CA cannot come from a public
+  issuer (ADR-010 §7).
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="@raw/minerva_ca" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

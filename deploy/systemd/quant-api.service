@@ -7,6 +7,7 @@ After=network.target
 Type=simple
 WorkingDirectory=@REPO@
 Environment=MINERVA_WEB_DIR=@REPO@/web/apps/web-antd/dist
+Environment=MINERVA_MOBILE_DIR=@REPO@/web/apps/mobile/dist
 ExecStart=@REPO@/.venv/bin/quant-app --root @DATA_ROOT@ serve --host 127.0.0.1 --port @PORT@
 Restart=on-failure
 RestartSec=5
