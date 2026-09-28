@@ -25,6 +25,9 @@ export interface Intent {
   est_fees_fen: number;
   est_notional_fen: number;
   execute_on: string;
+  execution: null | string;
+  execution_note: null | string;
+  filled_qty: number;
   history: { action: string; actor: string; at: string; qty_after: null | number; qty_before: null | number; reason: null | string }[];
   intent_id: string;
   limit_down_fen: null | number;

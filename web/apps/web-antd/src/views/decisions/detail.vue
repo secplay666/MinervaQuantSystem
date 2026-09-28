@@ -15,7 +15,7 @@ import {
 
 import { approveAllApi, approveIntentApi, decisionApi, modifyIntentApi, overrideIntentApi, rejectIntentApi } from '#/api';
 import { apiURL } from '#/api/request';
-import { bigYuan, dateTime, INTENT_STATUS, LEVEL, pct, price, RISK, RUN_KIND, RUN_STATUS, yuan } from '#/utils/format';
+import { bigYuan, dateTime, EXECUTION, INTENT_STATUS, LEVEL, pct, price, RISK, RUN_KIND, RUN_STATUS, yuan } from '#/utils/format';
 
 const route = useRoute();
 const router = useRouter();
@@ -241,6 +241,11 @@ onMounted(load);
                 <template v-else-if="column.key === 'status'">
                   <Tooltip :title="record.history.map((h: any) => `${dateTime(h.at)} ${h.actor} ${h.action}${h.reason ? '：' + h.reason : ''}`).join('\n')">
                     <Tag :color="INTENT_STATUS[record.status]?.color">{{ INTENT_STATUS[record.status]?.label ?? record.status }}</Tag>
+                  </Tooltip>
+                  <Tooltip v-if="record.execution" :title="record.execution_note">
+                    <Tag :color="EXECUTION[record.execution]?.color" class="mt-1">
+                      {{ EXECUTION[record.execution]?.label }}{{ record.filled_qty ? ` ${record.filled_qty.toLocaleString()}` : '' }}
+                    </Tag>
                   </Tooltip>
                 </template>
                 <template v-else-if="column.key === 'actions'">

@@ -124,6 +124,7 @@ class Account(Base):
     start_date: Mapped[date] = mapped_column(Date)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     holdings_confirmed_date: Mapped[date | None] = mapped_column(Date)  # manual accounts, gate G4
+    paper_through: Mapped[date | None] = mapped_column(Date)  # paper accounts: last simulated session
     note: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
@@ -259,6 +260,9 @@ class OrderIntent(Base):
     risk: Mapped[str] = mapped_column(String(8))  # worst check: pass | warn | reject
     status: Mapped[str] = mapped_column(String(24))
     valid_until: Mapped[datetime] = mapped_column(UTCDateTime)
+    filled_qty: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    execution: Mapped[str | None] = mapped_column(String(16))  # None/partial (open) | filled | unfilled | partial_closed
+    execution_note: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now)
 

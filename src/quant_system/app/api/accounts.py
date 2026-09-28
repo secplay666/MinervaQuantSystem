@@ -12,7 +12,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ...decision.accounts import create_account, replay, reverse_event
-from ...decision.review import Operator, ReviewError, commit_holdings, parse_holdings_text, preview_holdings, record_fill
+from ...decision.review import (
+    Operator,
+    ReviewError,
+    commit_holdings,
+    parse_holdings_text,
+    preview_holdings,
+    record_fill,
+    refresh_intent_fill,
+)
 from ...domain.money import yuan_to_fen
 from ..audit import audit
 from ..db.base import utc_now
@@ -293,5 +301,8 @@ def reverse(event_id: str, body: ReverseIn, principal: Principal = Depends(edit)
         fill = session.get(Fill, row.ref_id)
         if fill is not None:
             fill.reversed_by = reversal.event_id
+            session.flush()
+            if fill.intent_id:
+                refresh_intent_fill(session, fill.intent_id)
             session.commit()
     return {"event_id": reversal.event_id, "reverses": event_id, "at": utc_now().isoformat()}

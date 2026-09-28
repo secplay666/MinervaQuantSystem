@@ -65,6 +65,7 @@ def intent_view(intent: OrderIntent, checks: list[RiskCheck], approvals: list[Ap
             "limit_down_fen": intent.limit_down_fen, "est_notional_fen": intent.est_notional_fen,
             "est_fees_fen": intent.est_fees_fen, "reason": intent.reason, "rank": intent.rank, "risk": intent.risk,
             "status": intent.status, "execute_on": intent.execute_on.isoformat(),
+            "filled_qty": intent.filled_qty, "execution": intent.execution, "execution_note": intent.execution_note,
             "valid_until": intent.valid_until.isoformat(),
             "checks": [{"rule_id": c.rule_id, "decision": c.decision, "message": c.message, "actual": c.actual,
                         "limit": c.limit_value} for c in checks],

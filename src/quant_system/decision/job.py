@@ -65,6 +65,7 @@ from .inputs import (
 )
 from .intents import IntentPlan, plan_intents, turnover
 from .monitor import Alert, monitor_holdings
+from .paper import run_paper
 from .reference import FrameReference, load_reference
 from .report import write_report
 
@@ -367,6 +368,7 @@ def _run_account(factory: sessionmaker[Session], shared: _Shared, account_id: st
         run_id = _new_run_id(session, account_id, day)
         config, config_hash = load_strategy_config(shared.root, account.strategy_config, day)
         rules = shared.rules(config.market_rules_path)
+        paper = run_paper(session, account, market, rules, config, through=day) if account.mode == "paper" else None
         marked = mark(replay(session, account_id, through=day), market, i)
         rebalance = is_rebalance_day(config.schedule, shared.calendar, market.sessions, day)
         kind = "forced" if force_reason else "rebalance" if rebalance else "monitor"
@@ -396,6 +398,9 @@ def _run_account(factory: sessionmaker[Session], shared: _Shared, account_id: st
                                 getattr(construction, "max_weight", None), i, next_day, shared.reference)
         valid_until = datetime.combine(next_day, REVIEW_CLOSE, SHANGHAI_TZ)
         summary = _summary(marked, target, plan, alerts)
+        if paper is not None:
+            summary["paper"] = {"sessions": [d.isoformat() for d in paper.sessions], "fills": paper.fills,
+                                "closed_unfilled": paper.unfilled}
         summary["seconds"] = round(time.perf_counter() - started, 2)
         report_dir = shared.root / DECISIONS_DIR / run_id
         session.add(DecisionRun(
@@ -441,6 +446,11 @@ def _run_account(factory: sessionmaker[Session], shared: _Shared, account_id: st
                    f"交易清单已生成：卖出 {sells} 笔，买入 {len(intents) - sells} 笔，待审核",
                    f"执行日 {next_day}，审核截止 {valid_until:%Y-%m-%d %H:%M}", run_id, day, account_id,
                    "在每日决策页审核")
+        if paper is not None and (paper.fills or paper.unfilled):
+            _event(session, f"{run_id}-paper", "info", "account",
+                   f"模拟成交 {paper.fills} 笔" + (f"，{paper.unfilled} 笔未能成交" if paper.unfilled else ""),
+                   f"处理交易日 {', '.join(d.isoformat() for d in paper.sessions)}", run_id, day, account_id,
+                   "在账户页查看成交与持仓")
         write_snapshots(session, account_id, marked)
         audit(session, actor, "decision.run", "decision_run", run_id,
               after={"status": status, "kind": kind, "intents": len(intents)}, reason=force_reason)

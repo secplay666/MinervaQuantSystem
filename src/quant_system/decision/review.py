@@ -166,6 +166,15 @@ def _filled_qty(session: Session, intent_id: str) -> int:
         Fill.intent_id == intent_id, Fill.reversed_by.is_(None))) or 0)
 
 
+def refresh_intent_fill(session: Session, intent_id: str) -> None:
+    """Recompute an intent's filled quantity from its fills that are not reversed."""
+    intent = session.get(OrderIntent, intent_id)
+    if intent is None:
+        return
+    intent.filled_qty = _filled_qty(session, intent_id)
+    intent.execution = ("filled" if intent.filled_qty >= intent.qty else "partial") if intent.filled_qty else None
+
+
 def _validate(session: Session, account_id: str, new_rows: list[PositionEvent]) -> None:
     rows = sorted([*account_events(session, account_id), *new_rows], key=lambda r: (r.trade_date, r.seq or 10**12))
     try:
@@ -212,6 +221,8 @@ def record_fill(session: Session, account: Account, *, trade_date: date, symbol:
     session.add(fill)
     session.add(event)
     session.flush()
+    if intent_id is not None:
+        refresh_intent_fill(session, intent_id)
     audit(session, op.actor, "fill.record", "fill", fill_id, after={**payload, "symbol": symbol,
           "trade_date": trade_date.isoformat(), "intent_id": intent_id}, **op.audit_kwargs())
     return fill

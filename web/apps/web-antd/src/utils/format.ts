@@ -56,6 +56,13 @@ export const INTENT_STATUS: Record<string, { color: string; label: string }> = {
   superseded: { color: 'default', label: '已作废' },
 };
 
+export const EXECUTION: Record<string, { color: string; label: string }> = {
+  filled: { color: 'success', label: '已成交' },
+  partial: { color: 'processing', label: '部分成交' },
+  partial_closed: { color: 'warning', label: '部分成交（结束）' },
+  unfilled: { color: 'default', label: '未成交' },
+};
+
 export const RISK: Record<string, { color: string; label: string }> = {
   pass: { color: 'success', label: '通过' },
   reject: { color: 'error', label: '拒绝' },
