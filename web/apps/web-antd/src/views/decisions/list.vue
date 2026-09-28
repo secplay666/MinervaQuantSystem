@@ -4,7 +4,7 @@ import type { Dayjs } from 'dayjs';
 import type { Account, DecisionRun } from '#/api';
 
 import { onMounted, reactive, ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 
 import { useAccess } from '@vben/access';
 import { Page } from '@vben/common-ui';
@@ -14,12 +14,16 @@ import { Button, Card, Checkbox, DatePicker, Form, Input, message, Modal, Select
 import { accountsApi, decisionsApi, jobApi, triggerDecisionApi } from '#/api';
 import { RUN_KIND, RUN_STATUS, yuan } from '#/utils/format';
 
+const route = useRoute();
 const router = useRouter();
 const { hasAccessByCodes } = useAccess();
 const loading = ref(false);
 const runs = ref<DecisionRun[]>([]);
 const accounts = ref<Account[]>([]);
-const filter = reactive<{ account_id?: string; include_superseded: boolean; trade_date?: Dayjs }>({ include_superseded: false });
+const filter = reactive<{ account_id?: string; include_superseded: boolean; trade_date?: Dayjs }>({
+  account_id: typeof route.query.account_id === 'string' ? route.query.account_id : undefined,
+  include_superseded: false,
+});
 
 const trigger = reactive({ account_id: '', open: false, reason: '', rerun: false, running: false });
 
