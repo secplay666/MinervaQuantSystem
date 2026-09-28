@@ -116,6 +116,14 @@
    - 审计日志里的 IP 都是 127.0.0.1。
 
    用户少于 10 人时可以接受。需要真实地址时，可以启用 frp 的 PROXY protocol，但服务端要能解析它（uvicorn 目前不支持），需要在前面加一层代理。
+
+   **不信任 X-Forwarded-For**（自查后修订）：
+   - 原因：原先的配置信任来自 127.0.0.1 的 `X-Forwarded-For`，而 frp 转发来的连接都来自 127.0.0.1，任何客户端都可以伪造这个头。这样就能绕过按 IP 的限流，也能伪造审计日志里的 IP。
+   - 现在的做法：uvicorn 关闭 `proxy_headers`，`trusted_proxies` 默认为空。
+   - 其他防护：
+     - 按 IP 记录失败次数的表有大小上限；
+     - 改密码、开关两步验证时的密码校验，与登录共用失败计数和锁定；
+     - 账号锁定期间，已签发的访问令牌也被拒绝。
 5. **手机端网络**：
    - App 的 fetch 和 XHR 走 CapacitorHttp（原生 HTTP），TLS 遵循 `network_security_config.xml`（系统 CA 加上我们的 CA），也没有跨域问题。
    - WebView 自己的网络栈不一定信任私有 CA，所以 App 内不使用 WebSocket，通知改为 App 在前台时每分钟轮询一次。

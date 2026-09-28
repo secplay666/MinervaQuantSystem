@@ -80,3 +80,23 @@ remotePort = 20443
    - 把前端构建产物放到 `web/apps/*/dist`；
    - 运行 `deploy/install_api_service.sh`（数据根就是生产目录本身）。
 3. 删除临时定时器 `quant-decision-stage4` 和目录 `~/L1/minerva-stage4`。之后由 `daily_update.sh` 按顺序执行"采集 → 模拟成交与决策 → 备份"；备份会包含业务库。
+
+## 8. 外部通知（可选，需要你做）
+
+默认不向外发送任何消息，只在网页和 App 的通知中心显示。要推送到手机，选一个渠道：
+
+| 渠道 | 手机上用什么看 | 限制 |
+|---|---|---|
+| **企业微信群机器人**（推荐） | 企业微信 App（能否通过"微信插件"在微信里收到，需要实测） | 每个机器人每分钟 20 条；个人可以注册未认证的企业 |
+| Server酱 | 微信（服务号消息） | 免费版每天 5 条；消息经过第三方服务器 |
+
+**步骤**（以企业微信为例）：
+
+1. 在企业微信的一个群里：群设置 → 群机器人 → 添加 → 复制 webhook 地址。**这个地址就是密钥**，不要发到群聊或提交进仓库。
+2. 用 van 登录服务器，在 `~/.config/minerva/app.env` 末尾加一行：`MINERVA_NOTIFY_WECOM=<webhook 地址>`。
+   - 用 Server酱时改为：`MINERVA_NOTIFY_SERVERCHAN=<SendKey>`。
+   - 可选：`MINERVA_NOTIFY_MIN_LEVEL=warning`，只推送警告和严重事件（默认连"交易清单已生成"这类消息也推送）。
+3. 重启 API：`systemctl --user restart quant-api`。
+4. 网页的"系统管理 → 外部通知"里点"发送测试消息"，或者在服务器上运行 `~/L1/minerva-stage4/.venv/bin/quant-app notify test`。
+
+之后每晚决策作业结束时推送一条汇总。消息只含事件标题：持仓风险只发条数，不发证券代码；金额和持仓不外发。
