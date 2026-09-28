@@ -12,7 +12,6 @@ packages:
   - scripts/*
 
 publicHoistPattern:
-  - lefthook
   - eslint
   - oxfmt
   - oxlint
@@ -94,7 +93,7 @@ catalog:
   '@vue/shared': ^3.5.40
   '@vue/test-utils': ^2.4.11
   '@vueuse/core': ^14.4.0
-  '@vueuse/integrations': ^14.3.0
+  '@vueuse/integrations': ^14.4.0
   '@vueuse/motion': ^3.0.3
   ant-design-vue: ^4.2.6
   antdv-next: ^1.4.5
@@ -214,5 +213,4 @@ allowBuilds:
   '@parcel/watcher': true
   core-js: true
   esbuild: true
-  lefthook: true
   vue-demi: true

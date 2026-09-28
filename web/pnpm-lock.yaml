@@ -160,7 +160,7 @@ catalogs:
       specifier: ^14.4.0
       version: 14.4.0
     '@vueuse/integrations':
-      specifier: ^14.3.0
+      specifier: ^14.4.0
       version: 14.4.0
     '@vueuse/motion':
       specifier: ^3.0.3
@@ -282,9 +282,6 @@ catalogs:
     knip:
       specifier: ^6.29.0
       version: 6.32.2
-    lefthook:
-      specifier: ^2.1.14
-      version: 2.1.14
     lodash.clonedeep:
       specifier: ^4.5.0
       version: 4.5.0
@@ -544,9 +541,6 @@ importers:
       is-ci:
         specifier: 'catalog:'
         version: 4.1.0
-      lefthook:
-        specifier: 'catalog:'
-        version: 2.1.14
       oxfmt:
         specifier: 'catalog:'
         version: 0.65.0
@@ -634,15 +628,24 @@ importers:
       '@vueuse/core':
         specifier: 'catalog:'
         version: 14.4.0(vue@3.5.41(typescript@6.0.3))
+      '@vueuse/integrations':
+        specifier: 'catalog:'
+        version: 14.4.0(async-validator@4.2.5)(axios@1.19.0(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2))(focus-trap@8.2.2)(nprogress@0.2.0)(qrcode@1.5.4)(sortablejs@1.15.7)(vue@3.5.41(typescript@6.0.3))
       ant-design-vue:
         specifier: 'catalog:'
         version: 4.2.6(vue@3.5.41(typescript@6.0.3))
       dayjs:
         specifier: 'catalog:'
         version: 1.11.23
+      klinecharts:
+        specifier: ^10.0.3
+        version: 10.0.3
       pinia:
         specifier: ^4.0.2
         version: 4.0.3(@vue/devtools-api@8.2.1)(typescript@6.0.3)(vue@3.5.41(typescript@6.0.3))
+      qrcode:
+        specifier: 'catalog:'
+        version: 1.5.4
       vue:
         specifier: 3.5.41
         version: 3.5.41(typescript@6.0.3)
@@ -726,13 +729,13 @@ importers:
     dependencies:
       '@eslint-community/eslint-plugin-eslint-comments':
         specifier: 'catalog:'
-        version: 4.7.2(eslint@10.10.0(jiti@2.7.0)(supports-color@10.2.2))
+        version: 4.7.2(eslint@10.11.0(jiti@2.7.0)(supports-color@10.2.2))
       eslint-plugin-better-tailwindcss:
         specifier: 'catalog:'
-        version: 4.7.0(eslint@10.10.0(jiti@2.7.0)(supports-color@10.2.2))(oxlint@1.85.0(oxlint-tsgolint@0.25.0))(tailwindcss@4.3.3)(typescript@6.0.3)
+        version: 4.7.0(eslint@10.11.0(jiti@2.7.0)(supports-color@10.2.2))(oxlint@1.85.0(oxlint-tsgolint@0.25.0))(tailwindcss@4.3.3)(typescript@6.0.3)
       eslint-plugin-command:
         specifier: 'catalog:'
-        version: 3.5.3(@typescript-eslint/typescript-estree@8.68.0(supports-color@10.2.2)(typescript@6.0.3))(@typescript-eslint/utils@8.67.0(eslint@10.10.0(jiti@2.7.0)(supports-color@10.2.2))(supports-color@10.2.2)(typescript@6.0.3))(eslint@10.10.0(jiti@2.7.0)(supports-color@10.2.2))
+        version: 3.5.3(@typescript-eslint/typescript-estree@8.68.0(supports-color@10.2.2)(typescript@6.0.3))(@typescript-eslint/utils@8.67.0(eslint@10.11.0(jiti@2.7.0)(supports-color@10.2.2))(supports-color@10.2.2)(typescript@6.0.3))(eslint@10.11.0(jiti@2.7.0)(supports-color@10.2.2))
       oxlint:
         specifier: 'catalog:'
         version: 1.85.0(oxlint-tsgolint@0.25.0)
@@ -838,7 +841,7 @@ importers:
     dependencies:
       '@intlify/unplugin-vue-i18n':
         specifier: 'catalog:'
-        version: 11.2.5(@vue/compiler-dom@3.5.43)(eslint@10.10.0(jiti@2.7.0)(supports-color@10.2.2))(rollup@4.62.5)(supports-color@10.2.2)(typescript@6.0.3)(vite@8.3.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(less@4.9.0(supports-color@10.2.2))(sass-embedded@1.103.1)(sass@1.103.1)(terser@5.50.0)(yaml@2.9.0))(vue-i18n@11.4.10(vue@3.5.41(typescript@6.0.3)))(vue@3.5.41(typescript@6.0.3))
+        version: 11.2.5(@vue/compiler-dom@3.5.43)(eslint@10.11.0(jiti@2.7.0)(supports-color@10.2.2))(rollup@4.62.5)(supports-color@10.2.2)(typescript@6.0.3)(vite@8.3.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(less@4.9.0(supports-color@10.2.2))(sass-embedded@1.103.1)(sass@1.103.1)(terser@5.50.0)(yaml@2.9.0))(vue-i18n@11.4.10(vue@3.5.41(typescript@6.0.3)))(vue@3.5.41(typescript@6.0.3))
       '@jspm/generator':
         specifier: 'catalog:'
         version: 2.16.3(supports-color@10.2.2)
@@ -7458,6 +7461,9 @@ packages:
     resolution: {integrity: sha512-o+NO+8WrRiQEE4/7nwRJhN1HWpVmJm511pBHUxPLtp0BUISzlBplORYSmTclCnJvQq2tKu/sgl3xVpkc7ZWuQQ==}
     engines: {node: '>=6'}
 
+  klinecharts@10.0.3:
+    resolution: {integrity: sha512-phvf5CyS7oGE46nuC+nxQxl9D+8+5w8q3reExh0oNeMV1Jws4X0CMHNkOI9xlNA/XWctNS5whZ3PqIJi8YM2Tw==}
+
   klona@2.0.6:
     resolution: {integrity: sha512-dhG34DXATL5hSxJbIexCft8FChFXtmskoZYnoPWjXQuebWYCNkVeV3KkGegCK9CP1oswI/vQibS2GY7Em/sJJA==}
     engines: {node: '>= 8'}
@@ -7490,60 +7496,6 @@ packages:
   lazystream@1.0.1:
     resolution: {integrity: sha512-b94GiNHQNy6JNTrt5w6zNyffMrNkXZb3KTkCZJb2V1xaEGCk093vkZ2jk3tpaeP33/OiXC+WvK9AxUebnf5nbw==}
     engines: {node: '>= 0.6.3'}
-
-  lefthook-darwin-arm64@2.1.14:
-    resolution: {integrity: sha512-VMUAqY81+8ph7Mc0iROd3JWqj2sOuK7SYDyd8ZgzYVKChCt+Nnz8ehd4gUwprJy7QI28IFSUh1M3wnIRiYh+fA==}
-    cpu: [arm64]
-    os: [darwin]
-
-  lefthook-darwin-x64@2.1.14:
-    resolution: {integrity: sha512-uSmjcPRU+yB+D6vk+u6WJDnyHlB+XIv1QZw97N2+qNGG2bNSLH/7MuJ6puCdJv+lVPBEO5wBjE3JIbaEzPOQCw==}
-    cpu: [x64]
-    os: [darwin]
-
-  lefthook-freebsd-arm64@2.1.14:
-    resolution: {integrity: sha512-po/pmjbp/7BjE9RFfeDnh+CeNsA0d+utppOYKB425I7mgI1GcmT8GAZ9DDut4DIutNjVqKL/lzrj+F87Gm40Rg==}
-    cpu: [arm64]
-    os: [freebsd]
-
-  lefthook-freebsd-x64@2.1.14:
-    resolution: {integrity: sha512-+KiXiFjJf7YdHUYjzhDsklcA5bAFZN+pNcz/NbBftrhVTwzNALNoK+SYEKt+9QJsrzL6tpDWmHHFpeLGp+8t8w==}
-    cpu: [x64]
-    os: [freebsd]
-
-  lefthook-linux-arm64@2.1.14:
-    resolution: {integrity: sha512-bjeJB16ftJaPWGTedssh8ZrqRy1ACfQuTV7a0O3NU1FoIsJtfHOm0o0mV4cPf4q+ZCVCwq1Xf2I11qUpuJFV4Q==}
-    cpu: [arm64]
-    os: [linux]
-
-  lefthook-linux-x64@2.1.14:
-    resolution: {integrity: sha512-gYExzjU2w3uKrP1MklbHENS1cXUdCQRIiEJkykI7q4RjhIHi+mQEUAZLxZw93a6jE2pNWaO0me5tB8EbEt4/GQ==}
-    cpu: [x64]
-    os: [linux]
-
-  lefthook-openbsd-arm64@2.1.14:
-    resolution: {integrity: sha512-MCW76gTlEMBF3Ds8O63UTxjaSguha/5zT0U3Vr719I1sXueSpttfRmm/5YfIB4MygB116yA/Vi+DsizT/X0kcg==}
-    cpu: [arm64]
-    os: [openbsd]
-
-  lefthook-openbsd-x64@2.1.14:
-    resolution: {integrity: sha512-salAc1PAhLI6xrB9pth5UxALQlTOGvZAfaAvgFwixhkdu8D//uW8zS3faFq31ktd1bDAy5wDI8p9yg+fF5+2uA==}
-    cpu: [x64]
-    os: [openbsd]
-
-  lefthook-windows-arm64@2.1.14:
-    resolution: {integrity: sha512-q3JC6lBrYLzkhXEhfnmFxJF47gSd5JeDweH3aNrHoLGX/KkRiOrk9RSyoRwSuGq03EYxSkJhl1FLj2GUxF7VqQ==}
-    cpu: [arm64]
-    os: [win32]
-
-  lefthook-windows-x64@2.1.14:
-    resolution: {integrity: sha512-WwIxdwW1lDAaJUU3ETcKlCtdqluGr3Cy+LjKvP4QIQnFf0FEXL78THstIkZ6k6qhfUn7/WvyqSIf0cbTAKw2nQ==}
-    cpu: [x64]
-    os: [win32]
-
-  lefthook@2.1.14:
-    resolution: {integrity: sha512-Y9TL1dmpRlIdSp73SJ6bb+xAZ4s2SinGTK3pgC9PRWMSjMr2iOfowPGnlSOfAo5fu6S5rdiItsQDxeLEWCGk4g==}
-    hasBin: true
 
   less@4.9.0:
     resolution: {integrity: sha512-umRhrCH7fCi8Uj2RcwKjJdvUORTjeWqkdKx0LbcZvjIwsAVsnIAGcxHaqowPeBFBjQuWOeC/bve0AlpFzF/+SQ==}
@@ -11735,10 +11687,10 @@ snapshots:
   '@esbuild/win32-x64@0.28.2':
     optional: true
 
-  '@eslint-community/eslint-plugin-eslint-comments@4.7.2(eslint@10.10.0(jiti@2.7.0)(supports-color@10.2.2))':
+  '@eslint-community/eslint-plugin-eslint-comments@4.7.2(eslint@10.11.0(jiti@2.7.0)(supports-color@10.2.2))':
     dependencies:
       escape-string-regexp: 4.0.0
-      eslint: 10.10.0(jiti@2.7.0)(supports-color@10.2.2)
+      eslint: 10.11.0(jiti@2.7.0)(supports-color@10.2.2)
       ignore: 7.0.6
 
   '@eslint-community/eslint-utils@4.10.1(eslint@10.10.0(jiti@2.7.0)(supports-color@10.2.2))':
@@ -11908,9 +11860,9 @@ snapshots:
 
   '@intlify/shared@11.4.8': {}
 
-  '@intlify/unplugin-vue-i18n@11.2.5(@vue/compiler-dom@3.5.43)(eslint@10.10.0(jiti@2.7.0)(supports-color@10.2.2))(rollup@4.62.5)(supports-color@10.2.2)(typescript@6.0.3)(vite@8.3.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(less@4.9.0(supports-color@10.2.2))(sass-embedded@1.103.1)(sass@1.103.1)(terser@5.50.0)(yaml@2.9.0))(vue-i18n@11.4.10(vue@3.5.41(typescript@6.0.3)))(vue@3.5.41(typescript@6.0.3))':
+  '@intlify/unplugin-vue-i18n@11.2.5(@vue/compiler-dom@3.5.43)(eslint@10.11.0(jiti@2.7.0)(supports-color@10.2.2))(rollup@4.62.5)(supports-color@10.2.2)(typescript@6.0.3)(vite@8.3.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(less@4.9.0(supports-color@10.2.2))(sass-embedded@1.103.1)(sass@1.103.1)(terser@5.50.0)(yaml@2.9.0))(vue-i18n@11.4.10(vue@3.5.41(typescript@6.0.3)))(vue@3.5.41(typescript@6.0.3))':
     dependencies:
-      '@eslint-community/eslint-utils': 4.10.1(eslint@10.10.0(jiti@2.7.0)(supports-color@10.2.2))
+      '@eslint-community/eslint-utils': 4.10.1(eslint@10.11.0(jiti@2.7.0)(supports-color@10.2.2))
       '@intlify/bundle-utils': 11.2.5(vue-i18n@11.4.10(vue@3.5.41(typescript@6.0.3)))
       '@intlify/shared': 11.4.8
       '@intlify/vue-i18n-extensions': 8.0.0(@intlify/shared@11.4.8)(@vue/compiler-dom@3.5.43)(vue-i18n@11.4.10(vue@3.5.41(typescript@6.0.3)))(vue@3.5.41(typescript@6.0.3))
@@ -13303,17 +13255,6 @@ snapshots:
       semver: 7.8.5
       tinyglobby: 0.2.17
       ts-api-utils: 2.5.0(typescript@6.0.3)
-      typescript: 6.0.3
-    transitivePeerDependencies:
-      - supports-color
-
-  '@typescript-eslint/utils@8.67.0(eslint@10.10.0(jiti@2.7.0)(supports-color@10.2.2))(supports-color@10.2.2)(typescript@6.0.3)':
-    dependencies:
-      '@eslint-community/eslint-utils': 4.10.1(eslint@10.10.0(jiti@2.7.0)(supports-color@10.2.2))
-      '@typescript-eslint/scope-manager': 8.67.0
-      '@typescript-eslint/types': 8.67.0
-      '@typescript-eslint/typescript-estree': 8.67.0(supports-color@10.2.2)(typescript@6.0.3)
-      eslint: 10.10.0(jiti@2.7.0)(supports-color@10.2.2)
       typescript: 6.0.3
     transitivePeerDependencies:
       - supports-color
@@ -14975,7 +14916,7 @@ snapshots:
       esquery: 1.7.0
       jsonc-eslint-parser: 3.3.0
 
-  eslint-plugin-better-tailwindcss@4.7.0(eslint@10.10.0(jiti@2.7.0)(supports-color@10.2.2))(oxlint@1.85.0(oxlint-tsgolint@0.25.0))(tailwindcss@4.3.3)(typescript@6.0.3):
+  eslint-plugin-better-tailwindcss@4.7.0(eslint@10.11.0(jiti@2.7.0)(supports-color@10.2.2))(oxlint@1.85.0(oxlint-tsgolint@0.25.0))(tailwindcss@4.3.3)(typescript@6.0.3):
     dependencies:
       '@eslint/css-tree': 4.0.5
       '@valibot/to-json-schema': 1.7.1(valibot@1.4.2(typescript@6.0.3))
@@ -14987,18 +14928,18 @@ snapshots:
       tsconfig-paths-webpack-plugin: 4.2.0
       valibot: 1.4.2(typescript@6.0.3)
     optionalDependencies:
-      eslint: 10.10.0(jiti@2.7.0)(supports-color@10.2.2)
+      eslint: 10.11.0(jiti@2.7.0)(supports-color@10.2.2)
       oxlint: 1.85.0(oxlint-tsgolint@0.25.0)
     transitivePeerDependencies:
       - '@eslint/css'
       - typescript
 
-  eslint-plugin-command@3.5.3(@typescript-eslint/typescript-estree@8.68.0(supports-color@10.2.2)(typescript@6.0.3))(@typescript-eslint/utils@8.67.0(eslint@10.10.0(jiti@2.7.0)(supports-color@10.2.2))(supports-color@10.2.2)(typescript@6.0.3))(eslint@10.10.0(jiti@2.7.0)(supports-color@10.2.2)):
+  eslint-plugin-command@3.5.3(@typescript-eslint/typescript-estree@8.68.0(supports-color@10.2.2)(typescript@6.0.3))(@typescript-eslint/utils@8.67.0(eslint@10.11.0(jiti@2.7.0)(supports-color@10.2.2))(supports-color@10.2.2)(typescript@6.0.3))(eslint@10.11.0(jiti@2.7.0)(supports-color@10.2.2)):
     dependencies:
       '@es-joy/jsdoccomment': 0.88.0
       '@typescript-eslint/typescript-estree': 8.68.0(supports-color@10.2.2)(typescript@6.0.3)
-      '@typescript-eslint/utils': 8.67.0(eslint@10.10.0(jiti@2.7.0)(supports-color@10.2.2))(supports-color@10.2.2)(typescript@6.0.3)
-      eslint: 10.10.0(jiti@2.7.0)(supports-color@10.2.2)
+      '@typescript-eslint/utils': 8.67.0(eslint@10.11.0(jiti@2.7.0)(supports-color@10.2.2))(supports-color@10.2.2)(typescript@6.0.3)
+      eslint: 10.11.0(jiti@2.7.0)(supports-color@10.2.2)
 
   eslint-plugin-es-x@7.8.0(eslint@10.11.0(jiti@2.7.0)(supports-color@10.2.2)):
     dependencies:
@@ -15992,6 +15933,8 @@ snapshots:
 
   kleur@4.1.5: {}
 
+  klinecharts@10.0.3: {}
+
   klona@2.0.6: {}
 
   knip@6.32.2:
@@ -16030,49 +15973,6 @@ snapshots:
   lazystream@1.0.1:
     dependencies:
       readable-stream: 2.3.8
-
-  lefthook-darwin-arm64@2.1.14:
-    optional: true
-
-  lefthook-darwin-x64@2.1.14:
-    optional: true
-
-  lefthook-freebsd-arm64@2.1.14:
-    optional: true
-
-  lefthook-freebsd-x64@2.1.14:
-    optional: true
-
-  lefthook-linux-arm64@2.1.14:
-    optional: true
-
-  lefthook-linux-x64@2.1.14:
-    optional: true
-
-  lefthook-openbsd-arm64@2.1.14:
-    optional: true
-
-  lefthook-openbsd-x64@2.1.14:
-    optional: true
-
-  lefthook-windows-arm64@2.1.14:
-    optional: true
-
-  lefthook-windows-x64@2.1.14:
-    optional: true
-
-  lefthook@2.1.14:
-    optionalDependencies:
-      lefthook-darwin-arm64: 2.1.14
-      lefthook-darwin-x64: 2.1.14
-      lefthook-freebsd-arm64: 2.1.14
-      lefthook-freebsd-x64: 2.1.14
-      lefthook-linux-arm64: 2.1.14
-      lefthook-linux-x64: 2.1.14
-      lefthook-openbsd-arm64: 2.1.14
-      lefthook-openbsd-x64: 2.1.14
-      lefthook-windows-arm64: 2.1.14
-      lefthook-windows-x64: 2.1.14
 
   less@4.9.0(supports-color@10.2.2):
     dependencies:

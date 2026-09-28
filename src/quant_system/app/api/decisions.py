@@ -103,7 +103,8 @@ def list_decisions(account_id: str | None = None, trade_date: date | None = None
 
 
 @router.get("/decisions/{run_id}")
-def get_decision(run_id: str, _: Principal = Depends(view), session: Session = Depends(get_session)) -> dict:
+def get_decision(run_id: str, request: Request, _: Principal = Depends(view),
+                 session: Session = Depends(get_session)) -> dict:
     run = session.get(DecisionRun, run_id)
     if run is None:
         raise api_error(404, "not_found", "决策不存在")
@@ -111,16 +112,21 @@ def get_decision(run_id: str, _: Principal = Depends(view), session: Session = D
     checks = list(session.scalars(select(RiskCheck).where(RiskCheck.run_id == run_id)))
     approvals = list(session.scalars(select(Approval).where(Approval.intent_id.in_([i.intent_id for i in intents]))
                                      .order_by(Approval.id))) if intents else []
-    targets = session.scalars(select(TargetPosition).where(TargetPosition.run_id == run_id)
-                              .order_by(TargetPosition.rank, TargetPosition.symbol))
+    targets = list(session.scalars(select(TargetPosition).where(TargetPosition.run_id == run_id)
+                                   .order_by(TargetPosition.rank, TargetPosition.symbol)))
     events = session.scalars(select(Event).where(Event.run_id == run_id).order_by(Event.event_id))
+    market = request.app.state.market
+    symbols = sorted({i.symbol for i in intents} | {t.symbol for t in targets})
+    names = market.names(symbols) if symbols and market.available() else {}
     return {**run_view(run),
-            "intents": [intent_view(i, [c for c in checks if c.intent_id == i.intent_id],
-                                    [a for a in approvals if a.intent_id == i.intent_id]) for i in intents],
+            "intents": [{**intent_view(i, [c for c in checks if c.intent_id == i.intent_id],
+                                       [a for a in approvals if a.intent_id == i.intent_id]),
+                         "name": names.get(i.symbol)} for i in intents],
             "run_checks": [{"rule_id": c.rule_id, "decision": c.decision, "message": c.message, "actual": c.actual,
                             "limit": c.limit_value} for c in checks if c.intent_id is None],
-            "targets": [{"symbol": t.symbol, "target_weight": t.target_weight, "target_qty": t.target_qty,
-                         "rank": t.rank, "score": t.score, "explanation": t.explanation} for t in targets],
+            "targets": [{"symbol": t.symbol, "name": names.get(t.symbol), "target_weight": t.target_weight,
+                         "target_qty": t.target_qty, "rank": t.rank, "score": t.score, "explanation": t.explanation}
+                        for t in targets],
             "events": [{"event_id": e.event_id, "level": e.level, "title": e.title, "body": e.body,
                         "symbol": e.symbol, "action_hint": e.action_hint} for e in events]}
 

@@ -1,11 +1,9 @@
 <script lang="ts" setup>
 import type { VbenFormSchema } from '@vben/common-ui';
-import type { BasicOption } from '@vben/types';
 
-import { computed, markRaw } from 'vue';
+import { computed } from 'vue';
 
-import { AuthenticationLogin, SliderCaptcha, z } from '@vben/common-ui';
-import { $t } from '@vben/locales';
+import { AuthenticationLogin, z } from '@vben/common-ui';
 
 import { useAuthStore } from '#/store';
 
@@ -13,86 +11,45 @@ defineOptions({ name: 'Login' });
 
 const authStore = useAuthStore();
 
-const MOCK_USER_OPTIONS: BasicOption[] = [
+// Accounts are created by an administrator: no registration, password
+// recovery, QR or SMS login.  The TOTP field is only needed when enabled.
+const formSchema = computed((): VbenFormSchema[] => [
   {
-    label: 'Super',
-    value: 'vben',
+    component: 'VbenInput',
+    componentProps: { autocomplete: 'username', placeholder: '用户名' },
+    fieldName: 'username',
+    label: '用户名',
+    rules: z.string().min(1, { message: '请输入用户名' }),
   },
   {
-    label: 'Admin',
-    value: 'admin',
+    component: 'VbenInputPassword',
+    componentProps: { autocomplete: 'current-password', placeholder: '密码' },
+    fieldName: 'password',
+    label: '密码',
+    rules: z.string().min(1, { message: '请输入密码' }),
   },
   {
-    label: 'User',
-    value: 'jack',
+    component: 'VbenInput',
+    componentProps: { autocomplete: 'one-time-code', maxlength: 6, placeholder: '两步验证码（未开启可不填）' },
+    fieldName: 'totp',
+    label: '两步验证码',
+    rules: z.string().optional(),
   },
-];
-
-const formSchema = computed((): VbenFormSchema[] => {
-  return [
-    {
-      component: 'VbenSelect',
-      componentProps: {
-        options: MOCK_USER_OPTIONS,
-        placeholder: $t('authentication.selectAccount'),
-      },
-      fieldName: 'selectAccount',
-      label: $t('authentication.selectAccount'),
-      rules: z
-        .string()
-        .min(1, { message: $t('authentication.selectAccount') })
-        .optional()
-        .default('vben'),
-    },
-    {
-      component: 'VbenInput',
-      componentProps: {
-        placeholder: $t('authentication.usernameTip'),
-      },
-      dependencies: {
-        trigger(values, form) {
-          if (values.selectAccount) {
-            const findUser = MOCK_USER_OPTIONS.find(
-              (item) => item.value === values.selectAccount,
-            );
-            if (findUser) {
-              form.setValues({
-                password: '123456',
-                username: findUser.value,
-              });
-            }
-          }
-        },
-        triggerFields: ['selectAccount'],
-      },
-      fieldName: 'username',
-      label: $t('authentication.username'),
-      rules: z.string().min(1, { message: $t('authentication.usernameTip') }),
-    },
-    {
-      component: 'VbenInputPassword',
-      componentProps: {
-        placeholder: $t('authentication.password'),
-      },
-      fieldName: 'password',
-      label: $t('authentication.password'),
-      rules: z.string().min(1, { message: $t('authentication.passwordTip') }),
-    },
-    {
-      component: markRaw(SliderCaptcha),
-      fieldName: 'captcha',
-      rules: z.boolean().refine((value) => value, {
-        message: $t('authentication.verifyRequiredTip'),
-      }),
-    },
-  ];
-});
+]);
 </script>
 
 <template>
   <AuthenticationLogin
     :form-schema="formSchema"
     :loading="authStore.loginLoading"
+    :show-code-login="false"
+    :show-forget-password="false"
+    :show-qrcode-login="false"
+    :show-register="false"
+    :show-remember-me="false"
+    :show-third-party-login="false"
+    sub-title="请使用管理员分配的账号登录"
+    title="Minerva 决策辅助"
     @submit="authStore.authLogin"
   />
 </template>

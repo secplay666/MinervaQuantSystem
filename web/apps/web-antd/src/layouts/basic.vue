@@ -1,219 +1,56 @@
 <script lang="ts" setup>
 import type { NotificationItem } from '@vben/layouts';
 
-import { computed, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { AuthenticationLoginExpiredModal } from '@vben/common-ui';
-import { VBEN_DOC_URL, VBEN_GITHUB_URL } from '@vben/constants';
-import { useWatermark } from '@vben/hooks';
-import { BookOpenText, CircleHelp, SvgGithubIcon } from '@vben/icons';
-import {
-  BasicLayout,
-  LockScreen,
-  Notification,
-  UserDropdown,
-} from '@vben/layouts';
-import { preferences, usePreferences } from '@vben/preferences';
+import { BasicLayout, LockScreen, Notification, UserDropdown } from '@vben/layouts';
+import { preferences } from '@vben/preferences';
 import { useAccessStore, useUserStore } from '@vben/stores';
-import { openWindow } from '@vben/utils';
 
-import { $t } from '#/locales';
+import { metaApi } from '#/api';
+import { useEvents } from '#/composables/use-events';
 import { useAuthStore } from '#/store';
+import { ROLE_LABEL } from '#/utils/format';
 import LoginForm from '#/views/_core/authentication/login.vue';
-
-const notifications = ref<NotificationItem[]>([
-  {
-    id: 1,
-    avatar: 'https://avatar.vercel.sh/vercel.svg?text=VB',
-    date: '3小时前',
-    isRead: true,
-    message: '描述信息描述信息描述信息',
-    title: '收到了 14 份新周报',
-  },
-  {
-    id: 2,
-    avatar: 'https://avatar.vercel.sh/1',
-    date: '刚刚',
-    isRead: false,
-    message: '描述信息描述信息描述信息',
-    title: '朱偏右 回复了你',
-  },
-  {
-    id: 3,
-    avatar: 'https://avatar.vercel.sh/1',
-    date: '2024-01-01',
-    isRead: false,
-    message: '描述信息描述信息描述信息',
-    title: '曲丽丽 评论了你',
-  },
-  {
-    id: 4,
-    avatar: 'https://avatar.vercel.sh/satori',
-    date: '1天前',
-    isRead: false,
-    message: '描述信息描述信息描述信息',
-    title: '代办提醒',
-  },
-  {
-    id: 5,
-    avatar: 'https://avatar.vercel.sh/satori',
-    date: '1天前',
-    isRead: false,
-    message: '描述信息描述信息描述信息',
-    title: '跳转Workspace示例',
-    link: '/workspace',
-  },
-  {
-    id: 6,
-    avatar: 'https://avatar.vercel.sh/satori',
-    date: '1天前',
-    isRead: false,
-    message: '描述信息描述信息描述信息',
-    title: '跳转外部链接示例',
-    link: 'https://doc.vben.pro',
-  },
-]);
 
 const router = useRouter();
 const userStore = useUserStore();
 const authStore = useAuthStore();
 const accessStore = useAccessStore();
-const { destroyWatermark, updateWatermark } = useWatermark();
-const { isDark } = usePreferences();
-const showDot = computed(() =>
-  notifications.value.some((item) => !item.isRead),
-);
+const events = useEvents();
+const environment = ref('');
 
 const menus = computed(() => [
-  {
-    handler: () => {
-      router.push({ name: 'Profile' });
-    },
-    icon: 'lucide:user',
-    text: $t('page.auth.profile'),
-  },
-  {
-    handler: () => {
-      openWindow(VBEN_DOC_URL, {
-        target: '_blank',
-      });
-    },
-    icon: BookOpenText,
-    text: $t('ui.widgets.document'),
-  },
-  {
-    handler: () => {
-      openWindow(VBEN_GITHUB_URL, {
-        target: '_blank',
-      });
-    },
-    icon: SvgGithubIcon,
-    text: 'GitHub',
-  },
-  {
-    handler: () => {
-      openWindow(`${VBEN_GITHUB_URL}/issues`, {
-        target: '_blank',
-      });
-    },
-    icon: CircleHelp,
-    text: $t('ui.widgets.qa'),
-  },
+  { handler: () => router.push({ name: 'Profile' }), icon: 'lucide:user', text: '个人设置' },
+  { handler: () => router.push({ name: 'Events' }), icon: 'lucide:bell', text: '通知中心' },
 ]);
 
-const avatar = computed(() => {
-  return userStore.userInfo?.avatar ?? preferences.app.defaultAvatar;
-});
+const avatar = computed(() => userStore.userInfo?.avatar || preferences.app.defaultAvatar);
+const roleText = computed(() =>
+  (userStore.userInfo?.desc ?? '').split(', ').filter(Boolean).map((r: string) => ROLE_LABEL[r] ?? r).join('、'),
+);
 
 async function handleLogout() {
+  events.stop();
   await authStore.logout(false);
 }
 
-function handleNoticeClear() {
-  notifications.value = [];
+function handleClick(item: NotificationItem) {
+  if (item.id) void events.markRead(item.id);
+  if (item.link) router.push(item.link);
 }
 
-function markRead(id: number | string) {
-  const item = notifications.value.find((item) => item.id === id);
-  if (item) {
-    item.isRead = true;
+onMounted(async () => {
+  events.start();
+  try {
+    environment.value = (await metaApi()).environment_label;
+  } catch {
+    environment.value = '';
   }
-}
-
-function remove(id: number | string) {
-  notifications.value = notifications.value.filter((item) => item.id !== id);
-}
-
-function handleMakeAll() {
-  notifications.value.forEach((item) => (item.isRead = true));
-}
-
-const viewAll = () => {};
-
-const handleClick = (item: NotificationItem) => {
-  // 如果通知项有链接，点击时跳转
-  if (item.link) {
-    navigateTo(item.link, item.query, item.state);
-  }
-};
-
-function navigateTo(
-  link: string,
-  query?: Record<string, any>,
-  state?: Record<string, any>,
-) {
-  if (link.startsWith('http://') || link.startsWith('https://')) {
-    // 外部链接，在新标签页打开
-    window.open(link, '_blank');
-  } else {
-    // 内部路由链接，支持 query 参数和 state
-    router.push({
-      path: link,
-      query: query || {},
-      state,
-    });
-  }
-}
-
-watch(
-  () => ({
-    enable: preferences.app.watermark,
-    content: preferences.app.watermarkContent,
-    isDark: isDark.value,
-  }),
-  async ({ enable, content, isDark: isDarkValue }) => {
-    if (enable) {
-      const watermarkColor = isDarkValue
-        ? 'rgba(255, 255, 255, 0.12)'
-        : 'rgba(0, 0, 0, 0.12)';
-
-      await updateWatermark({
-        advancedStyle: {
-          colorStops: [
-            {
-              color: watermarkColor,
-              offset: 0,
-            },
-            {
-              color: watermarkColor,
-              offset: 1,
-            },
-          ],
-          type: 'linear',
-        },
-        content:
-          content ||
-          `${userStore.userInfo?.username} - ${userStore.userInfo?.realName}`,
-      });
-    } else {
-      destroyWatermark();
-    }
-  },
-  {
-    immediate: true,
-  },
-);
+});
+onBeforeUnmount(() => events.stop());
 </script>
 
 <template>
@@ -228,29 +65,26 @@ watch(
         :avatar
         :menus
         :text="userStore.userInfo?.realName"
-        description="ann.vben@gmail.com"
-        tag-text="Pro"
+        :description="roleText"
+        :tag-text="environment"
         @clear-preferences-and-logout="handleLogout"
         @logout="handleLogout"
       />
     </template>
     <template #notification>
       <Notification
-        :dot="showDot"
-        :notifications="notifications"
-        @clear="handleNoticeClear"
-        @read="(item) => item.id && markRead(item.id)"
-        @remove="(item) => item.id && remove(item.id)"
-        @make-all="handleMakeAll"
+        :dot="events.unread.value > 0"
+        :notifications="events.notifications.value"
+        @clear="events.markAll"
+        @read="(item) => item.id && events.markRead(item.id)"
+        @remove="(item) => item.id && events.markRead(item.id)"
+        @make-all="events.markAll"
         @on-click="handleClick"
-        @view-all="viewAll"
+        @view-all="router.push({ name: 'Events' })"
       />
     </template>
     <template #extra>
-      <AuthenticationLoginExpiredModal
-        v-model:open="accessStore.loginExpired"
-        :avatar
-      >
+      <AuthenticationLoginExpiredModal v-model:open="accessStore.loginExpired" :avatar>
         <LoginForm />
       </AuthenticationLoginExpiredModal>
     </template>

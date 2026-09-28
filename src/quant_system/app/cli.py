@@ -3,7 +3,9 @@
     quant-app init-secret                        # ~/.config/minerva/app.env with a fresh secret (mode 600)
     quant-app user create --username admin --display-name 管理员 --role admin
     quant-app user reset-password --username admin
-    quant-app serve [--host 127.0.0.1] [--port 8000]
+    quant-app tls init --ip 8.159.139.145 --ip 127.0.0.1   # private CA + server certificate
+    quant-app tls show                                       # fingerprints and the app's SPKI pins
+    quant-app serve [--host 127.0.0.1] [--port 8443]         # HTTPS when a server certificate exists
     quant-app openapi --out web/openapi.json     # schema for the frontend's generated client
 """
 
@@ -84,13 +86,39 @@ def command_user_reset(args: argparse.Namespace) -> int:
 
 
 def command_serve(args: argparse.Namespace) -> int:
+    import ssl
+
     import uvicorn
 
     from .main import create_app
+    from .tls import DEFAULT_TLS_DIR
 
-    app = create_app(_settings(args))
-    uvicorn.run(app, host=args.host, port=args.port, proxy_headers=True, forwarded_allow_ips="127.0.0.1",
-                log_level="info")
+    tls_dir = Path(args.tls_dir) if args.tls_dir else DEFAULT_TLS_DIR
+    cert, key = tls_dir / "server.crt", tls_dir / "server.key"
+    use_tls = not args.no_tls and cert.is_file() and key.is_file()
+    options = {"ssl_certfile": str(cert), "ssl_keyfile": str(key), "ssl_version": ssl.PROTOCOL_TLS_SERVER,
+               "ssl_ciphers": "ECDHE+AESGCM:ECDHE+CHACHA20"} if use_tls else {}
+    print(f"serving {'https' if use_tls else 'http'}://{args.host}:{args.port}", flush=True)
+    uvicorn.run(create_app(_settings(args)), host=args.host, port=args.port, proxy_headers=True,
+                forwarded_allow_ips="127.0.0.1", log_level="info", **options)
+    return 0
+
+
+def command_tls_init(args: argparse.Namespace) -> int:
+    from .tls import DEFAULT_TLS_DIR, describe, init_ca, issue_server_certificate
+
+    directory = Path(args.tls_dir) if args.tls_dir else DEFAULT_TLS_DIR
+    init_ca(directory)
+    issue_server_certificate(directory, args.ip or [], args.dns or [])
+    print(json.dumps(describe(directory), ensure_ascii=False, indent=2))
+    return 0
+
+
+def command_tls_show(args: argparse.Namespace) -> int:
+    from .tls import DEFAULT_TLS_DIR, describe
+
+    print(json.dumps(describe(Path(args.tls_dir) if args.tls_dir else DEFAULT_TLS_DIR), ensure_ascii=False,
+                     indent=2))
     return 0
 
 
@@ -121,9 +149,17 @@ def build_parser() -> argparse.ArgumentParser:
     reset = user.add_parser("reset-password")
     reset.add_argument("--username", required=True)
     reset.set_defaults(handler=command_user_reset)
+    parser.add_argument("--tls-dir", help="certificate directory (default ~/.config/minerva/tls)")
+    tls = sub.add_parser("tls").add_subparsers(dest="tls_command", required=True)
+    tls_init = tls.add_parser("init", help="create the CA (once) and (re)issue the server certificate")
+    tls_init.add_argument("--ip", action="append")
+    tls_init.add_argument("--dns", action="append")
+    tls_init.set_defaults(handler=command_tls_init)
+    tls.add_parser("show").set_defaults(handler=command_tls_show)
     serve = sub.add_parser("serve")
     serve.add_argument("--host", default="127.0.0.1")
-    serve.add_argument("--port", type=int, default=8000)
+    serve.add_argument("--port", type=int, default=8443)
+    serve.add_argument("--no-tls", action="store_true", help="plain HTTP even if a certificate exists")
     serve.set_defaults(handler=command_serve)
     openapi = sub.add_parser("openapi")
     openapi.add_argument("--out", required=True)

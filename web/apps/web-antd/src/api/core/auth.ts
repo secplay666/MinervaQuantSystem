@@ -1,55 +1,65 @@
 import { baseRequestClient, requestClient } from '#/api/request';
 
 export namespace AuthApi {
-  /** 登录接口参数 */
   export interface LoginParams {
-    password?: string;
-    username?: string;
+    password: string;
+    totp?: string;
+    username: string;
   }
 
-  /** 登录接口返回值 */
-  export interface LoginResult {
-    accessToken: string;
+  export interface Me {
+    display_name: string;
+    id: number;
+    is_active: boolean;
+    last_login_at: null | string;
+    must_change_password: boolean;
+    permissions: string[];
+    roles: string[];
+    totp_enabled: boolean;
+    username: string;
   }
 
-  export interface RefreshTokenResult {
-    data: string;
-    status: number;
+  export interface Tokens {
+    access_token: string;
+    expires_in: number;
+    refresh_token: string;
+    token_type: string;
+    user: Me;
   }
 }
 
-/**
- * 登录
- */
 export async function loginApi(data: AuthApi.LoginParams) {
-  return requestClient.post<AuthApi.LoginResult>('/auth/login', data);
+  return baseRequestClient.post<AuthApi.Tokens>('/auth/login', data);
 }
 
-/**
- * 刷新accessToken
- */
-export async function refreshTokenApi() {
-  return baseRequestClient.post<AuthApi.RefreshTokenResult>(
-    '/auth/refresh',
-    undefined,
-    {
-      withCredentials: true,
-    },
-  );
+export async function refreshTokenApi(refreshToken: string) {
+  return baseRequestClient.post<AuthApi.Tokens>('/auth/refresh', { refresh_token: refreshToken });
 }
 
-/**
- * 退出登录
- */
-export async function logoutApi() {
-  return baseRequestClient.post('/auth/logout', undefined, {
-    withCredentials: true,
+export async function logoutApi(refreshToken: null | string) {
+  if (!refreshToken) return;
+  return baseRequestClient.post('/auth/logout', { refresh_token: refreshToken });
+}
+
+export async function meApi() {
+  return requestClient.get<AuthApi.Me>('/auth/me');
+}
+
+export async function changePasswordApi(oldPassword: string, newPassword: string) {
+  return requestClient.post<AuthApi.Tokens>('/auth/password', {
+    new_password: newPassword,
+    old_password: oldPassword,
   });
 }
 
-/**
- * 获取用户权限码
- */
-export async function getAccessCodesApi() {
-  return requestClient.get<string[]>('/auth/codes');
+export async function totpSetupApi() {
+  return requestClient.post<{ secret: string; uri: string }>('/auth/totp/setup');
+}
+
+export async function totpEnableApi(secret: string, code: string) {
+  return requestClient.post('/auth/totp/enable', { code, secret });
+}
+
+export async function totpDisableApi(password: string) {
+  return requestClient.post('/auth/totp/disable', { password });
 }

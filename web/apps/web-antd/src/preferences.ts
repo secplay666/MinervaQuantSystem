@@ -1,74 +1,60 @@
 import {
-  appCopyrightPreferences,
   defineOverridesPreferences,
   definePreferencesExtension,
 } from '@vben/preferences';
 
 interface WebAntdPreferencesExtension {
   defaultTableSize: number;
-  enableFormFullscreen: boolean;
-  reportTitle: string;
-  tenantMode: 'multi' | 'single';
 }
 
 /**
- * @description 项目配置文件
- * 只需要覆盖项目中的一部分配置，不需要的配置不用覆盖，会自动使用默认配置
- * !!! 更改配置后请清空缓存，否则可能不生效
+ * Minerva preferences (only overrides; the rest are vben defaults).
+ * Clear the browser cache after changing them.
  */
 export const overridesPreferences = defineOverridesPreferences({
-  // overrides
   app: {
+    accessMode: 'frontend',
+    defaultHomePath: '/home',
+    enableCheckUpdates: false,
+    enablePreferences: true,
+    enableRefreshToken: true,
+    loginExpiredMode: 'page',
     name: import.meta.env.VITE_APP_TITLE,
+    watermark: false,
   },
-  copyright: appCopyrightPreferences,
+  copyright: {
+    companyName: 'Minerva',
+    companySiteLink: '',
+    date: '2026',
+    enable: true,
+    icp: '',
+    icpLink: '',
+  },
+  logo: {
+    enable: true,
+    source: '/favicon.ico',
+  },
+  widget: {
+    globalSearch: false,
+    languageToggle: false,
+    lockScreen: true,
+    notification: true,
+    refresh: true,
+    sidebarToggle: true,
+    themeToggle: true,
+  },
 });
 
-export const preferencesExtension =
-  definePreferencesExtension<WebAntdPreferencesExtension>({
-    tabLabel: 'preferences.antd.tabLabel',
-    title: 'preferences.antd.title',
-    fields: [
-      {
-        component: 'switch',
-        defaultValue: true,
-        key: 'enableFormFullscreen',
-        label: 'preferences.antd.fields.enableFormFullscreen.label',
-        tip: 'preferences.antd.fields.enableFormFullscreen.tip',
-      },
-      {
-        component: 'select',
-        defaultValue: 'single',
-        key: 'tenantMode',
-        label: 'preferences.antd.fields.tenantMode.label',
-        options: [
-          {
-            label: 'preferences.antd.fields.tenantMode.options.single.label',
-            value: 'single',
-          },
-          {
-            label: 'preferences.antd.fields.tenantMode.options.multi.label',
-            value: 'multi',
-          },
-        ],
-      },
-      {
-        component: 'number',
-        componentProps: {
-          max: 200,
-          min: 10,
-          step: 10,
-        },
-        defaultValue: 20,
-        key: 'defaultTableSize',
-        label: 'preferences.antd.fields.defaultTableSize.label',
-      },
-      {
-        component: 'input',
-        defaultValue: '',
-        key: 'reportTitle',
-        label: 'preferences.antd.fields.reportTitle.label',
-        placeholder: 'preferences.antd.fields.reportTitle.placeholder',
-      },
-    ],
-  });
+export const preferencesExtension = definePreferencesExtension<WebAntdPreferencesExtension>({
+  tabLabel: '表格',
+  title: '表格偏好',
+  fields: [
+    {
+      component: 'number',
+      componentProps: { max: 200, min: 10, step: 10 },
+      defaultValue: 20,
+      key: 'defaultTableSize',
+      label: '默认每页条数',
+    },
+  ],
+});

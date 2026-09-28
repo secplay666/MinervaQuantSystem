@@ -32,12 +32,14 @@ optimizer = [
 app = [
   "alembic>=1.20,<2",
   "argon2-cffi>=25,<26",
+  "cryptography>=46,<51",  # private CA and server certificate (app/tls.py)
   "fastapi>=0.118,<1",
   "pyjwt>=2.10,<3",
   "pyotp>=2.9,<3",
   "python-multipart>=0.0.20",
   "sqlalchemy>=2.1,<2.2",
   "uvicorn>=0.37,<1",
+  "websockets>=15,<17",  # uvicorn WebSocket support (/ws/events)
 ]
 
 [project.scripts]

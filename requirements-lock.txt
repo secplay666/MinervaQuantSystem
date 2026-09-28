@@ -3,8 +3,8 @@ alembic==1.20.0
 annotated-doc==0.0.5
 annotated-types==0.8.0
 anyio==4.15.1
-argon2-cffi-bindings==26.1.0
 argon2-cffi==25.1.0
+argon2-cffi-bindings==26.1.0
 beautifulsoup4==4.15.0
 certifi==2026.7.22
 cffi==2.1.0
@@ -12,6 +12,7 @@ charset-normalizer==3.4.9
 click==8.5.0
 cloudpickle==3.1.2
 colorama==0.4.6 ; sys_platform == "win32"
+cryptography==50.0.1
 curl_cffi==0.15.0
 decorator==5.3.1
 duckdb==1.5.5
@@ -67,4 +68,5 @@ tzdata==2026.3
 urllib3==2.7.0
 uvicorn==0.54.0
 webencodings==0.5.1
+websockets==16.1.1
 xlrd==2.0.2

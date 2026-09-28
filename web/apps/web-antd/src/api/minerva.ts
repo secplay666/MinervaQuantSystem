@@ -1,0 +1,225 @@
+/**
+ * Minerva business API (/api/v1).  Money is integer fen, quantities shares,
+ * dates ISO strings; see docs/design/stage4-app-design.md.
+ */
+import { requestClient } from '#/api/request';
+
+export interface Gate {
+  detail: Record<string, any>;
+  gate: string;
+  hint: null | string;
+  message: string;
+  passed: boolean;
+}
+
+export interface Check {
+  actual: null | string;
+  decision: 'pass' | 'reject' | 'warn';
+  limit: null | string;
+  message: string;
+  rule_id: string;
+}
+
+export interface Intent {
+  checks: Check[];
+  est_fees_fen: number;
+  est_notional_fen: number;
+  execute_on: string;
+  history: { action: string; actor: string; at: string; qty_after: null | number; qty_before: null | number; reason: null | string }[];
+  intent_id: string;
+  limit_down_fen: null | number;
+  limit_up_fen: null | number;
+  name?: null | string;
+  proposed_qty: number;
+  qty: number;
+  rank: null | number;
+  reason: string;
+  ref_price_fen: number;
+  risk: 'pass' | 'reject' | 'warn';
+  run_id: string;
+  seq: number;
+  side: 'buy' | 'sell';
+  status: string;
+  symbol: string;
+  valid_until: string;
+}
+
+export interface DecisionRun {
+  account_id: string;
+  cash_fen: null | number;
+  config_hash: null | string;
+  created_at: string;
+  created_by: string;
+  data_version: null | string;
+  gates: Gate[];
+  kind: 'forced' | 'monitor' | 'rebalance';
+  nav_fen: null | number;
+  next_session: null | string;
+  positions: null | number;
+  reason: null | string;
+  run_id: string;
+  status: 'blocked' | 'complete' | 'failed' | 'superseded';
+  strategy_id: null | string;
+  summary: null | Record<string, any>;
+  trade_date: string;
+}
+
+export interface DecisionDetail extends DecisionRun {
+  events: { action_hint: null | string; body: null | string; event_id: string; level: string; symbol: null | string; title: string }[];
+  intents: Intent[];
+  run_checks: Check[];
+  targets: { explanation: Record<string, any>; name?: null | string; rank: null | number; score: null | number; symbol: string; target_qty: null | number; target_weight: number }[];
+}
+
+export interface Account {
+  account_id: string;
+  holdings_confirmed_date: null | string;
+  initial_cash_fen: number;
+  is_active: boolean;
+  latest: null | { cash_fen: number; market_value_fen: number; nav_fen: number; positions: number; trade_date: string };
+  mode: 'manual' | 'paper';
+  name: string;
+  note: null | string;
+  start_date: string;
+  strategy_config: string;
+}
+
+export interface Holding {
+  close: null | number;
+  cost_fen: number;
+  market_value_fen: null | number;
+  name: null | string;
+  pnl_fen: null | number;
+  qty: number;
+  sellable: number;
+  symbol: string;
+  weight: null | number;
+}
+
+export interface AccountDetail extends Account {
+  cash_fen: number;
+  holdings: Holding[];
+  market_value_fen: number;
+  nav_fen: number;
+}
+
+export interface EventItem {
+  account_id: null | string;
+  action_hint: null | string;
+  at: string;
+  body: null | string;
+  category: string;
+  event_id: string;
+  level: 'critical' | 'info' | 'warning';
+  read: boolean;
+  run_id: null | string;
+  symbol: null | string;
+  title: string;
+  trade_date: null | string;
+}
+
+export interface Bar {
+  amount: null | number;
+  close: number;
+  high: number;
+  low: number;
+  open: number;
+  pct_change?: null | number;
+  trade_date: string;
+  volume: null | number;
+}
+
+export interface Overview {
+  breadth: { amount_cny: number; down: number; flat: number; limit_down: number; limit_up: number; traded: number; up: number };
+  indices: { change_pct: null | number; close: number; name: string; symbol: string }[];
+  industries: { change_pct: number; count: number; name: string }[];
+  previous_session: null | string;
+  session: string;
+}
+
+export interface ManagedUser {
+  display_name: string;
+  id: number;
+  is_active: boolean;
+  last_login_at: null | string;
+  must_change_password: boolean;
+  permissions: string[];
+  roles: string[];
+  temporary_password?: string;
+  totp_enabled: boolean;
+  username: string;
+}
+
+// -- system --------------------------------------------------------------------------------
+export const metaApi = () => requestClient.get<{ environment: string; environment_label: string; name: string }>('/meta');
+export const systemStatusApi = () => requestClient.get<Record<string, any>>('/system/status');
+
+// -- decisions -----------------------------------------------------------------------------
+export const decisionsApi = (params: { account_id?: string; include_superseded?: boolean; limit?: number; trade_date?: string }) =>
+  requestClient.get<DecisionRun[]>('/decisions', { params });
+export const decisionApi = (runId: string) => requestClient.get<DecisionDetail>(`/decisions/${runId}`);
+export const approveIntentApi = (id: string, reason?: string) => requestClient.post<Intent>(`/intents/${id}/approve`, { reason });
+export const rejectIntentApi = (id: string, reason: string) => requestClient.post<Intent>(`/intents/${id}/reject`, { reason });
+export const modifyIntentApi = (id: string, qty: number, reason: string) =>
+  requestClient.post<Intent>(`/intents/${id}/modify`, { qty, reason });
+export const overrideIntentApi = (id: string, reason: string) => requestClient.post<Intent>(`/intents/${id}/override`, { reason });
+export const approveAllApi = (runId: string, includeWarnings: boolean) =>
+  requestClient.post<{ approved: number }>(`/decisions/${runId}/approve-all`, { include_warnings: includeWarnings });
+export const triggerDecisionApi = (accountId: string, reason: string, rerun = false) =>
+  requestClient.post<{ id: string; status: string }>('/decisions/trigger', { account_id: accountId, reason, rerun });
+export const jobApi = (id: string) => requestClient.get<{ result: any; status: string }>(`/jobs/${id}`);
+
+// -- accounts ------------------------------------------------------------------------------
+export const accountsApi = () => requestClient.get<Account[]>('/accounts');
+export const accountApi = (id: string) => requestClient.get<AccountDetail>(`/accounts/${id}`);
+export const createAccountApi = (body: Record<string, any>) => requestClient.post<Account>('/accounts', body);
+export const patchAccountApi = (id: string, body: Record<string, any>) =>
+  requestClient.request<Account>(`/accounts/${id}`, { data: body, method: 'PATCH' });
+export const accountNavApi = (id: string) =>
+  requestClient.get<{ cash_fen: number; market_value_fen: number; nav_fen: number; positions: number; trade_date: string }[]>(`/accounts/${id}/nav`);
+export const accountEventsApi = (id: string) => requestClient.get<Record<string, any>[]>(`/accounts/${id}/events`);
+export const accountFillsApi = (id: string) => requestClient.get<Record<string, any>[]>(`/accounts/${id}/fills`);
+export const addFillApi = (id: string, body: Record<string, any>) => requestClient.post(`/accounts/${id}/fills`, body);
+export const holdingsPreviewApi = (id: string, body: Record<string, any>) =>
+  requestClient.post<{ batch_id: string; cash_after_fen: number; cash_before_fen: number; diff: { change: number; current: number; new: number; symbol: string }[]; errors: string[] }>(
+    `/accounts/${id}/holdings/preview`, body);
+export const holdingsCommitApi = (id: string, batchId: string, reason: string) =>
+  requestClient.post(`/accounts/${id}/holdings/commit`, { batch_id: batchId, reason });
+export const reverseEventApi = (eventId: string, reason: string) =>
+  requestClient.post(`/position-events/${eventId}/reverse`, { reason });
+
+// -- events --------------------------------------------------------------------------------
+export const eventsApi = (params: { account_id?: string; category?: string; level?: string; limit?: number; unread?: boolean }) =>
+  requestClient.get<{ items: EventItem[]; unread: number }>('/events', { params });
+export const readEventApi = (id: string) => requestClient.post(`/events/${id}/read`);
+export const readAllEventsApi = () => requestClient.post('/events/read-all');
+
+// -- market --------------------------------------------------------------------------------
+export const overviewApi = (tradeDate?: string) => requestClient.get<Overview>('/market/overview', { params: { trade_date: tradeDate } });
+export const indexBarsApi = (symbol: string, limit = 250) =>
+  requestClient.get<Bar[]>(`/market/indices/${symbol}/bars`, { params: { limit } });
+export const searchApi = (q: string) => requestClient.get<{ board: string; name: string; symbol: string }[]>('/instruments/search', { params: { q } });
+export const instrumentApi = (symbol: string) => requestClient.get<Record<string, any>>(`/instruments/${symbol}`);
+export const barsApi = (symbol: string, adjust = 'qfq', limit = 250) =>
+  requestClient.get<Bar[]>(`/instruments/${symbol}/bars`, { params: { adjust, limit } });
+export const fundamentalsApi = (symbol: string) => requestClient.get<Record<string, any>[]>(`/instruments/${symbol}/fundamentals`);
+
+// -- administration ------------------------------------------------------------------------
+export const usersApi = () => requestClient.get<ManagedUser[]>('/users');
+export const createUserApi = (body: { display_name: string; roles: string[]; username: string }) =>
+  requestClient.post<ManagedUser>('/users', body);
+export const patchUserApi = (id: number, body: { display_name?: string; is_active?: boolean; roles?: string[] }) =>
+  requestClient.request<ManagedUser>(`/users/${id}`, { data: body, method: 'PATCH' });
+export const resetPasswordApi = (id: number) => requestClient.post<{ temporary_password: string }>(`/users/${id}/reset-password`);
+export const unlockUserApi = (id: number) => requestClient.post(`/users/${id}/unlock`);
+export const rolesApi = () =>
+  requestClient.get<{ builtin: boolean; code: string; description: null | string; name: string; permissions: string[] }[]>('/roles');
+export const permissionsApi = () => requestClient.get<{ code: string; group: string; name: string }[]>('/permissions');
+export const createRoleApi = (body: { code: string; description?: string; name: string; permissions: string[] }) =>
+  requestClient.post('/roles', body);
+export const setRolePermissionsApi = (code: string, permissions: string[]) =>
+  requestClient.put(`/roles/${code}/permissions`, { permissions });
+export const sessionsApi = () => requestClient.get<Record<string, any>[]>('/sessions');
+export const revokeSessionApi = (id: number) => requestClient.delete(`/sessions/${id}`);
+export const auditApi = (params: { action?: string; actor?: string; before_id?: number; limit?: number }) =>
+  requestClient.get<Record<string, any>[]>('/audit', { params });

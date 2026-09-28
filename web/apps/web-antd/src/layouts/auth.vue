@@ -4,8 +4,6 @@ import { computed } from 'vue';
 import { AuthPageLayout } from '@vben/layouts';
 import { preferences } from '@vben/preferences';
 
-import { $t } from '#/locales';
-
 const appName = computed(() => preferences.app.name);
 const logo = computed(() => preferences.logo.source);
 const logoDark = computed(() => preferences.logo.sourceDark);
@@ -16,10 +14,7 @@ const logoDark = computed(() => preferences.logo.sourceDark);
     :app-name="appName"
     :logo="logo"
     :logo-dark="logoDark"
-    :page-description="$t('authentication.pageDesc')"
-    :page-title="$t('authentication.pageTitle')"
-  >
-    <!-- 自定义工具栏 -->
-    <!-- <template #toolbar></template> -->
-  </AuthPageLayout>
+    page-description="盘后自动决策 · 人工审核 · 持仓与风险监控"
+    page-title="A 股研究与交易决策辅助"
+  />
 </template>

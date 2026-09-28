@@ -41,9 +41,12 @@
     "@vben/types": "workspace:*",
     "@vben/utils": "workspace:*",
     "@vueuse/core": "catalog:",
+    "@vueuse/integrations": "catalog:",
     "ant-design-vue": "catalog:",
     "dayjs": "catalog:",
+    "klinecharts": "^10.0.3",
     "pinia": "catalog:",
+    "qrcode": "catalog:",
     "vue": "catalog:",
     "vue-router": "catalog:"
   }

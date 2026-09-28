@@ -266,9 +266,14 @@ quant-decision show --account paper1            # 最近的决策和交易清单
 ```bash
 quant-app init-secret                                   # 生成 ~/.config/minerva/app.env（签名密钥，权限 600，不进仓库）
 quant-app user create --username admin --display-name 管理员 --role admin   # 打印一次性临时密码
-quant-app serve --host 127.0.0.1 --port 8000             # 接口文档：http://127.0.0.1:8000/api/docs
+quant-app tls init --ip <公网IP> --ip 127.0.0.1           # 自建 CA 与服务器证书（~/.config/minerva/tls）
+quant-app tls show                                       # 证书指纹、App 固定用的 SPKI 值
+MINERVA_WEB_DIR=web/apps/web-antd/dist quant-app serve --port 8443   # HTTPS；接口文档 /api/docs
 quant-app openapi --out web/openapi.json                 # 导出接口定义，供前端生成客户端
 ```
+
+- **前端**：在 [web/](web/README.md)，基于 vue-vben-admin；构建后由 `quant-app serve` 同源托管。
+- **PC 端证书**：把 `~/.config/minerva/tls/ca.crt` 复制到电脑，双击后选择"安装证书 → 当前用户 → 受信任的根证书颁发机构"。
 
 - **接口**：均在 `/api/v1` 下，包括：
   - 认证、用户与角色、审计；
@@ -279,7 +284,7 @@ quant-app openapi --out web/openapi.json                 # 导出接口定义，
 - **安全**（[ADR-010](docs/adr/ADR-010-frontend-api-access.md)）：
   - 密码用 argon2id 哈希；访问令牌 15 分钟过期；刷新令牌 7 天，每次使用后轮换，发现旧令牌被重复使用时吊销该用户的全部会话。
   - 连续 5 次登录失败锁定 15 分钟；首次登录必须修改临时密码；可选 TOTP 两步验证。
-  - 服务只监听 127.0.0.1，外网经 Caddy（TLS）和 frp 访问。
+  - 服务只监听 127.0.0.1，外网经 frp 的 TCP 转发访问，TLS 由服务自身终止（自建 CA）。
 - **权限**：
   - 内置角色：管理员、审核员、只读；
   - 自定义角色：可以逐项开关权限；

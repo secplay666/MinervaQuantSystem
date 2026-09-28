@@ -1,5 +1,5 @@
 {
-  "name": "vben-admin-monorepo",
+  "name": "minerva-web",
   "version": "5.7.0",
   "private": true,
   "keywords": [
@@ -55,7 +55,6 @@
     "lint": "vsh lint",
     "postinstall": "pnpm -r run --if-present stub",
     "preinstall": "npx only-allow pnpm",
-    "prepare": "is-ci || pnpm exec lefthook install",
     "preview": "turbo-run preview",
     "publint": "vsh publint",
     "reinstall": "pnpm run clean -- --del-lock && pnpm install",
@@ -91,7 +90,6 @@
     "eslint": "catalog:",
     "happy-dom": "catalog:",
     "is-ci": "catalog:",
-    "lefthook": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
     "oxlint-tsgolint": "catalog:",
@@ -110,5 +108,6 @@
     "node": "^22.18.0 || ^24.12.0",
     "pnpm": ">=11.0.0"
   },
-  "packageManager": "pnpm@11.16.0"
+  "packageManager": "pnpm@11.16.0",
+  "description": "Minerva decision-support frontend (PC web and Android app), based on vue-vben-admin 5.7.0"
 }

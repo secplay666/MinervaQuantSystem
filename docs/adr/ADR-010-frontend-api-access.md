@@ -95,3 +95,19 @@
 - PC 端要手动安装一次根证书。以后有了域名和备案，可以换成公共证书，App 同时更新固定的公钥。
 - 前端引入 Node/pnpm 工具链。服务器上把 Node 以用户态安装在 `~/.local`，不影响系统。
 - SQLite 只允许单个写入者。API 和决策作业通过短事务和 WAL 共存。进入阶段 5 之前迁到 PostgreSQL。
+
+## 修订（2026-09-28，P3/P4 实现时）
+
+1. **TLS 不再用 Caddy**：改由 uvicorn 直接终止 TLS，证书来自我们自建的 CA（`quant-app tls init --ip <公网IP>`，代码在 `app/tls.py`，依赖 `cryptography` 库）。
+   - 私钥和证书放在 `~/.config/minerva/tls/`，私钥文件权限 600，CA 私钥不离开服务器。
+   - 前端构建产物也由同一个进程同源托管（`MINERVA_WEB_DIR`），附带 gzip 压缩和安全响应头。
+   - 这样少了一个需要下载、升级的二进制程序，部署只剩一个 systemd 服务。
+   - 接入路径变为：`浏览器/App ─TLS─▶ frps ─TCP─▶ frpc ─▶ 127.0.0.1:8443（quant-app serve）`。
+   - 服务器证书有效期 397 天（客户端对叶子证书的上限），到期前用同一个 CA 重新签发即可，各设备不必重装根证书。
+   - Windows 自带的 curl 默认要求吊销检查，所以对私有 CA 会失败（需要加 `--ssl-no-revoke`）。浏览器对缺少吊销信息的证书按宽松方式处理，不受影响。
+2. **WebSocket**：uvicorn 需要 `websockets` 库才能处理 WebSocket 升级请求，已加入 `app` 依赖分组。TestClient 覆盖不到这一层，是在浏览器实测时发现的。
+3. **前端的实际形态**：
+   - 位于 `web/`：vben 5.7.0，只保留 `apps/web-antd`；去掉了 git 钩子，以免它往本仓库安装提交检查。
+   - 采用前端路由模式：菜单按权限码过滤，`/auth/me` 返回的权限列表填进 vben 的 `roles` 字段。
+   - 生产构建使用 hash 路由。
+   - 手机端 `apps/mobile` 在 P5 加入。

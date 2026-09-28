@@ -13,6 +13,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -42,6 +43,7 @@ def create_app(settings: AppSettings) -> FastAPI:
     app.state.sessions = sessions
     app.state.market = MarketQueries(settings.market_db, settings.root / "configs" / "market_rules" / "cn_a_share.json")
     app.state.jobs = {}
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
     if settings.cors_origins:
         app.add_middleware(CORSMiddleware, allow_origins=list(settings.cors_origins), allow_credentials=False,
                            allow_methods=["*"], allow_headers=["*"])
