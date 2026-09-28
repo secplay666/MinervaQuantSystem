@@ -227,6 +227,40 @@ df = con.execute(
 - **缓存**：原始因子值缓存在 `data/features/`，按数据指纹、因子定义和代码哈希失效。
 - **回归测试**：多因子流程使用 `tests/fixtures/multifactor_cn/`（约 150 只股票，由 `scripts/extract_multifactor_fixture.py` 生成）。
 
+## 每日决策（阶段 4）
+
+计划、边界与设计见：
+- [阶段 4 计划](docs/plans/stage4-daily-decision-support.md)
+- [ADR-008](docs/adr/ADR-008-review-and-execution-boundary.md)
+- [ADR-010](docs/adr/ADR-010-frontend-api-access.md)
+- [应用设计](docs/design/stage4-app-design.md)
+
+```bash
+pip install -e ".[app]"                         # SQLAlchemy、Alembic（业务库）
+quant-decision db upgrade                       # 创建或升级业务库 data/app/app.sqlite
+quant-decision account create --id paper1 --name 模拟账户 --mode paper --cash 10000000
+quant-decision account list
+quant-decision daily                            # 对最新收盘交易日做决策（每日任务在采集后自动运行）
+quant-decision daily --force-rebalance "新账户建仓"   # 非调仓日强制调仓，原因记入审计
+quant-decision show --account paper1            # 最近的决策和交易清单
+```
+
+- **账户**：
+  - `paper` 模拟账户按审核通过的意图模拟成交（P6）；
+  - `manual` 手工账户的持仓来自录入和回填；
+  - 每个账户独立决策，应专用于一个策略。
+- **调仓日**：由策略日程决定（主策略为月末）。判断月末用采集保存的完整交易所日历，因为数据的最后一天不能当作月末。
+- **闸门**：出现以下情况时不生成交易意图，只记录事件：
+  - 采集不完整或交易日不对（G1）；
+  - 数据版本不一致（G2）；
+  - 信号数量突变（G3）；
+  - 手工账户的持仓过期（G4）；
+  - 目标组合异常（G5）。
+- **交易意图**：数量与回测的换算规则相同。每条附下单前检查：涨跌停、停牌、除权、成交量占比、单股权重、资金、风险警示。审核截止为执行日 15:00。
+- **产物**：
+  - 业务库 `data/app/app.sqlite`；
+  - 报告 `artifacts/decisions/<run_id>/`，包括 `report.md`、`intents.csv`、`targets.csv` 和 `manifest.json`。同一输入重跑时，报告和 CSV 逐字节相同。
+
 ## 数据层约束
 
 - 原始层不可变，每次采集使用独立的 `run_id`。标准层可以从原始层完整重建（[ADR-005](docs/adr/ADR-005-storage.md)）。

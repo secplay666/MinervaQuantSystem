@@ -10,9 +10,10 @@
 # (session_final_time in configs/data_platform.json).  One run at a time.
 #
 # Output: logs/daily/<date>.log (full log) and logs/daily/history.tsv (one line
-# per run).  After the ingest, scripts/backup_data.sh snapshots the data to the
-# backup disk.  Exit code: 0 complete or skipped, 2 partial/failed (see the
-# quality report named in the log), 3 complete but the backup failed.
+# per run).  After the ingest, `quant-decision daily` builds the decisions and
+# scripts/backup_data.sh snapshots the data to the backup disk.  Exit code:
+# 0 complete or skipped, 2 ingest partial/failed (see the quality report named
+# in the log), 3 backup failed, 4 a decision run failed.
 set -uo pipefail
 export TZ=Asia/Shanghai
 export TQDM_DISABLE=1   # AKShare's per-request progress bars would flood the log
@@ -65,6 +66,17 @@ EOF
 
 find "$LOG_DIR" -name '*.log' -mtime +"$KEEP_DAYS" -delete
 
+# Decisions for every active account (ADR-008).  Runs even after a failed
+# ingest: its gates then record a blocked decision and an event, instead of
+# the decision silently not happening.
+decision_rc=0
+if [[ -x "$REPO/.venv/bin/quant-decision" ]]; then
+  note "== decision"
+  "$REPO/.venv/bin/quant-decision" --root "$REPO" --actor system daily >> "$LOG" 2>&1
+  decision_rc=$?
+  note "== decision exit $decision_rc"
+fi
+
 # Snapshot to the backup disk after every ingest that ran, complete or not: raw
 # responses of a partial run are worth keeping too.  A missed backup is caught
 # up by the next one (every snapshot is complete).
@@ -72,5 +84,6 @@ note "== backup"
 QUANT_UPDATE_LOCKED=1 "$REPO/scripts/backup_data.sh" >> "$LOG" 2>&1
 backup_rc=$?
 note "== backup exit $backup_rc"
+(( rc == 0 && decision_rc != 0 )) && rc=4
 (( rc == 0 && backup_rc != 0 )) && rc=3
 exit "$rc"

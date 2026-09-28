@@ -8,8 +8,10 @@
 #   scripts/backup_data.sh          # snapshot for today (a rerun replaces it)
 #
 # Backed up: data/raw, manifests, reports, checkpoints, quarantine, canonical
-# (restoring it avoids an 11-minute rebuild), artifacts (the experiment
-# registry through SQLite's backup API) and logs.  Not backed up, because they
+# (restoring it avoids an 11-minute rebuild), artifacts, the business
+# database data/app, and logs.  The SQLite databases (experiment registry,
+# business database) are copied through SQLite's online backup API, so the
+# copy is consistent even while the API is writing.  Not backed up, because they
 # are regenerated: market.duckdb, features, staging, archive.
 # Keeps the last KEEP_DAILY snapshots plus the first snapshot of each of the
 # last KEEP_MONTHLY months.  Restore: see README (备份与恢复).
@@ -25,8 +27,8 @@ SNAPSHOTS="$DEST/snapshots"
 LOG_DIR="$REPO/logs/backup"
 KEEP_DAILY=14
 KEEP_MONTHLY=12
-SOURCES=(data/raw data/manifests data/reports data/checkpoints data/quarantine data/canonical artifacts logs)
-REGISTRY=artifacts/registry.sqlite
+SOURCES=(data/raw data/manifests data/reports data/checkpoints data/quarantine data/canonical data/app artifacts logs)
+DATABASES=(artifacts/registry.sqlite data/app/app.sqlite)
 
 mkdir -p "$LOG_DIR" "$REPO/logs/daily"
 fail() { echo "backup failed: $*" >&2; exit 1; }
@@ -56,17 +58,20 @@ link=()
 cd "$REPO" || fail "cannot enter $REPO"
 present=()
 for source in "${SOURCES[@]}"; do [[ -e "$source" ]] && present+=("$source"); done
-rsync -a --relative "${link[@]}" --exclude="/$REGISTRY*" "${present[@]}" "$partial/" \
-  || fail "rsync exited $?"
+excludes=()
+for database in "${DATABASES[@]}"; do excludes+=(--exclude="/$database*"); done
+rsync -a --relative "${link[@]}" "${excludes[@]}" "${present[@]}" "$partial/" || fail "rsync exited $?"
 # Nothing may be left to transfer: the snapshot equals the checkout right now.
-pending=$(rsync -a --relative --dry-run --itemize-changes --exclude="/$REGISTRY*" "${present[@]}" "$partial/")
+pending=$(rsync -a --relative --dry-run --itemize-changes "${excludes[@]}" "${present[@]}" "$partial/")
 [[ -z "$pending" ]] || fail "snapshot differs from the checkout: $(head -n 3 <<< "$pending")"
-if [[ -f "$REGISTRY" ]]; then  # consistent copy even if a research run is writing
+for database in "${DATABASES[@]}"; do  # consistent copies even while being written
+  [[ -f "$database" ]] || continue
+  mkdir -p "$partial/$(dirname "$database")"
   "$REPO/.venv/bin/python" -c 'import sqlite3, sys
 src, dst = sqlite3.connect(sys.argv[1]), sqlite3.connect(sys.argv[2])
 with dst:
-    src.backup(dst)' "$REGISTRY" "$partial/$REGISTRY" || fail "registry backup failed"
-fi
+    src.backup(dst)' "$database" "$partial/$database" || fail "backup of $database failed"
+done
 
 if [[ -d "$target" ]]; then
   mv "$target" "$SNAPSHOTS/.$today.old" && rm -rf "$SNAPSHOTS/.$today.old"
