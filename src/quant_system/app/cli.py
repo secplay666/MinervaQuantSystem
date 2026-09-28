@@ -78,6 +78,7 @@ def command_user_reset(args: argparse.Namespace) -> int:
         password = temporary_password()
         user.password_hash, user.must_change_password = hash_password(password), True
         user.failed_logins, user.locked_until = 0, None
+        user.totp_secret = None  # a lost authenticator is the usual reason for a reset
         for token in session.scalars(select(RefreshToken).where(RefreshToken.user_id == user.id,
                                                                 RefreshToken.revoked_at.is_(None))):
             from .db.base import utc_now
@@ -102,8 +103,9 @@ def command_serve(args: argparse.Namespace) -> int:
     options = {"ssl_certfile": str(cert), "ssl_keyfile": str(key), "ssl_version": ssl.PROTOCOL_TLS_SERVER,
                "ssl_ciphers": "ECDHE+AESGCM:ECDHE+CHACHA20"} if use_tls else {}
     print(f"serving {'https' if use_tls else 'http'}://{args.host}:{args.port}", flush=True)
-    uvicorn.run(create_app(_settings(args)), host=args.host, port=args.port, proxy_headers=True,
-                forwarded_allow_ips="127.0.0.1", log_level="info", **options)
+    # No proxy headers: frp forwards TCP, so X-Forwarded-For would come from the client itself.
+    uvicorn.run(create_app(_settings(args)), host=args.host, port=args.port, proxy_headers=False,
+                log_level="info", **options)
     return 0
 
 

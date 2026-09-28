@@ -18,6 +18,7 @@ Checks (pass | warn | reject):
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -73,6 +74,30 @@ class IntentPlan:
     target_qty: dict[str, int]
     skipped: list[tuple[str, float, str]]
     within_band: list[str]
+    limits: dict = field(default_factory=dict)  # what quantity_checks needs to re-check a modified intent
+
+
+def quantity_checks(side: str, qty: int, price_fen: int, held: int, nav_fen: int, volume_cap: float | None,
+                    max_participation: float, max_weight: float | None) -> list[Check]:
+    """The quantity-dependent checks R4 and R5 of one intent."""
+    checks = []
+    if volume_cap is not None and qty > volume_cap:
+        checks.append(Check("R4", "warn", f"数量超过 {ADV_WINDOW} 日均量的 {max_participation:.0%}", str(qty),
+                            str(int(volume_cap))))
+    if side == "buy" and max_weight and nav_fen:
+        after = (held + qty) * price_fen / nav_fen
+        if after > max_weight * R5_REJECT:
+            checks.append(Check("R5", "reject", "买入后单股权重远超上限", f"{after:.4f}", f"{max_weight:.4f}"))
+        elif after > max_weight * R5_WARN:
+            checks.append(Check("R5", "warn", "取整后单股权重超过上限", f"{after:.4f}", f"{max_weight:.4f}"))
+    return checks
+
+
+def cash_check(buys_fen: int, available_fen: int) -> Check:
+    """R6: buys plus fees against cash plus sell proceeds (run level)."""
+    if buys_fen > available_fen:
+        return Check("R6", "reject", "买入金额加费用超过可用资金", str(buys_fen), str(available_fen))
+    return Check("R6", "pass", "资金充足", str(buys_fen), str(available_fen))
 
 
 def _risk_name(market: MarketData, i: int, j: int) -> str:
@@ -138,6 +163,7 @@ def plan_intents(target: TargetPortfolio, marked: MarkedAccount, market: MarketD
     ex_next, suspended_next = reference.ex_dates(next_day), reference.suspended(next_day)
     risk_next = reference.risk_starting(next_day)
     drafts: list[IntentDraft] = []
+    volume_caps: dict[str, int | None] = {}
     for seq, order in enumerate(sized.orders, start=1):
         j = columns[order.symbol]
         price = int(prices[order.symbol] or 0)
@@ -157,15 +183,9 @@ def plan_intents(target: TargetPortfolio, marked: MarkedAccount, market: MarketD
         if order.symbol in ex_next:
             draft.checks.append(Check("R3", "warn", "次日除权除息，按除权价重新核对数量和价格"))
         cap = average_volume(market, i, j) * max_participation
-        if order.quantity > cap:
-            draft.checks.append(Check("R4", "warn", f"数量超过 {ADV_WINDOW} 日均量的 {max_participation:.0%}",
-                                      str(order.quantity), str(int(cap))))
-        if buy and max_weight:
-            after = (marked.quantities.get(order.symbol, 0) + order.quantity) * price / marked.nav_fen
-            if after > max_weight * R5_REJECT:
-                draft.checks.append(Check("R5", "reject", "买入后单股权重远超上限", f"{after:.4f}", f"{max_weight:.4f}"))
-            elif after > max_weight * R5_WARN:
-                draft.checks.append(Check("R5", "warn", "取整后单股权重超过上限", f"{after:.4f}", f"{max_weight:.4f}"))
+        volume_caps[order.symbol] = int(cap) if math.isfinite(cap) else None
+        draft.checks += quantity_checks(order.side, order.quantity, price, marked.quantities.get(order.symbol, 0),
+                                        marked.nav_fen, cap, max_participation, max_weight)
         risky = _risk_name(market, i, j) != "normal" or order.symbol in risk_next
         if buy and risky:
             draft.checks.append(Check("R7", "reject", "风险警示或退市整理期证券，不买入",
@@ -175,16 +195,13 @@ def plan_intents(target: TargetPortfolio, marked: MarkedAccount, market: MarketD
     buys = sum(d.est_notional_fen + d.est_fees_fen for d in drafts if d.side == "buy")
     proceeds = sum(d.est_notional_fen - d.est_fees_fen for d in drafts if d.side == "sell")
     available = marked.cash_fen + proceeds
-    run_checks = []
-    if buys > available:
-        check = Check("R6", "reject", "买入金额加费用超过可用资金", str(buys), str(available))
-        run_checks.append(check)
+    check = cash_check(buys, available)
+    if check.decision == "reject":
         for draft in drafts:
             if draft.side == "buy":
                 draft.checks.append(check)
-    else:
-        run_checks.append(Check("R6", "pass", "资金充足", str(buys), str(available)))
-    return IntentPlan(drafts, run_checks, target_qty, sized.skipped, sized.within_band)
+    limits = {"max_participation": max_participation, "max_weight": max_weight, "volume_cap": volume_caps}
+    return IntentPlan(drafts, [check], target_qty, sized.skipped, sized.within_band, limits)
 
 
 def worst(checks: list[Check]) -> str:

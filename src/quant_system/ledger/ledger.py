@@ -76,6 +76,8 @@ class Ledger:
             raise LedgerInvariantError(f"{event.event_id}: non-positive quantity or price")
         if event.notional_fen != event.quantity * event.price_fen:
             raise LedgerInvariantError(f"{event.event_id}: notional != quantity * price")
+        if min(event.commission_fen, event.stamp_duty_fen, event.transfer_fee_fen) < 0:
+            raise LedgerInvariantError(f"{event.event_id}: negative fee")
         position = self.positions.get(event.symbol, Position(0, 0, 0))
         cash_after = self.cash_fen + event.cash_delta_fen
         if event.side == "buy":

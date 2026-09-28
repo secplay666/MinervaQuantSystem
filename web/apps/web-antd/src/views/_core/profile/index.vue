@@ -53,9 +53,9 @@ async function startTotp() {
 }
 
 async function enableTotp() {
-  await totpEnableApi(totp.secret, totp.code);
+  await totpEnableApi(totp.secret, totp.code, totp.password);
   message.success('两步验证已开启；以后登录需要输入验证码');
-  Object.assign(totp, { code: '', secret: '', uri: '' });
+  Object.assign(totp, { code: '', password: '', secret: '', uri: '' });
   await load();
 }
 
@@ -121,7 +121,10 @@ onMounted(load);
               <p>无法扫码时手动输入密钥：<Typography.Text code copyable>{{ totp.secret }}</Typography.Text></p>
               <Space class="mt-2">
                 <Input v-model:value="totp.code" placeholder="6 位验证码" :maxlength="6" style="width: 160px" />
-                <Button type="primary" :disabled="totp.code.length !== 6" @click="enableTotp">验证并开启</Button>
+                <Input.Password v-model:value="totp.password" placeholder="当前密码" style="width: 200px" />
+                <Button type="primary" :disabled="totp.code.length !== 6 || !totp.password" @click="enableTotp">
+                  验证并开启
+                </Button>
               </Space>
             </template>
           </template>

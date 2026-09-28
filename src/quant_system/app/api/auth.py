@@ -33,15 +33,40 @@ router = APIRouter(prefix="/auth", tags=["认证"])
 _DUMMY_HASH = hash_password("timing-equaliser-not-a-password")
 IP_WINDOW_SECONDS = 15 * 60
 IP_MAX_FAILURES = 20  # per client IP and window, across all usernames (password spraying)
+IP_TABLE_PRUNE = 1000
 
 
 def _ip_failures(request: Request, ip: str | None) -> deque:
     table: dict = request.app.state.__dict__.setdefault("login_failures", {})
-    failures = table.setdefault(ip or "?", deque())
     cutoff = time.monotonic() - IP_WINDOW_SECONDS
+    if len(table) > IP_TABLE_PRUNE:  # drop addresses with no recent failure
+        for key in [k for k, v in table.items() if not v or v[-1] < cutoff]:
+            del table[key]
+    failures = table.setdefault(ip or "?", deque())
     while failures and failures[0] < cutoff:
         failures.popleft()
     return failures
+
+
+def _check_password(request: Request, session: Session, user: User, password: str) -> None:
+    """Re-authentication inside a session (password change, TOTP): wrong
+    passwords count towards the same lockout as logins, so a stolen access
+    token cannot be used to guess the password."""
+    settings, now = settings_of(request), utc_now()
+    if user.locked_until is not None and user.locked_until > now:
+        minutes = int((user.locked_until - now).total_seconds() // 60) + 1
+        raise api_error(423, "locked", f"密码错误次数过多，请 {minutes} 分钟后再试")
+    if verify_password(user.password_hash, password):
+        user.failed_logins = 0
+        return
+    user.failed_logins += 1
+    if user.failed_logins >= settings.lockout_threshold:
+        user.locked_until = now + timedelta(minutes=settings.lockout_minutes)
+        user.failed_logins = 0
+    audit(session, user.username, "auth.password_check_failed", "user", str(user.id), user_id=user.id,
+          ip=client_ip(request), after={"locked": user.locked_until is not None and user.locked_until > now})
+    session.commit()
+    raise api_error(400, "wrong_password", "密码错误")
 
 
 class LoginIn(BaseModel):
@@ -62,6 +87,7 @@ class PasswordIn(BaseModel):
 class TotpEnableIn(BaseModel):
     secret: str
     code: str
+    password: str
 
 
 class TotpDisableIn(BaseModel):
@@ -149,7 +175,12 @@ def refresh(body: RefreshIn, request: Request, session: Session = Depends(get_se
         raise api_error(401, "token_reused", "登录凭证已失效，请重新登录")
     if row.expires_at < now or user is None or not user.is_active:
         raise api_error(401, "invalid_token", "请重新登录")
-    row.revoked_at = now
+    # Conditional, so of two simultaneous uses of one token only one rotates it.
+    rotated = session.execute(update(RefreshToken).where(RefreshToken.id == row.id,
+                                                         RefreshToken.revoked_at.is_(None)).values(revoked_at=now))
+    if rotated.rowcount != 1:
+        session.rollback()
+        raise api_error(401, "token_reused", "登录凭证已失效，请重新登录")
     tokens = issue_tokens(request, session, user)
     session.commit()
     return tokens
@@ -173,8 +204,7 @@ def me(principal: Principal = Depends(authenticated), session: Session = Depends
 def change_password(body: PasswordIn, request: Request, principal: Principal = Depends(authenticated),
                     session: Session = Depends(get_session)) -> dict:
     user = session.get(User, principal.user.id)
-    if not verify_password(user.password_hash, body.old_password):
-        raise api_error(400, "wrong_password", "原密码错误")
+    _check_password(request, session, user, body.old_password)
     problems = password_problems(body.new_password, user.username, settings_of(request).min_password_length)
     if body.new_password == body.old_password:
         problems.append("新密码不能与原密码相同")
@@ -197,11 +227,14 @@ def totp_setup(principal: Principal = Depends(authenticated)) -> dict:
 
 
 @router.post("/totp/enable")
-def totp_enable(body: TotpEnableIn, principal: Principal = Depends(authenticated),
+def totp_enable(body: TotpEnableIn, request: Request, principal: Principal = Depends(authenticated),
                 session: Session = Depends(get_session)) -> dict:
+    user = session.get(User, principal.user.id)
+    if user.totp_secret:
+        raise api_error(409, "totp_enabled", "已开启两步验证；要更换请先关闭")
+    _check_password(request, session, user, body.password)
     if not verify_totp(body.secret, body.code):
         raise api_error(400, "invalid_code", "验证码不正确")
-    user = session.get(User, principal.user.id)
     user.totp_secret = body.secret
     audit(session, user.username, "auth.totp_enable", "user", str(user.id), **principal.audit_kwargs())
     session.commit()
@@ -209,11 +242,10 @@ def totp_enable(body: TotpEnableIn, principal: Principal = Depends(authenticated
 
 
 @router.post("/totp/disable")
-def totp_disable(body: TotpDisableIn, principal: Principal = Depends(authenticated),
+def totp_disable(body: TotpDisableIn, request: Request, principal: Principal = Depends(authenticated),
                  session: Session = Depends(get_session)) -> dict:
     user = session.get(User, principal.user.id)
-    if not verify_password(user.password_hash, body.password):
-        raise api_error(400, "wrong_password", "密码错误")
+    _check_password(request, session, user, body.password)
     user.totp_secret = None
     audit(session, user.username, "auth.totp_disable", "user", str(user.id), **principal.audit_kwargs())
     session.commit()

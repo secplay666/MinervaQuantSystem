@@ -136,9 +136,11 @@ def reset_password(user_id: int, principal: Principal = Depends(manage),
     user.password_hash = hash_password(password)
     user.must_change_password = True
     user.failed_logins, user.locked_until = 0, None
+    had_totp, user.totp_secret = bool(user.totp_secret), None  # a lost authenticator is the usual reason
     session.execute(update(RefreshToken).where(RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None))
                     .values(revoked_at=utc_now()))
-    audit(session, principal.actor, "user.reset_password", "user", str(user_id), **principal.audit_kwargs())
+    audit(session, principal.actor, "user.reset_password", "user", str(user_id), after={"totp_cleared": had_totp},
+          **principal.audit_kwargs())
     session.commit()
     return {"temporary_password": password}
 

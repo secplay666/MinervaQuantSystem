@@ -79,7 +79,7 @@ def _review(session: Session, action) -> dict:
     except ReviewError as exc:
         session.rollback()
         status = 404 if exc.code == "not_found" else 409 if exc.code in ("invalid_state", "expired",
-                                                                         "already_filled") else 400
+                                                                         "already_filled", "paper_locked") else 400
         raise api_error(status, exc.code, str(exc)) from None
     session.commit()
     checks = list(session.scalars(select(RiskCheck).where(RiskCheck.intent_id == intent.intent_id)))

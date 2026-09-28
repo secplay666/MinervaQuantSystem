@@ -32,7 +32,9 @@ class AppSettings:
     lockout_minutes: int = 15
     min_password_length: int = 10
     cors_origins: tuple[str, ...] = ()
-    trusted_proxies: tuple[str, ...] = ("127.0.0.1", "::1")
+    # Peers whose X-Forwarded-For is believed.  None by default: behind frp's TCP forward every
+    # connection comes from 127.0.0.1 and nobody sets the header, so any client could choose its IP.
+    trusted_proxies: tuple[str, ...] = ()
     web_dir: Path | None = None  # built PC frontend served at /, if present
     mobile_dir: Path | None = None  # built mobile frontend served at /m/ (phones without the app)
     notify: NotifyConfig = field(default_factory=NotifyConfig)  # external channels (app/notify.py)

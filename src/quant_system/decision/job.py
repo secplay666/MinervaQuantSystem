@@ -365,12 +365,12 @@ def _run_account(factory: sessionmaker[Session], shared: _Shared, account_id: st
         if complete and not rerun:
             last = complete[-1]
             return RunOutcome(account_id, last.run_id, "skipped", last.kind, "当日已有决策（需要重跑请加 --rerun）")
-        for run in existing:  # blocked / failed runs are replaced without asking
-            supersede(session, run, actor)
-        run_id = _new_run_id(session, account_id, day)
         config, config_hash = load_strategy_config(shared.root, account.strategy_config, day)
         rules = shared.rules(config.market_rules_path)
         paper = run_paper(session, account, market, rules, config, through=day) if account.mode == "paper" else None
+        # Paper execution stands on its own (paper_through makes it idempotent).  Commit it now, so the
+        # strategy build below (tens of seconds) does not hold SQLite's write lock against the API.
+        session.commit()
         marked = mark(replay(session, account_id, through=day), market, i)
         rebalance = is_rebalance_day(config.schedule, shared.calendar, market.sessions, day)
         kind = "forced" if force_reason else "rebalance" if rebalance else "monitor"
@@ -404,6 +404,9 @@ def _run_account(factory: sessionmaker[Session], shared: _Shared, account_id: st
             summary["paper"] = {"sessions": [d.isoformat() for d in paper.sessions], "fills": paper.fills,
                                 "closed_unfilled": paper.unfilled}
         summary["seconds"] = round(time.perf_counter() - started, 2)
+        for run in existing:  # blocked / failed runs are replaced without asking
+            supersede(session, run, actor)
+        run_id = _new_run_id(session, account_id, day)
         report_dir = shared.root / DECISIONS_DIR / run_id
         session.add(DecisionRun(
             run_id=run_id, account_id=account_id, trade_date=day, next_session=next_day, kind=kind, status=status,
@@ -504,5 +507,5 @@ def _summary(marked: MarkedAccount, target: TargetPortfolio | None, plan: Intent
             "rejected": sum(1 for d in plan.intents if d.risk == "reject"),
             "warned": sum(1 for d in plan.intents if d.risk == "warn"),
             "skipped": [{"symbol": s, "weight": round(w, 6), "reason": r} for s, w, r in plan.skipped],
-            "within_band": len(plan.within_band)})
+            "within_band": len(plan.within_band), "limits": plan.limits})
     return summary

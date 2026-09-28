@@ -54,13 +54,13 @@ class PaperOutcome:
     notes: list[str] = field(default_factory=list)
 
 
-def _approved_at(session: Session, intent_id: str) -> datetime | None:
+def approved_at(session: Session, intent_id: str) -> datetime | None:
     return session.scalar(select(Approval.at).where(
         Approval.intent_id == intent_id, Approval.action.in_(("approve", "modify", "override")))
         .order_by(Approval.at.desc()).limit(1))
 
 
-def _cutoff(day: date) -> datetime:
+def cutoff(day: date) -> datetime:
     return datetime.combine(day, APPROVAL_CUTOFF, SHANGHAI_TZ)
 
 
@@ -147,18 +147,19 @@ class PaperBroker:
         intents = self.close_superseded(day, self.open_intents(day))
         ready = []
         for intent in intents:
-            approved = _approved_at(self.session, intent.intent_id)
-            if approved is None or approved > _cutoff(day):
+            approved = approved_at(self.session, intent.intent_id)
+            if approved is None or approved > cutoff(day):
                 continue  # approved after the call auction opened: trades from the next session
-            ready.append(intent)
-        for intent in sorted(ready, key=lambda x: (x.side != "sell", x.trade_date, x.seq)):
-            self._fill(i, intent)
+            ready.append((intent, approved))
+        for intent, approved in sorted(ready, key=lambda x: (x[0].side != "sell", x[0].trade_date, x[0].seq)):
+            self._fill(i, intent, approved)
 
-    def _fill(self, i: int, intent: OrderIntent) -> None:
+    def _fill(self, i: int, intent: OrderIntent, approved: datetime) -> None:
         day, market, config = self.market.sessions[i], self.market, self.config
         j = market.symbol_index(intent.symbol)
         remaining = intent.qty - intent.filled_qty
-        attempt = sum(1 for s in market.sessions if intent.execute_on <= s < day)
+        # Sessions already tried: from the first one it was approved in time for.
+        attempt = sum(1 for s in market.sessions if intent.execute_on <= s < day and approved <= cutoff(s))
         state = open_state(market, self.rules, i, j)
         reason = None
         quantity = remaining

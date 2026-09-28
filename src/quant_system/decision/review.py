@@ -13,21 +13,36 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass
-from datetime import date, datetime
+from dataclasses import dataclass, replace
+from datetime import date, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from ..app.audit import audit
-from ..app.db.models import Account, Approval, DecisionRun, Fill, ImportBatch, OrderIntent, PositionEvent
+from ..app.db.base import utc_now
+from ..app.db.models import (
+    Account,
+    Approval,
+    DecisionRun,
+    Fill,
+    ImportBatch,
+    OrderIntent,
+    PositionEvent,
+    RiskCheck,
+)
+from ..data_platform.sessions import SHANGHAI_TZ
 from ..domain.fees import FeeSchedule
 from ..domain.rules import LotRule
 from ..ledger import LedgerInvariantError
-from .accounts import account_events, replay, replay_rows
+from .accounts import account_events, replay, replay_rows, reverse_event
+from .intents import SEVERITY, Check, cash_check, quantity_checks
+from .paper import approved_at, cutoff
 
 REVIEWABLE = ("pending_approval",)
 EXECUTABLE = ("approved", "modified")
+OPEN_FOR_CASH = ("pending_approval", "approved", "modified")  # the intents R6 counts
+CLOSED_EXECUTION = ("unfilled", "partial_closed")  # paper gave up: reversing a fill does not reopen them
 
 
 class ReviewError(ValueError):
@@ -63,6 +78,40 @@ def _snapshot(intent: OrderIntent) -> dict:
     return {"status": intent.status, "qty": intent.qty}
 
 
+def _today(now: datetime) -> date:
+    return now.astimezone(SHANGHAI_TZ).date()
+
+
+def _last_cutoff_day(now: datetime) -> date:
+    """The latest weekday whose 09:15 cutoff has passed.  Holidays count as
+    sessions here, which only ever locks a paper intent earlier (the safe side)."""
+    day = _today(now)
+    if now < cutoff(day):
+        day -= timedelta(days=1)
+    while day.weekday() >= 5:
+        day -= timedelta(days=1)
+    return day
+
+
+def paper_locked(session: Session, intent: OrderIntent, now: datetime) -> bool:
+    """An executable paper intent is locked from the cutoff of the session it
+    trades in until the paper job has booked that session: changing it in
+    between would decide with knowledge of the open (ADR-008 §6)."""
+    account = session.get(Account, intent.account_id)
+    if account is None or account.mode != "paper" or intent.status not in EXECUTABLE:
+        return False
+    day = _last_cutoff_day(now)
+    approved = approved_at(session, intent.intent_id)
+    if day < intent.execute_on or approved is None or approved > cutoff(day):
+        return False
+    return account.paper_through is None or account.paper_through < day
+
+
+def _check_paper_lock(session: Session, intent: OrderIntent, now: datetime) -> None:
+    if paper_locked(session, intent, now):
+        raise ReviewError("paper_locked", "模拟账户：该意图按当日开盘模拟成交，09:15 之后到晚间模拟成交入账之前不能再改")
+
+
 def approve(session: Session, intent_id: str, op: Operator, now: datetime, reason: str | None = None) -> OrderIntent:
     intent = _intent(session, intent_id)
     if intent.status not in REVIEWABLE:
@@ -85,6 +134,7 @@ def reject(session: Session, intent_id: str, op: Operator, now: datetime, reason
         raise ReviewError("invalid_state", f"当前状态 {intent.status} 不能拒绝")
     if intent.status in EXECUTABLE and _filled_qty(session, intent_id):
         raise ReviewError("already_filled", "已有成交回填，不能拒绝")
+    _check_paper_lock(session, intent, now)
     before = _snapshot(intent)
     intent.status = "rejected"
     session.add(Approval(intent_id=intent_id, action="reject", qty_before=intent.qty, qty_after=intent.qty,
@@ -96,7 +146,8 @@ def reject(session: Session, intent_id: str, op: Operator, now: datetime, reason
 
 def modify(session: Session, intent_id: str, qty: int, op: Operator, now: datetime, reason: str, lot: LotRule,
            fees: FeeSchedule, exchange: str) -> OrderIntent:
-    """Approve with a different quantity (lot-legal; a sell may not exceed the holding)."""
+    """Approve with a different quantity (lot-legal; a sell may not exceed the
+    holding), after re-running the quantity-dependent checks (ADR-008 §7)."""
     if not reason or not reason.strip():
         raise ReviewError("reason_required", "修改数量需要填写原因")
     intent = _intent(session, intent_id)
@@ -105,6 +156,7 @@ def modify(session: Session, intent_id: str, qty: int, op: Operator, now: dateti
     _open(intent, now)
     if _filled_qty(session, intent_id):
         raise ReviewError("already_filled", "已有成交回填，不能修改数量")
+    _check_paper_lock(session, intent, now)
     if qty <= 0:
         raise ReviewError("invalid_qty", "数量必须为正；不交易请用拒绝")
     if intent.side == "buy":
@@ -114,17 +166,64 @@ def modify(session: Session, intent_id: str, qty: int, op: Operator, now: dateti
         holding = replay(session, intent.account_id).quantity(intent.symbol)
         if qty > holding or lot.round_sell(qty, holding) != qty:
             raise ReviewError("invalid_qty", f"卖出数量不合法（持有 {holding} 股，零股只能一次卖完）")
+    notional = qty * intent.ref_price_fen
+    est_fees = fees.fees(intent.side, exchange, notional, intent.execute_on).total_fen
+    checks = _recheck(session, intent, qty, notional, est_fees)
     before = _snapshot(intent)
     previous = intent.qty
     intent.qty = qty
-    intent.est_notional_fen = qty * intent.ref_price_fen
-    intent.est_fees_fen = fees.fees(intent.side, exchange, intent.est_notional_fen, intent.execute_on).total_fen
+    intent.est_notional_fen = notional
+    intent.est_fees_fen = est_fees
     intent.status = "modified"
+    if checks is not None:
+        session.execute(delete(RiskCheck).where(RiskCheck.intent_id == intent_id,
+                                                RiskCheck.rule_id.in_(("R4", "R5", "R6"))))
+        for check in checks:
+            session.add(RiskCheck(run_id=intent.run_id, intent_id=intent_id, rule_id=check.rule_id,
+                                  decision=check.decision, actual=check.actual, limit_value=check.limit,
+                                  message=check.message))
+        session.flush()
+        remaining = session.scalars(select(RiskCheck.decision).where(RiskCheck.intent_id == intent_id))
+        intent.risk = max(remaining, key=SEVERITY.__getitem__, default="pass")
     session.add(Approval(intent_id=intent_id, action="modify", qty_before=previous, qty_after=qty, reason=reason,
                          user_id=op.user_id, actor=op.actor, at=now))
     audit(session, op.actor, "intent.modify", "order_intent", intent_id, before=before, after=_snapshot(intent),
           reason=reason, **op.audit_kwargs())
     return intent
+
+
+def _recheck(session: Session, intent: OrderIntent, qty: int, notional: int, est_fees: int) -> list[Check] | None:
+    """R4/R5 for the new quantity and R6 for the run with it; a reject refuses
+    the modification.  Runs from before the limits were recorded may only be
+    reduced (None: keep their checks)."""
+    run = session.get(DecisionRun, intent.run_id)
+    limits = (run.summary or {}).get("limits") if run else None
+    if not limits:
+        if qty > intent.proposed_qty:
+            raise ReviewError("no_limits", "该决策没有记录风控参数，只能减少数量")
+        return None
+    held = replay(session, intent.account_id, through=intent.trade_date).quantity(intent.symbol)
+    checks = quantity_checks(intent.side, qty, intent.ref_price_fen, held, run.nav_fen or 0,
+                             (limits.get("volume_cap") or {}).get(intent.symbol),
+                             float(limits.get("max_participation") or 0), limits.get("max_weight"))
+    buys = proceeds = 0
+    for other in session.scalars(select(OrderIntent).where(OrderIntent.run_id == intent.run_id,
+                                                           OrderIntent.status.in_(OPEN_FOR_CASH))):
+        this = other.intent_id == intent.intent_id
+        n, f = (notional, est_fees) if this else (other.est_notional_fen, other.est_fees_fen)
+        if other.side == "buy":
+            buys += n + f
+        else:
+            proceeds += n - f
+    cash = cash_check(buys, (run.cash_fen or 0) + proceeds)
+    if cash.decision == "reject":
+        # A smaller sell leaves the buys short: say so, but the sell itself is fine.
+        checks.append(cash if intent.side == "buy" else replace(cash, decision="warn",
+                                                                message="减少卖出后，本次买入金额加费用超过可用资金"))
+    rejected = [c for c in checks if c.decision == "reject"]
+    if rejected:
+        raise ReviewError("risk_reject", "修改后不通过风控：" + "；".join(f"{c.rule_id} {c.message}" for c in rejected))
+    return checks
 
 
 def override(session: Session, intent_id: str, op: Operator, now: datetime, reason: str) -> OrderIntent:
@@ -172,6 +271,8 @@ def refresh_intent_fill(session: Session, intent_id: str) -> None:
     if intent is None:
         return
     intent.filled_qty = _filled_qty(session, intent_id)
+    if intent.execution in CLOSED_EXECUTION:
+        return
     intent.execution = ("filled" if intent.filled_qty >= intent.qty else "partial") if intent.filled_qty else None
 
 
@@ -186,11 +287,15 @@ def _validate(session: Session, account_id: str, new_rows: list[PositionEvent]) 
 def record_fill(session: Session, account: Account, *, trade_date: date, symbol: str, side: str, qty: int,
                 price_fen: int, op: Operator, fees: FeeSchedule, exchange: str, intent_id: str | None = None,
                 commission_fen: int | None = None, stamp_duty_fen: int | None = None,
-                transfer_fee_fen: int | None = None, batch_id: str | None = None) -> Fill:
+                transfer_fee_fen: int | None = None, batch_id: str | None = None,
+                now: datetime | None = None) -> Fill:
     if account.mode != "manual":
         raise ReviewError("paper_account", "模拟账户的成交由系统模拟，不能手工回填")
     if side not in ("buy", "sell") or qty <= 0 or price_fen <= 0:
         raise ReviewError("invalid_fill", "方向、数量或价格不合法")
+    if any(fee is not None and fee < 0 for fee in (commission_fen, stamp_duty_fen, transfer_fee_fen)):
+        raise ReviewError("invalid_fill", "费用不能为负")
+    _check_entry_date(account, trade_date, now or utc_now(), "成交")
     if intent_id is not None:
         intent = _intent(session, intent_id)
         if intent.account_id != account.account_id or intent.symbol != symbol or intent.side != side:
@@ -228,6 +333,43 @@ def record_fill(session: Session, account: Account, *, trade_date: date, symbol:
     return fill
 
 
+def _check_entry_date(account: Account, day: date, now: datetime, what: str) -> None:
+    """Facts are dated after the confirmed holdings (which already include
+    that day) and not in the future."""
+    if day > _today(now):
+        raise ReviewError("future_date", f"{what}日期 {day} 晚于今天")
+    confirmed = account.holdings_confirmed_date
+    if confirmed is not None and day <= confirmed:
+        raise ReviewError("before_confirmed", f"{what}日期 {day} 不晚于已确认持仓的日期 {confirmed}，"
+                                              "已包含在确认的持仓里；如需更正请重新录入持仓")
+
+
+def reverse(session: Session, account: Account, event_id: str, op: Operator, reason: str,
+            trade_date: date | None = None, now: datetime | None = None) -> PositionEvent:
+    """Reverse a manual account's ledger event; a reversed fill no longer
+    counts towards its intent.  Paper accounts are maintained by the system."""
+    if account.mode != "manual":
+        raise ReviewError("paper_account", "模拟账户的记录由系统维护，不能冲销")
+    row = session.scalar(select(PositionEvent).where(PositionEvent.event_id == event_id,
+                                                     PositionEvent.account_id == account.account_id))
+    if row is None:
+        raise ReviewError("not_found", "记录不存在")
+    _check_entry_date(account, row.trade_date, now or utc_now(), "被冲销记录的")
+    try:
+        reversal = reverse_event(session, account.account_id, event_id, trade_date=trade_date or row.trade_date,
+                                 actor=op.actor, reason=reason)
+    except ValueError as exc:
+        raise ReviewError("ledger", str(exc)) from exc
+    if row.kind == "fill" and row.ref_id:
+        fill = session.get(Fill, row.ref_id)
+        if fill is not None:
+            fill.reversed_by = reversal.event_id
+            session.flush()
+            if fill.intent_id:
+                refresh_intent_fill(session, fill.intent_id)
+    return reversal
+
+
 # -- holdings entry ---------------------------------------------------------------------------
 
 SYMBOL = re.compile(r"(\d{6})")
@@ -239,7 +381,9 @@ def parse_holdings_text(text: str) -> tuple[list[dict], list[str]]:
     Codes may carry exchange prefixes or suffixes (sh600000, 600000.SH)."""
     rows, errors = [], []
     for number, line in enumerate(text.splitlines(), start=1):
-        parts = [p for p in re.split(r"[,\t\s;，]+", line.strip()) if p]
+        # Excel pastes are tab-separated and may show 1,000: the commas then belong to the numbers.
+        separator = r"\t+" if "\t" in line else r"[,\s;，]+"
+        parts = [p.strip().replace(",", "") for p in re.split(separator, line.strip()) if p.strip()]
         if not parts:
             continue
         match = SYMBOL.search(parts[0])
@@ -249,7 +393,7 @@ def parse_holdings_text(text: str) -> tuple[list[dict], list[str]]:
             errors.append(f"第 {number} 行：无法识别代码 {parts[0]!r}")
             continue
         try:
-            qty = int(float(parts[1].replace(",", ""))) if len(parts) > 1 else None
+            qty = int(float(parts[1])) if len(parts) > 1 else None
             price = float(parts[2]) if len(parts) > 2 else None
         except ValueError:
             errors.append(f"第 {number} 行：数量或成本价不是数字")
@@ -261,8 +405,16 @@ def parse_holdings_text(text: str) -> tuple[list[dict], list[str]]:
     return rows, errors
 
 
+def _ledger_mark(session: Session, account_id: str) -> str:
+    """Changes whenever an event is added to the account (seq only grows)."""
+    count, top = session.execute(select(func.count(), func.max(PositionEvent.seq)).where(
+        PositionEvent.account_id == account_id)).one()
+    return f"{count}:{top or 0}"
+
+
 def preview_holdings(session: Session, account: Account, *, as_of: date, cash_fen: int, rows: list[dict],
-                     known_symbols: set[str], op: Operator, filename: str | None = None) -> ImportBatch:
+                     known_symbols: set[str], op: Operator, filename: str | None = None,
+                     now: datetime | None = None) -> ImportBatch:
     if account.mode != "manual":
         raise ReviewError("paper_account", "模拟账户的持仓由系统维护")
     last = session.scalar(select(func.max(PositionEvent.trade_date)).where(
@@ -270,6 +422,8 @@ def preview_holdings(session: Session, account: Account, *, as_of: date, cash_fe
     errors = []
     if last is not None and as_of < last:
         errors.append(f"持仓日期 {as_of} 早于账户最后一笔记录 {last}")
+    if as_of > _today(now or utc_now()):
+        errors.append(f"持仓日期 {as_of} 晚于今天")
     if cash_fen < 0:
         errors.append("现金不能为负")
     merged: dict[str, dict] = {}
@@ -288,7 +442,7 @@ def preview_holdings(session: Session, account: Account, *, as_of: date, cash_fe
             diff.append({"symbol": symbol, "current": current, "new": new, "change": new - current})
     summary = {"as_of": as_of.isoformat(), "cash_before_fen": ledger.cash_fen, "cash_after_fen": cash_fen,
                "rows": [{k: r[k] for k in ("symbol", "qty", "cost_price")} for r in merged.values()],
-               "diff": diff, "errors": errors}
+               "diff": diff, "errors": errors, "ledger_mark": _ledger_mark(session, account.account_id)}
     digest = hashlib.sha256(json.dumps(summary, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     count = session.scalar(select(func.count()).select_from(ImportBatch)) or 0
     batch = ImportBatch(batch_id=f"imp-{account.account_id}-{as_of:%Y%m%d}-{count + 1:04d}",
@@ -309,6 +463,8 @@ def commit_holdings(session: Session, account: Account, batch_id: str, op: Opera
     if summary.get("errors"):
         raise ReviewError("invalid_batch", "预览中有错误，修正后重新预览")
     as_of = date.fromisoformat(summary["as_of"])
+    if summary.get("ledger_mark") != _ledger_mark(session, account.account_id):
+        raise ReviewError("stale_preview", "账户在预览后发生了变化，请重新预览")
     ledger = replay(session, account.account_id)
     rows = {r["symbol"]: r for r in summary["rows"]}
     new_events = []

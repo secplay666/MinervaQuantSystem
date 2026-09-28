@@ -56,8 +56,8 @@ export async function totpSetupApi() {
   return requestClient.post<{ secret: string; uri: string }>('/auth/totp/setup');
 }
 
-export async function totpEnableApi(secret: string, code: string) {
-  return requestClient.post('/auth/totp/enable', { code, secret });
+export async function totpEnableApi(secret: string, code: string, password: string) {
+  return requestClient.post('/auth/totp/enable', { code, password, secret });
 }
 
 export async function totpDisableApi(password: string) {

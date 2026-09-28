@@ -3,6 +3,7 @@ holdings entry (ADR-008 §9)."""
 
 from __future__ import annotations
 
+import threading
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
@@ -11,7 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ...decision.accounts import create_account, replay, reverse_event
+from ...decision.accounts import create_account, replay
 from ...decision.review import (
     Operator,
     ReviewError,
@@ -19,7 +20,7 @@ from ...decision.review import (
     parse_holdings_text,
     preview_holdings,
     record_fill,
-    refresh_intent_fill,
+    reverse as reverse_entry,
 )
 from ...domain.money import yuan_to_fen
 from ..audit import audit
@@ -32,6 +33,10 @@ router = APIRouter(tags=["账户"])
 view = require("account:view")
 edit = require("account:edit")
 manage = require("account:manage")
+# Ledger writes validate by replaying the account, then insert: serialise them
+# within the API process, so two concurrent entries cannot both pass against
+# the same state.  (The daily job writes paper accounts only.)
+LEDGER_WRITES = threading.Lock()
 
 
 class AccountCreate(BaseModel):
@@ -250,11 +255,13 @@ def add_fill(account_id: str, body: FillIn, request: Request, principal: Princip
     if security is None:
         raise api_error(400, "unknown_symbol", f"{body.symbol} 不在证券主数据中")
     price = _fen(body.price, "成交价")
-    fill = _review(session, lambda: record_fill(
-        session, account, trade_date=body.trade_date, symbol=body.symbol, side=body.side, qty=body.qty,
-        price_fen=price or 0, op=_operator(principal), fees=fees, exchange=security["exchange"],
-        intent_id=body.intent_id, commission_fen=_fen(body.commission, "佣金"),
-        stamp_duty_fen=_fen(body.stamp_duty, "印花税"), transfer_fee_fen=_fen(body.transfer_fee, "过户费")))
+    with LEDGER_WRITES:
+        fill = _review(session, lambda: record_fill(
+            session, account, trade_date=body.trade_date, symbol=body.symbol, side=body.side, qty=body.qty,
+            price_fen=price or 0, op=_operator(principal), fees=fees, exchange=security["exchange"],
+            intent_id=body.intent_id, commission_fen=_fen(body.commission, "佣金"),
+            stamp_duty_fen=_fen(body.stamp_duty, "印花税"), transfer_fee_fen=_fen(body.transfer_fee, "过户费"),
+            now=utc_now()))
     return {"fill_id": fill.fill_id, "fees_fen": fill.commission_fen + fill.stamp_duty_fen + fill.transfer_fee_fen,
             "fees_estimated": fill.fees_estimated}
 
@@ -283,8 +290,9 @@ def holdings_preview(account_id: str, body: HoldingsPreviewIn, request: Request,
 def holdings_commit(account_id: str, body: HoldingsCommitIn, principal: Principal = Depends(edit),
                     session: Session = Depends(get_session)) -> dict:
     account = _account(session, account_id)
-    batch = _review(session, lambda: commit_holdings(session, account, body.batch_id, _operator(principal),
-                                                     body.reason))
+    with LEDGER_WRITES:
+        batch = _review(session, lambda: commit_holdings(session, account, body.batch_id, _operator(principal),
+                                                         body.reason))
     return {"batch_id": batch.batch_id, "status": batch.status}
 
 
@@ -294,15 +302,8 @@ def reverse(event_id: str, body: ReverseIn, principal: Principal = Depends(edit)
     row = session.scalar(select(PositionEvent).where(PositionEvent.event_id == event_id))
     if row is None:
         raise api_error(404, "not_found", "记录不存在")
-    reversal = _review(session, lambda: reverse_event(session, row.account_id, event_id,
-                                                      trade_date=body.trade_date or row.trade_date,
-                                                      actor=principal.actor, reason=body.reason))
-    if row.kind == "fill" and row.ref_id:
-        fill = session.get(Fill, row.ref_id)
-        if fill is not None:
-            fill.reversed_by = reversal.event_id
-            session.flush()
-            if fill.intent_id:
-                refresh_intent_fill(session, fill.intent_id)
-            session.commit()
+    account = _account(session, row.account_id)
+    with LEDGER_WRITES:
+        reversal = _review(session, lambda: reverse_entry(session, account, event_id, _operator(principal),
+                                                          body.reason, trade_date=body.trade_date, now=utc_now()))
     return {"event_id": reversal.event_id, "reverses": event_id, "at": utc_now().isoformat()}
