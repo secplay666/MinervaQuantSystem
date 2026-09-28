@@ -1,12 +1,19 @@
-"""/market and /instruments: overview, index and stock bars, fundamentals."""
+"""/market and /instruments: overview, index and stock bars, fundamentals,
+and the strategy's scores of a stock."""
 
 from __future__ import annotations
 
+import re
 from datetime import date
 
+import pandas as pd
 from fastapi import APIRouter, Depends, Query, Request
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-from ..deps import Principal, api_error, require
+from ..db.models import DecisionRun, TargetPosition
+from ..deps import Principal, api_error, get_session, require, settings_of
+from ..market import records
 
 router = APIRouter(tags=["行情"])
 view = require("market:view")
@@ -55,3 +62,43 @@ def bars(symbol: str, request: Request, start: date | None = None, end: date | N
 def fundamentals(symbol: str, request: Request, periods: int = Query(8, le=40),
                  _: Principal = Depends(view)) -> list:
     return _market(request).fundamentals(symbol, periods)
+
+
+def _scores(request: Request, run: DecisionRun) -> pd.DataFrame | None:
+    root = settings_of(request).root.resolve()
+    path = (root / run.report_dir / "scores.csv").resolve() if run.report_dir else None
+    if path is None or root not in path.parents or not path.is_file():
+        return None
+    cache = request.app.state.__dict__.setdefault("scores_cache", {})
+    key = (str(path), path.stat().st_mtime)
+    if key not in cache:
+        cache.clear()  # one decision at a time is enough
+        cache[key] = pd.read_csv(path, dtype={"symbol": str})
+    return cache[key]
+
+
+@router.get("/instruments/{symbol}/signals")
+def signals(symbol: str, request: Request, _: Principal = Depends(require("decision:view")),
+            session: Session = Depends(get_session)) -> dict:
+    """Composite and family scores at the latest rebalance decision (its
+    scores.csv), and the stock's place in recent target portfolios."""
+    if not re.fullmatch(r"\d{6}", symbol):
+        raise api_error(404, "not_found", "证券不存在")
+    rebalances = (DecisionRun.status == "complete", DecisionRun.kind.in_(("rebalance", "forced")))
+    run = session.scalars(select(DecisionRun).where(*rebalances)
+                          .order_by(DecisionRun.trade_date.desc(), DecisionRun.created_at.desc()).limit(1)).first()
+    out: dict = {"run_id": None, "trade_date": None, "account_id": None, "universe": 0, "scored": 0, "row": None}
+    frame = _scores(request, run) if run is not None else None
+    if frame is not None:
+        rows = records(frame[frame["symbol"] == symbol])
+        out.update(run_id=run.run_id, trade_date=run.trade_date.isoformat(), account_id=run.account_id,
+                   universe=int(frame["in_universe"].sum()), scored=int(frame["rank"].notna().sum()),
+                   row=rows[0] if rows else None)
+    history = session.execute(select(DecisionRun.trade_date, DecisionRun.account_id, TargetPosition.rank,
+                                     TargetPosition.target_weight, TargetPosition.score)
+                              .join(DecisionRun, DecisionRun.run_id == TargetPosition.run_id)
+                              .where(TargetPosition.symbol == symbol, *rebalances)
+                              .order_by(DecisionRun.trade_date.desc()).limit(24))
+    out["history"] = [{"trade_date": d.isoformat(), "account_id": a, "rank": r, "target_weight": w, "score": sc}
+                      for d, a, r, w, sc in history]
+    return out

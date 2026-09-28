@@ -1,8 +1,8 @@
 """Holdings monitoring, run every session (design §2 step 3).
 
 Alerts become events of the account: risk-warning changes, suspensions,
-ex-dates, limit-down closes and large drops, approaching delistings, and
-drift from the latest target portfolio.
+ex-dates, limit-down closes and large drops, approaching delistings, newly
+published periodic reports, and drift from the latest target portfolio.
 """
 
 from __future__ import annotations
@@ -20,6 +20,11 @@ from .reference import FrameReference
 LARGE_DROP = -0.07
 DELIST_WARNING_DAYS = 30
 DRIFT_ALERT = 0.10
+PERIODS = {3: "一季报", 6: "中报", 9: "三季报", 12: "年报"}
+
+
+def period_label(period: date) -> str:
+    return f"{period.year} 年{PERIODS.get(period.month, f'{period:%m-%d} 报告')}"
 
 
 @dataclass(frozen=True)
@@ -40,6 +45,7 @@ def monitor_holdings(marked: MarkedAccount, market: MarketData, rules: MarketRul
     suspended_next = reference.suspended(next_day) if next_day else set()
     risk_next = reference.risk_starting(next_day) if next_day else {}
     day = market.sessions[i]
+    reports = reference.reports_published(market.sessions[i - 1] if i > 0 else None, day)
     for symbol in sorted(marked.quantities):
         j = market.symbol_index(symbol)
         known = bool(market.risk_known[j])
@@ -66,6 +72,10 @@ def monitor_holdings(marked: MarkedAccount, market: MarketData, rules: MarketRul
                     change = int(market.close[i, j]) / reference_fen - 1
                     if change <= LARGE_DROP:
                         alerts.append(Alert("M7", "warning", f"{symbol} 今日大跌 {change:.1%}", f"{day} 收盘", symbol))
+        if symbol in reports:
+            labels = "、".join(period_label(p) for p in reports[symbol])
+            alerts.append(Alert("M10", "info", f"{symbol} 发布 {labels}", "财务数据从下一个交易日起用于决策",
+                                symbol, "在个股页查看财务"))
         delist = market.delist_date[j]
         if now == RISK_DELISTING:
             alerts.append(Alert("M8", "critical", f"{symbol} 处于退市整理期", "尽快处置", symbol))

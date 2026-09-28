@@ -96,6 +96,20 @@ class MarketQueries:
                             [f"{q.strip()}%", pattern, limit])
         return records(frame)
 
+    def industries(self, symbols: list[str]) -> dict[str, str]:
+        """{symbol: SW level-1 industry name} at the latest session."""
+        if not symbols:
+            return {}
+        day = self.latest_session()
+        try:
+            frame = self._query(
+                f"SELECT symbol, l1_name FROM industry_sw WHERE symbol IN ({', '.join('?' for _ in symbols)}) "
+                "AND start_date <= ? AND (end_date IS NULL OR end_date >= ?) ORDER BY start_date",
+                [*symbols, day, day])
+        except duckdb.CatalogException:  # a database without the classification (tests, partial rebuilds)
+            return {}
+        return dict(zip(frame["symbol"].astype(str), frame["l1_name"].astype(str)))
+
     def instrument(self, symbol: str) -> dict[str, Any] | None:
         info = self.security(symbol)
         if info is None:

@@ -203,6 +203,17 @@ export const patchAccountApi = (id: string, body: Record<string, any>) =>
   requestClient.request<Account>(`/accounts/${id}`, { data: body, method: 'PATCH' });
 export const accountNavApi = (id: string) =>
   requestClient.get<{ cash_fen: number; market_value_fen: number; nav_fen: number; positions: number; trade_date: string }[]>(`/accounts/${id}/nav`);
+export interface Exposure {
+  as_of: null | string;
+  cash_weight: null | number;
+  effective_names: number;
+  industries: { count: number; name: string; target_count: number; target_weight: number; weight: number }[];
+  nav_fen: number;
+  target_date: null | string;
+  target_run_id: null | string;
+  top10_weight: number;
+}
+export const accountExposureApi = (id: string) => requestClient.get<Exposure>(`/accounts/${id}/exposure`);
 export const accountEventsApi = (id: string) => requestClient.get<Record<string, any>[]>(`/accounts/${id}/events`);
 export const accountFillsApi = (id: string) => requestClient.get<Record<string, any>[]>(`/accounts/${id}/fills`);
 export const addFillApi = (id: string, body: Record<string, any>) => requestClient.post(`/accounts/${id}/fills`, body);
@@ -229,6 +240,16 @@ export const instrumentApi = (symbol: string) => requestClient.get<Record<string
 export const barsApi = (symbol: string, adjust = 'qfq', limit = 250) =>
   requestClient.get<Bar[]>(`/instruments/${symbol}/bars`, { params: { adjust, limit } });
 export const fundamentalsApi = (symbol: string) => requestClient.get<Record<string, any>[]>(`/instruments/${symbol}/fundamentals`);
+export interface Signals {
+  account_id: null | string;
+  history: { account_id: string; rank: null | number; score: null | number; target_weight: number; trade_date: string }[];
+  row: null | Record<string, any>;
+  run_id: null | string;
+  scored: number;
+  trade_date: null | string;
+  universe: number;
+}
+export const signalsApi = (symbol: string) => requestClient.get<Signals>(`/instruments/${symbol}/signals`);
 
 // -- administration ------------------------------------------------------------------------
 export const usersApi = () => requestClient.get<ManagedUser[]>('/users');

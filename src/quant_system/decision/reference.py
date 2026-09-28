@@ -1,5 +1,6 @@
 """Reference facts the decision needs beyond the price panels: ex-dates,
-announced suspensions and risk-warning changes on a given session.
+announced suspensions, risk-warning changes and newly published periodic
+reports on a given session.
 
 ``FrameReference`` works on plain frames (tests, fixtures); ``load_reference``
 reads them from ``market.duckdb`` with a read-only connection.
@@ -24,7 +25,7 @@ def _dates(frame: pd.DataFrame, columns: tuple[str, ...]) -> pd.DataFrame:
 
 class FrameReference:
     def __init__(self, dividends: pd.DataFrame | None = None, suspensions: pd.DataFrame | None = None,
-                 risk_intervals: pd.DataFrame | None = None) -> None:
+                 risk_intervals: pd.DataFrame | None = None, reports: pd.DataFrame | None = None) -> None:
         self.dividends = _dates(dividends if dividends is not None else pd.DataFrame(columns=["symbol", "ex_date"]),
                                 ("ex_date",))
         self.suspensions = _dates(
@@ -35,6 +36,20 @@ class FrameReference:
             risk_intervals if risk_intervals is not None
             else pd.DataFrame(columns=["symbol", "status", "start_date", "end_date"]),
             ("start_date", "end_date"))
+        self.reports = _dates(  # one row per (symbol, report period): the first announcement
+            reports if reports is not None else pd.DataFrame(columns=["symbol", "report_date", "notice_date"]),
+            ("report_date", "notice_date"))
+
+    def reports_published(self, after: date | None, through: date) -> dict[str, list[date]]:
+        """{symbol: [report periods]} first announced in (after, through]."""
+        r = self.reports
+        mask = r["notice_date"].notna() & (r["notice_date"] <= through)
+        if after is not None:
+            mask &= r["notice_date"] > after
+        out: dict[str, list[date]] = {}
+        for symbol, period in sorted(zip(r.loc[mask, "symbol"].astype(str), r.loc[mask, "report_date"])):
+            out.setdefault(symbol, []).append(period)
+        return out
 
     def ex_dates(self, day: date) -> set[str]:
         """Symbols going ex-rights or ex-dividend on ``day`` (implemented plans only, ADR-004)."""
@@ -71,4 +86,9 @@ def load_reference(database: Path, since: date) -> FrameReference:
             "WHERE suspend_end IS NULL OR suspend_end >= ?", [since]).fetchdf()
         risk = con.execute("SELECT symbol, status, start_date, end_date FROM risk_warning_intervals "
                            "WHERE start_date >= ?", [since]).fetchdf()
-    return FrameReference(dividends, suspensions, risk)
+        reports = None
+        if con.execute("SELECT count(*) FROM information_schema.tables WHERE table_name = 'fin_income'").fetchone()[0]:
+            reports = con.execute(
+                "SELECT symbol, report_date, MIN(notice_date) AS notice_date FROM fin_income "
+                "GROUP BY symbol, report_date HAVING MIN(notice_date) >= ?", [since]).fetchdf()
+    return FrameReference(dividends, suspensions, risk, reports)

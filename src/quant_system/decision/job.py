@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pandas as pd
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -67,7 +68,7 @@ from .intents import IntentPlan, plan_intents, turnover
 from .monitor import Alert, monitor_holdings
 from .paper import run_paper
 from .reference import FrameReference, load_reference
-from .report import write_report
+from .report import write_csv, write_report
 
 LOGGER = logging.getLogger(__name__)
 DECISIONS_DIR = Path("artifacts") / "decisions"
@@ -201,6 +202,27 @@ def supersede(session: Session, run: DecisionRun, actor: str) -> None:
             intent.status = "superseded"
             session.add(Approval(intent_id=intent.intent_id, action="supersede", qty_before=intent.qty,
                                  qty_after=intent.qty, actor=actor, reason="同一交易日重新生成决策"))
+
+
+def universe_scores(strategy: Any, market: MarketData, i: int) -> pd.DataFrame | None:
+    """Composite and family scores at T of every name in the universe or with a
+    score (scores.csv, shown on the instrument page); None for strategies
+    without a factor panel.  Rank counts names in the universe only."""
+    if getattr(strategy, "panel", None) is None or not hasattr(strategy, "family_scores"):
+        return None
+    view = PanelView(market, i)
+    universe = strategy.panel.universe_at(view)
+    composite = strategy.composite(view)
+    families = strategy.family_scores(view)
+    keep = universe | np.isfinite(composite)
+    frame = pd.DataFrame({"symbol": np.asarray(market.symbols)[keep].astype(str), "in_universe": universe[keep],
+                          "score": np.round(composite[keep], 6)})
+    for family, values in families.items():
+        frame[f"f_{family}"] = np.round(values[keep], 4)
+    ranked = frame["in_universe"] & frame["score"].notna()
+    order = frame[ranked].sort_values(["score", "symbol"], ascending=[False, True]).index
+    frame["rank"] = pd.Series(range(1, len(order) + 1), index=order, dtype="Int64")
+    return frame.sort_values(["rank", "symbol"], na_position="last").reset_index(drop=True)
 
 
 def signal_counts(strategy: Any, market: MarketData, i: int) -> tuple[dict[str, int], list[dict[str, int]]] | None:
@@ -470,6 +492,9 @@ def _run_account(factory: sessionmaker[Session], shared: _Shared, account_id: st
                     "reason": force_reason}
         write_report(report_dir, header=header, gates=gates, alerts=alerts, targets=targets, intents=intents,
                      manifest=manifest)
+        scores = universe_scores(strategy, market, i) if strategy is not None and target is not None else None
+        if scores is not None:
+            write_csv(scores, report_dir / "scores.csv")
         session.commit()
     message = next((g.message for g in gates if not g.passed), f"{len(intents)} 条交易意图")
     return RunOutcome(account_id, run_id, status, kind, message, len(intents), str(report_dir))

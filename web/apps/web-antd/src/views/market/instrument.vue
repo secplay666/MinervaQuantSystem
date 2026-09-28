@@ -1,16 +1,20 @@
 <script lang="ts" setup>
-import type { Bar } from '#/api';
+import type { EchartsUIType } from '@vben/plugins/echarts';
 
-import { computed, onMounted, ref, watch } from 'vue';
+import type { Bar, Signals } from '#/api';
+
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
+import { useAccess } from '@vben/access';
 import { Page } from '@vben/common-ui';
+import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
 
 import { Button, Card, Col, Descriptions, Empty, Row, Segmented, Table, Tag } from 'ant-design-vue';
 
-import { barsApi, fundamentalsApi, instrumentApi } from '#/api';
+import { barsApi, fundamentalsApi, instrumentApi, signalsApi } from '#/api';
 import KlineChart from '#/components/kline-chart.vue';
-import { bigYuan, changeColor } from '#/utils/format';
+import { bigYuan, changeColor, DOWN_COLOR, FAMILY_LABEL, FAMILY_ORDER, pct, UP_COLOR } from '#/utils/format';
 
 const route = useRoute();
 const router = useRouter();
@@ -20,6 +24,34 @@ const bars = ref<Bar[]>([]);
 const adjust = ref('qfq');
 const fundamentals = ref<Record<string, any>[]>([]);
 const last = computed(() => bars.value.at(-1));
+const { hasAccessByCodes } = useAccess();
+const signals = ref<Signals>();
+const scoreChart = ref<EchartsUIType>();
+const { renderEcharts } = useEcharts(scoreChart);
+const families = computed(() => FAMILY_ORDER
+  .map((key) => ({ label: FAMILY_LABEL[key] ?? key, value: signals.value?.row?.[`f_${key}`] as null | number | undefined }))
+  .filter((f) => f.value !== undefined));
+
+function drawScores() {
+  const rows = [...families.value].reverse();
+  renderEcharts({
+    grid: { bottom: 20, left: 60, right: 30, top: 10 },
+    series: [{ data: rows.map((f) => ({ itemStyle: { color: (f.value ?? 0) >= 0 ? UP_COLOR : DOWN_COLOR },
+                                        value: f.value ?? null })), type: 'bar' }],
+    tooltip: { trigger: 'axis' },
+    xAxis: { type: 'value' },
+    yAxis: { data: rows.map((f) => f.label), type: 'category' },
+  });
+}
+
+async function loadSignals() {
+  if (!hasAccessByCodes(['decision:view'])) return;
+  signals.value = await signalsApi(symbol.value);
+  if (signals.value.row) {
+    await nextTick();
+    drawScores();
+  }
+}
 
 const BOARD: Record<string, string> = { BSE: '北交所', CHINEXT: '创业板', SSE_MAIN: '沪市主板', STAR: '科创板', SZSE_MAIN: '深市主板' };
 const RISK: Record<string, string> = { '*ST': '*ST', DELISTING: '退市整理', normal: '正常', ST: 'ST' };
@@ -32,7 +64,7 @@ async function load() {
   const [detail, rows] = await Promise.all([instrumentApi(symbol.value), fundamentalsApi(symbol.value)]);
   info.value = detail;
   fundamentals.value = rows;
-  await loadBars();
+  await Promise.all([loadBars(), loadSignals()]);
 }
 
 const fundamentalColumns = [
@@ -87,6 +119,25 @@ onMounted(load);
             </Descriptions.Item>
             <Descriptions.Item v-if="last" label="成交额">{{ bigYuan(last.amount, false) }} 元</Descriptions.Item>
           </Descriptions>
+        </Card>
+        <Card v-if="signals?.run_id" class="mt-4" size="small" :title="`策略得分（${signals.trade_date} 调仓）`">
+          <template v-if="signals.row">
+            <Descriptions :column="1" size="small">
+              <Descriptions.Item label="综合得分">{{ signals.row.score?.toFixed(3) ?? '—' }}</Descriptions.Item>
+              <Descriptions.Item label="股票池内排名">
+                {{ signals.row.rank ? `${signals.row.rank} / ${signals.scored}` : '不在股票池' }}
+              </Descriptions.Item>
+            </Descriptions>
+            <EchartsUI ref="scoreChart" height="240px" />
+            <div class="text-muted-foreground text-xs">各类因子的截面标准分（类内等权平均）；正值表示在该类上更有利。</div>
+          </template>
+          <Empty v-else description="该股票不在股票池内，也没有得分" />
+          <div v-if="signals.history.length" class="mt-2">
+            <div class="mb-1 text-xs font-medium">近期入选目标组合</div>
+            <div v-for="h in signals.history.slice(0, 6)" :key="`${h.trade_date}-${h.account_id}`" class="text-xs">
+              {{ h.trade_date }} · {{ h.account_id }} · 第 {{ h.rank }} 名 · {{ pct(h.target_weight) }}
+            </div>
+          </div>
         </Card>
       </Col>
       <Col :span="24">

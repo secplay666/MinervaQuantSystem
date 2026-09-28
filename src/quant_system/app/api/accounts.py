@@ -25,7 +25,7 @@ from ...decision.review import (
 from ...domain.money import yuan_to_fen
 from ..audit import audit
 from ..db.base import utc_now
-from ..db.models import Account, AccountSnapshot, Fill, PositionEvent, PositionSnapshot
+from ..db.models import Account, AccountSnapshot, DecisionRun, Fill, PositionEvent, PositionSnapshot, TargetPosition
 from ..deps import Principal, api_error, get_session, require, settings_of
 from ..services import account_costs
 
@@ -197,6 +197,44 @@ def get_account(account_id: str, request: Request, _: Principal = Depends(view),
         row["weight"] = (row["market_value_fen"] or 0) / total if total else None
     return {**account_view(session, account), "cash_fen": ledger.cash_fen, "market_value_fen": value,
             "nav_fen": total, "holdings": holdings}
+
+
+@router.get("/accounts/{account_id}/exposure")
+def account_exposure(account_id: str, request: Request, _: Principal = Depends(view),
+                     session: Session = Depends(get_session)) -> dict:
+    """Industry weights of the holdings against the latest target portfolio,
+    and concentration (top 10 weight, effective number of names)."""
+    account = _account(session, account_id)
+    ledger = replay(session, account_id)
+    market = request.app.state.market
+    run = session.scalars(select(DecisionRun).where(
+        DecisionRun.account_id == account.account_id, DecisionRun.status == "complete",
+        DecisionRun.kind.in_(("rebalance", "forced"))).order_by(DecisionRun.trade_date.desc()).limit(1)).first()
+    target = {t.symbol: t.target_weight for t in session.scalars(
+        select(TargetPosition).where(TargetPosition.run_id == run.run_id))} if run else {}
+    symbols = sorted(set(ledger.positions) | set(target))
+    available = market.available() and bool(symbols)
+    closes = market.latest_closes(sorted(ledger.positions)) if available and ledger.positions else {}
+    values = {s: int(round(closes[s] * 100)) * p.quantity for s, p in ledger.positions.items() if s in closes}
+    nav = ledger.cash_fen + sum(values.values())
+    names = market.industries(symbols) if available else {}
+    rows: dict[str, dict] = {}
+    for symbol in symbols:
+        row = rows.setdefault(names.get(symbol, "未分类"), {"weight": 0.0, "target_weight": 0.0, "count": 0,
+                                                            "target_count": 0})
+        if symbol in values and nav:
+            row["weight"] += values[symbol] / nav
+            row["count"] += 1
+        if symbol in target:
+            row["target_weight"] += target[symbol]
+            row["target_count"] += 1
+    weights = sorted((v / nav for v in values.values()), reverse=True) if nav else []
+    return {"as_of": market.latest_session().isoformat() if market.available() else None, "nav_fen": nav,
+            "cash_weight": ledger.cash_fen / nav if nav else None,
+            "target_run_id": run.run_id if run else None, "target_date": run.trade_date.isoformat() if run else None,
+            "top10_weight": sum(weights[:10]), "effective_names": 1 / sum(w * w for w in weights) if weights else 0,
+            "industries": sorted(({"name": k, **v} for k, v in rows.items()),
+                                 key=lambda r: (-max(r["weight"], r["target_weight"]), r["name"]))}
 
 
 @router.get("/accounts/{account_id}/nav")

@@ -3,7 +3,7 @@ import type { Dayjs } from 'dayjs';
 
 import type { EchartsUIType } from '@vben/plugins/echarts';
 
-import type { AccountDetail } from '#/api';
+import type { AccountDetail, Exposure } from '#/api';
 
 import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -19,10 +19,10 @@ import {
 } from 'ant-design-vue';
 
 import {
-  accountApi, accountEventsApi, accountFillsApi, accountNavApi, addFillApi, holdingsCommitApi, holdingsPreviewApi,
-  reverseEventApi,
+  accountApi, accountEventsApi, accountExposureApi, accountFillsApi, accountNavApi, addFillApi, holdingsCommitApi,
+  holdingsPreviewApi, reverseEventApi,
 } from '#/api';
-import { changeColor, dateTime, EVENT_KIND, pct, price, UP_COLOR, yuan } from '#/utils/format';
+import { changeColor, dateTime, DOWN_COLOR, EVENT_KIND, pct, price, UP_COLOR, yuan } from '#/utils/format';
 
 const route = useRoute();
 const router = useRouter();
@@ -33,6 +33,9 @@ const events = ref<Record<string, any>[]>([]);
 const fills = ref<Record<string, any>[]>([]);
 const navChart = ref<EchartsUIType>();
 const { renderEcharts } = useEcharts(navChart);
+const exposureChart = ref<EchartsUIType>();
+const { renderEcharts: renderExposure } = useEcharts(exposureChart);
+const exposure = ref<Exposure>();
 const tab = ref('holdings');
 const canEdit = computed(() => hasAccessByCodes(['account:edit']) && account.value?.mode === 'manual');
 
@@ -55,16 +58,50 @@ async function load() {
 
 const navData = ref<Awaited<ReturnType<typeof accountNavApi>>>([]);
 
+/** Drawdown from the running peak of the daily NAV snapshots. */
+const drawdown = computed(() => {
+  let peak = 0;
+  const series = navData.value.map((r) => {
+    peak = Math.max(peak, r.nav_fen);
+    return peak ? r.nav_fen / peak - 1 : 0;
+  });
+  return { current: series.at(-1) ?? 0, max: Math.min(0, ...series), series };
+});
+
 function drawNav(nav = navData.value) {
   if (!nav.length) return;
   const base = nav[0]!.nav_fen;
   renderEcharts({
-    grid: { bottom: 30, left: 60, right: 20, top: 30 },
-    series: [{ areaStyle: { opacity: 0.08 }, data: nav.map((r) => (r.nav_fen / base).toFixed(4)), itemStyle: { color: UP_COLOR },
-               name: '净值', showSymbol: nav.length < 40, smooth: true, type: 'line' }],
+    grid: [{ bottom: '34%', left: 60, right: 20, top: 30 }, { bottom: 30, height: '20%', left: 60, right: 20 }],
+    legend: { data: ['净值', '回撤'], top: 0 },
+    series: [
+      { areaStyle: { opacity: 0.08 }, data: nav.map((r) => (r.nav_fen / base).toFixed(4)), itemStyle: { color: UP_COLOR },
+        name: '净值', showSymbol: nav.length < 40, smooth: true, type: 'line' },
+      { areaStyle: { opacity: 0.2 }, data: drawdown.value.series.map((d) => (d * 100).toFixed(2)),
+        itemStyle: { color: DOWN_COLOR }, name: '回撤', showSymbol: false, type: 'line', xAxisIndex: 1, yAxisIndex: 1 },
+    ],
     tooltip: { trigger: 'axis' },
-    xAxis: { data: nav.map((r) => r.trade_date), type: 'category' },
-    yAxis: { scale: true, type: 'value' },
+    xAxis: [{ data: nav.map((r) => r.trade_date), type: 'category' },
+            { data: nav.map((r) => r.trade_date), gridIndex: 1, show: false, type: 'category' }],
+    yAxis: [{ scale: true, type: 'value' },
+            { axisLabel: { formatter: '{value}%' }, gridIndex: 1, max: 0, min: (v: { min: number }) => Math.min(v.min, -1),
+              type: 'value' }],
+  });
+}
+
+function drawExposure() {
+  const rows = [...(exposure.value?.industries ?? [])].reverse();
+  if (!rows.length) return;
+  renderExposure({
+    grid: { bottom: 20, left: 90, right: 30, top: 30 },
+    legend: { data: ['持仓', '目标'], top: 0 },
+    series: [
+      { data: rows.map((r) => (r.weight * 100).toFixed(2)), itemStyle: { color: UP_COLOR }, name: '持仓', type: 'bar' },
+      { data: rows.map((r) => (r.target_weight * 100).toFixed(2)), itemStyle: { color: '#94a3b8' }, name: '目标', type: 'bar' },
+    ],
+    tooltip: { trigger: 'axis', valueFormatter: (v: any) => `${v}%` },
+    xAxis: { axisLabel: { formatter: '{value}%' }, type: 'value' },
+    yAxis: { data: rows.map((r) => r.name), type: 'category' },
   });
 }
 
@@ -73,6 +110,10 @@ async function onTab(key: number | string) {
   if (key === 'nav') {
     await nextTick();
     drawNav();
+  } else if (key === 'exposure') {
+    exposure.value = await accountExposureApi(accountId.value);
+    await nextTick();
+    drawExposure();
   }
 }
 
@@ -211,9 +252,31 @@ onMounted(load);
               </template>
             </Table>
           </Tabs.TabPane>
-          <Tabs.TabPane key="nav" tab="净值曲线">
+          <Tabs.TabPane key="nav" tab="净值与回撤">
             <Empty v-if="!navData.length" description="还没有日终快照（每日决策运行后生成）" />
-            <EchartsUI v-else ref="navChart" height="360px" />
+            <template v-else>
+              <Space :size="32" class="mb-2">
+                <Statistic title="最大回撤" :value="pct(drawdown.max)" :value-style="{ color: drawdown.max < 0 ? DOWN_COLOR : undefined }" />
+                <Statistic title="当前回撤" :value="pct(drawdown.current)" />
+                <Statistic title="快照天数" :value="navData.length" />
+              </Space>
+              <EchartsUI ref="navChart" height="420px" />
+            </template>
+          </Tabs.TabPane>
+          <Tabs.TabPane key="exposure" tab="行业暴露">
+            <Empty v-if="!exposure?.industries.length" description="没有持仓，也没有目标组合" />
+            <template v-else>
+              <Space :size="32" class="mb-2">
+                <Statistic title="前十大权重" :value="pct(exposure.top10_weight)" />
+                <Statistic title="有效持股数" :value="exposure.effective_names.toFixed(1)" />
+                <Statistic title="现金" :value="pct(exposure.cash_weight)" />
+                <Statistic title="对照的目标组合" :value="exposure.target_date ?? '—'" />
+              </Space>
+              <EchartsUI ref="exposureChart" :height="`${Math.max(260, exposure.industries.length * 26 + 60)}px`" />
+              <div class="text-muted-foreground mt-1 text-xs">
+                申万一级行业；持仓按最新收盘价计权，目标为最近一次调仓决策的目标权重。有效持股数 = 1 / Σ权重²。
+              </div>
+            </template>
           </Tabs.TabPane>
           <Tabs.TabPane key="fills" :tab="`成交（${fills.length}）`">
             <Table :columns="fillColumns" :data-source="fills" row-key="fill_id" size="small">

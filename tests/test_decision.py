@@ -242,8 +242,14 @@ def test_paper_account_buys_within_cash_and_reruns_reproduce_the_report(tmp_path
     (second,) = run(root, loaded, day, rerun=True)
     assert second.status == "complete" and second.run_id.endswith("-r1")
     a, b = Path(first.report_dir), Path(second.report_dir)
-    for name in ("intents.csv", "targets.csv"):
+    for name in ("intents.csv", "targets.csv", "scores.csv"):
         assert (a / name).read_bytes() == (b / name).read_bytes()
+    scores = pd.read_csv(a / "scores.csv", dtype={"symbol": str})
+    targets = {t.symbol for t in query(root, select(TargetPosition).where(TargetPosition.run_id == first.run_id))}
+    assert targets <= set(scores.loc[scores["in_universe"], "symbol"])
+    ranked = scores.dropna(subset=["rank"])
+    assert list(ranked["rank"]) == list(range(1, len(ranked) + 1)) and ranked["score"].is_monotonic_decreasing
+    assert {f"f_{f}" for f in ("value", "momentum", "size")} <= set(scores.columns)
     assert (a / "report.md").read_text(encoding="utf-8").replace(first.run_id, "RUN") == \
            (b / "report.md").read_text(encoding="utf-8").replace(second.run_id, "RUN")
     runs = {r.run_id: r.status for r in query(root, select(DecisionRun))}
@@ -330,6 +336,44 @@ def test_monitoring_day_alerts_on_ex_dates_and_expires_old_intents(tmp_path: Pat
     run(root2, loaded, before)
     titles = [e.title for e in query(root2, select(Event).where(Event.symbol == str(ex["symbol"])))]
     assert any("除权" in t for t in titles)
+
+
+def test_reports_published_window() -> None:
+    reports = pd.DataFrame({"symbol": ["600000", "600000", "000001"],
+                            "report_date": [date(2026, 6, 30), date(2025, 12, 31), date(2026, 6, 30)],
+                            "notice_date": [date(2026, 8, 28), date(2026, 8, 27), date(2026, 8, 30)]})
+    reference = FrameReference(reports=reports)
+    assert reference.reports_published(date(2026, 8, 27), date(2026, 8, 28)) == {"600000": [date(2026, 6, 30)]}
+    assert reference.reports_published(None, date(2026, 8, 30)) == {
+        "000001": [date(2026, 6, 30)], "600000": [date(2025, 12, 31), date(2026, 6, 30)]}
+
+
+def test_monitoring_announces_new_periodic_reports(tmp_path: Path, loaded, golden) -> None:
+    import dataclasses
+
+    market, _, dividends = loaded
+    days = rebalance_days(golden)
+    i = market.session_index(days[10]) + 2  # a monitoring day
+    day, previous = market.sessions[i], market.sessions[i - 1]
+    symbol = str(market.symbols[0])
+    root = make_root(tmp_path)
+    _, factory = open_database(root / "app.sqlite")
+    with factory() as session:
+        create_account(session, root, account_id="m", name="m", mode="manual", strategy_config=CONFIG,
+                       initial_cash_fen=100_000_000, start_date=previous, actor="test")
+        add_event(session, "m", previous, "adjustment", {"old_quantity": 0, "new_quantity": 1000, "cost_fen": 0},
+                  event_id="h", actor="test", symbol=symbol)
+        session.commit()
+    reports = pd.DataFrame({"symbol": [symbol] * 3,
+                            "report_date": [date(day.year - 1, 12, 31), date(day.year, 3, 31), date(day.year - 1, 9, 30)],
+                            "notice_date": [day, day, previous]})  # the last one was announced yesterday
+    custom = dataclasses.replace(loaders(loaded, day),
+                                 reference=lambda _m, _s: FrameReference(dividends, None, None, reports))
+    (outcome,) = run_daily(root, db_path=root / "app.sqlite", session_date=day, now=evening(day), loaders=custom)
+    assert outcome.status == "complete" and outcome.kind == "monitor"
+    titles = [e.title for e in query(root, select(Event).where(Event.symbol == symbol))]
+    assert f"{symbol} 发布 {day.year - 1} 年年报、{day.year} 年一季报" in titles
+    assert not any("三季报" in t for t in titles)
 
 
 def test_accounts_are_not_decided_before_their_start_date(tmp_path: Path, loaded, golden) -> None:

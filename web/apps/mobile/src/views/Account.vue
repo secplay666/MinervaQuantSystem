@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import { request } from '../api';
@@ -8,12 +8,29 @@ import { color, pct, yuan } from '../format';
 const route = useRoute();
 const router = useRouter();
 const account = ref<any>();
+const nav = ref<{ nav_fen: number }[]>([]);
+const exposure = ref<any>();
 const loading = ref(false);
+
+/** Drawdown from the running peak of the daily NAV snapshots. */
+const drawdown = computed(() => {
+  let peak = 0;
+  let max = 0;
+  let current = 0;
+  for (const row of nav.value) {
+    peak = Math.max(peak, row.nav_fen);
+    current = peak ? row.nav_fen / peak - 1 : 0;
+    max = Math.min(max, current);
+  }
+  return { current, max };
+});
 
 async function load() {
   loading.value = true;
   try {
-    account.value = await request(`/accounts/${route.params.accountId}`);
+    const id = route.params.accountId;
+    [account.value, nav.value, exposure.value] = await Promise.all([
+      request(`/accounts/${id}`), request(`/accounts/${id}/nav`), request(`/accounts/${id}/exposure`)]);
   } finally {
     loading.value = false;
   }
@@ -36,6 +53,15 @@ onMounted(load);
           </b>
         </van-grid-item>
       </van-grid>
+      <van-grid :column-num="3" :border="false">
+        <van-grid-item><div class="muted">最大回撤</div><b>{{ pct(drawdown.max) }}</b></van-grid-item>
+        <van-grid-item><div class="muted">当前回撤</div><b>{{ pct(drawdown.current) }}</b></van-grid-item>
+        <van-grid-item><div class="muted">前十大权重</div><b>{{ pct(exposure?.top10_weight) }}</b></van-grid-item>
+      </van-grid>
+      <van-cell-group v-if="exposure?.industries?.length" inset title="行业暴露（持仓 / 目标）">
+        <van-cell v-for="r in exposure.industries.slice(0, 8)" :key="r.name" :title="r.name"
+                  :value="`${pct(r.weight, 1)} / ${pct(r.target_weight, 1)}`" />
+      </van-cell-group>
       <van-cell-group inset :title="`持仓（${account.holdings.length}）`">
         <van-empty v-if="!account.holdings.length" description="暂无持仓" image-size="60" />
         <van-cell v-for="h in account.holdings" :key="h.symbol" is-link :title="`${h.symbol} ${h.name ?? ''}`"

@@ -2,6 +2,12 @@ import dayjs from 'dayjs';
 
 /** A-share convention: red for gains, green for losses. */
 export const UP_COLOR = '#e5484d';
+export const FAMILY_LABEL: Record<string, string> = {
+  growth: '成长', liquidity: '流动性', momentum: '动量', quality: '质量', size: '规模', technical: '技术', value: '价值',
+  volatility: '波动',
+};
+/** Family order of the factor library (features/registry.py FAMILIES). */
+export const FAMILY_ORDER = ['value', 'quality', 'growth', 'momentum', 'volatility', 'liquidity', 'size', 'technical'];
 export const DOWN_COLOR = '#16a34a';
 
 export function yuan(fen?: null | number, digits = 2): string {
