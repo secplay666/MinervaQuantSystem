@@ -70,8 +70,13 @@ def test_rule_construction_respects_every_constraint(seed: int, n: int, held: in
     for j in np.flatnonzero(current > 0):
         allowed = eligible[j] and np.isfinite(scores[j]) and prices[j] * min_lot[j] <= spec.lot_tolerance * target
         if allowed and rank[int(j)] < n:  # inside N: kept unless its industry is full
+            # "Full" includes a cap of zero names: with n=3 and six industries,
+            # bench +/- delta rounds some industries down to nothing.
+            universe = industry[eligible]
+            bench = {int(k): c / len(universe) for k, c in zip(*np.unique(universe, return_counts=True))}
+            _, high, _ = industry_bounds(bench, n, spec.industry_deviation)
             counts = np.bincount(industry[result.selected], minlength=6)
-            assert j in result.selected or counts[industry[j]] > 0
+            assert j in result.selected or counts[industry[j]] >= high[int(industry[j])]
 
 
 def _frames(seed: int = 5):
