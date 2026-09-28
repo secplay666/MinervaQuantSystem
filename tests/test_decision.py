@@ -330,3 +330,11 @@ def test_monitoring_day_alerts_on_ex_dates_and_expires_old_intents(tmp_path: Pat
     run(root2, loaded, before)
     titles = [e.title for e in query(root2, select(Event).where(Event.symbol == str(ex["symbol"])))]
     assert any("除权" in t for t in titles)
+
+
+def test_accounts_are_not_decided_before_their_start_date(tmp_path: Path, loaded, golden) -> None:
+    root = make_root(tmp_path)
+    day = rebalance_days(golden)[10]
+    paper_account(root, day + timedelta(days=1))
+    (outcome,) = run(root, loaded, day)
+    assert outcome.status == "skipped" and not query(root, select(DecisionRun))

@@ -358,6 +358,8 @@ def _run_account(factory: sessionmaker[Session], shared: _Shared, account_id: st
     market, day, i, next_day = shared.market, shared.session, shared.i, shared.next_day
     with factory() as session:
         account = session.get(Account, account_id)
+        if account.start_date > day:
+            return RunOutcome(account_id, None, "skipped", None, f"账户从 {account.start_date} 开始，早于该日不决策")
         existing = _existing(session, account_id, day)
         complete = [run for run in existing if run.status == "complete"]
         if complete and not rerun:
