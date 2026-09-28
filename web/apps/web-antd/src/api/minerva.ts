@@ -157,6 +157,29 @@ export interface ManagedUser {
 export const metaApi = () => requestClient.get<{ environment: string; environment_label: string; name: string }>('/meta');
 export const systemStatusApi = () => requestClient.get<Record<string, any>>('/system/status');
 
+export interface NotifyDelivery {
+  attempted_at: string;
+  attempts: number;
+  channel: string;
+  error: null | string;
+  event_id: string;
+  level: string;
+  sent_at: null | string;
+  status: string;
+  title: string;
+}
+export interface NotifyStatus {
+  channels: { label: string; name: string }[];
+  deliveries: NotifyDelivery[];
+  link: null | string;
+  lookback_hours: number;
+  min_level: string;
+  problems: string[];
+}
+export const notifyStatusApi = () => requestClient.get<NotifyStatus>('/system/notify');
+export const notifyTestApi = () =>
+  requestClient.post<{ results: { channel: string; error: null | string; status: string }[] }>('/system/notify/test');
+
 // -- decisions -----------------------------------------------------------------------------
 export const decisionsApi = (params: { account_id?: string; include_superseded?: boolean; limit?: number; trade_date?: string }) =>
   requestClient.get<DecisionRun[]>('/decisions', { params });

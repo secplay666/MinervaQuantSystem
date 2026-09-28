@@ -342,3 +342,18 @@ class EventRead(Base):
     event_id: Mapped[str] = mapped_column(ForeignKey("events.event_id", ondelete="CASCADE"), primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     read_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
+
+
+class EventPush(Base):
+    """Delivery of an event to an external channel (app/notify.py): one row per
+    event and channel, so a failing channel does not resend on the others."""
+
+    __tablename__ = "event_pushes"
+
+    event_id: Mapped[str] = mapped_column(ForeignKey("events.event_id", ondelete="CASCADE"), primary_key=True)
+    channel: Mapped[str] = mapped_column(String(16), primary_key=True)
+    status: Mapped[str] = mapped_column(String(8))  # sending | sent | failed
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    attempted_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
+    sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    error: Mapped[str | None] = mapped_column(Text)

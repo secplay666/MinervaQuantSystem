@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .db.base import DEFAULT_DB
+from .notify import NotifyConfig
 
 DEFAULT_ENV_FILE = Path.home() / ".config" / "minerva" / "app.env"
 ENV_LABELS = {"test": "测试环境", "production": "生产环境", "development": "开发环境"}
@@ -34,6 +35,7 @@ class AppSettings:
     trusted_proxies: tuple[str, ...] = ("127.0.0.1", "::1")
     web_dir: Path | None = None  # built PC frontend served at /, if present
     mobile_dir: Path | None = None  # built mobile frontend served at /m/ (phones without the app)
+    notify: NotifyConfig = field(default_factory=NotifyConfig)  # external channels (app/notify.py)
     extra: dict[str, str] = field(default_factory=dict)
 
     @property
@@ -77,11 +79,13 @@ def init_env_file(path: Path = DEFAULT_ENV_FILE) -> bool:
     return True
 
 
-def load_settings(root: Path, env_file: Path | None = None, **overrides: object) -> AppSettings:
+def load_settings(root: Path, env_file: Path | None = None, require_secret: bool = True,
+                  **overrides: object) -> AppSettings:
+    """``require_secret=False`` for commands that never sign tokens (events, notifications)."""
     values = read_env_file(env_file or Path(os.environ.get("MINERVA_ENV_FILE", DEFAULT_ENV_FILE)))
     values.update({k: v for k, v in os.environ.items() if k.startswith("MINERVA_")})
     secret = str(overrides.pop("secret_key", None) or values.get("MINERVA_SECRET_KEY", ""))
-    if len(secret) < 32:
+    if len(secret) < 32 and require_secret:
         raise SettingsError("MINERVA_SECRET_KEY is missing or too short; run `quant-app init-secret`")
     db = overrides.pop("db_path", None) or values.get("MINERVA_DB")
     web = overrides.pop("web_dir", None) or values.get("MINERVA_WEB_DIR")
@@ -91,4 +95,5 @@ def load_settings(root: Path, env_file: Path | None = None, **overrides: object)
         root=root, db_path=Path(db) if db else root / DEFAULT_DB, secret_key=secret,
         environment=str(overrides.pop("environment", None) or values.get("MINERVA_ENV", "test")),
         cors_origins=tuple(o.strip() for o in cors.split(",") if o.strip()),
-        web_dir=Path(web) if web else None, mobile_dir=Path(mobile) if mobile else None, **overrides)  # type: ignore[arg-type]
+        web_dir=Path(web) if web else None, mobile_dir=Path(mobile) if mobile else None,
+        notify=overrides.pop("notify", None) or NotifyConfig.from_values(values), **overrides)  # type: ignore[arg-type]

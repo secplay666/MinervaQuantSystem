@@ -7,6 +7,8 @@
     quant-app tls show                                       # fingerprints and the app's SPKI pins
     quant-app serve [--host 127.0.0.1] [--port 8443]         # HTTPS when a server certificate exists
     quant-app openapi --out web/openapi.json     # schema for the frontend's generated client
+    quant-app event add --level critical --category data --title "..."   # record an event (scripts)
+    quant-app notify status | test | dispatch    # external notifications (app/notify.py)
 """
 
 from __future__ import annotations
@@ -29,9 +31,10 @@ def _root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-def _settings(args: argparse.Namespace):
+def _settings(args: argparse.Namespace, require_secret: bool = True):
     try:
-        return load_settings(Path(args.root).resolve(), Path(args.env_file) if args.env_file else None)
+        return load_settings(Path(args.root).resolve(), Path(args.env_file) if args.env_file else None,
+                             require_secret=require_secret)
     except SettingsError as exc:
         print(exc, file=sys.stderr)
         sys.exit(2)
@@ -134,6 +137,59 @@ def command_openapi(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_event_add(args: argparse.Namespace) -> int:
+    import secrets
+    from datetime import date
+
+    from .db.base import utc_now
+    from .db.models import Event
+
+    settings = _settings(args, require_secret=False)
+    _, sessions = open_database(settings.db_path)
+    now = utc_now()
+    event_id = args.id or f"{args.category}-{now:%Y%m%dT%H%M%S}-{secrets.token_hex(3)}"
+    with sessions() as session:
+        if session.get(Event, event_id) is None:
+            session.add(Event(event_id=event_id, at=now, level=args.level, category=args.category, title=args.title,
+                              body=args.body, trade_date=date.fromisoformat(args.trade_date) if args.trade_date
+                              else None, account_id=args.account, action_hint=args.hint))
+            session.commit()
+    print(event_id)
+    return 0
+
+
+def command_notify_status(args: argparse.Namespace) -> int:
+    print(json.dumps(_settings(args, require_secret=False).notify.describe(), ensure_ascii=False, indent=2))
+    return 0
+
+
+def command_notify_test(args: argparse.Namespace) -> int:
+    from .notify import send_test
+
+    settings = _settings(args, require_secret=False)
+    return _report(settings, send_test(settings.notify, settings.environment_label))
+
+
+def command_notify_dispatch(args: argparse.Namespace) -> int:
+    from .notify import dispatch
+
+    settings = _settings(args, require_secret=False)
+    _, sessions = open_database(settings.db_path)
+    with sessions() as session:
+        return _report(settings, dispatch(session, settings.notify, settings.environment_label))
+
+
+def _report(settings, results) -> int:  # type: ignore[no-untyped-def]
+    for problem in settings.notify.problems:
+        print(f"config: {problem}", file=sys.stderr)
+    if not results:
+        print("no notification channel configured (MINERVA_NOTIFY_WECOM / MINERVA_NOTIFY_SERVERCHAN)")
+    for result in results:
+        print(f"{result.channel}: {result.status}" + (f", {result.events} events" if result.events else "")
+              + (f" ({result.error})" if result.error else ""))
+    return 1 if any(r.status == "failed" for r in results) else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Minerva decision-support API")
     parser.add_argument("--root", default=str(_root()))
@@ -165,6 +221,22 @@ def build_parser() -> argparse.ArgumentParser:
     openapi.add_argument("--out", required=True)
     openapi.add_argument("--scratch-db", default="openapi-scratch.sqlite")
     openapi.set_defaults(handler=command_openapi)
+    event = sub.add_parser("event").add_subparsers(dest="event_command", required=True)
+    event_add = event.add_parser("add", help="record an event in the notification centre")
+    event_add.add_argument("--level", choices=["info", "warning", "critical"], required=True)
+    event_add.add_argument("--category", choices=["data", "decision", "risk", "account", "system"], required=True)
+    event_add.add_argument("--title", required=True)
+    event_add.add_argument("--body")
+    event_add.add_argument("--hint")
+    event_add.add_argument("--account")
+    event_add.add_argument("--trade-date")
+    event_add.add_argument("--id", help="event id; an existing id is left unchanged")
+    event_add.set_defaults(handler=command_event_add)
+    notify = sub.add_parser("notify").add_subparsers(dest="notify_command", required=True)
+    notify.add_parser("status", help="configured channels (secrets masked)").set_defaults(
+        handler=command_notify_status)
+    notify.add_parser("test", help="send a test message to every channel").set_defaults(handler=command_notify_test)
+    notify.add_parser("dispatch", help="push a digest of new events").set_defaults(handler=command_notify_dispatch)
     return parser
 
 

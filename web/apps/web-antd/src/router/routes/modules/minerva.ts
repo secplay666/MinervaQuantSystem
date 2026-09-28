@@ -62,7 +62,7 @@ const routes: RouteRecordRaw[] = [
   {
     name: 'System',
     path: '/system',
-    meta: { authority: ['user:manage', 'audit:view'], icon: 'lucide:settings', order: 9, title: '系统管理' },
+    meta: { authority: ['user:manage', 'audit:view', 'notify:manage'], icon: 'lucide:settings', order: 9, title: '系统管理' },
     children: [
       {
         name: 'Users',
@@ -87,6 +87,12 @@ const routes: RouteRecordRaw[] = [
         path: '/system/audit',
         component: () => import('#/views/system/audit.vue'),
         meta: { authority: ['audit:view'], icon: 'lucide:scroll-text', title: '审计日志' },
+      },
+      {
+        name: 'Notify',
+        path: '/system/notify',
+        component: () => import('#/views/system/notify.vue'),
+        meta: { authority: ['notify:manage'], icon: 'lucide:bell-ring', title: '外部通知' },
       },
     ],
   },

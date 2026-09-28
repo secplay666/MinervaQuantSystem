@@ -21,6 +21,7 @@ PERMISSIONS: dict[str, tuple[str, str]] = {
     "account:manage": ("新建与停用账户", "账户"),
     "user:manage": ("管理用户与角色", "系统"),
     "audit:view": ("查看审计日志", "系统"),
+    "notify:manage": ("查看通知渠道与发送测试消息", "系统"),
 }
 VIEW = {code for code in PERMISSIONS if code.endswith(":view") and code != "audit:view"}
 ROLES: dict[str, tuple[str, str, set[str]]] = {

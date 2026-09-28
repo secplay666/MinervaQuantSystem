@@ -84,6 +84,27 @@ note "== backup"
 QUANT_UPDATE_LOCKED=1 "$REPO/scripts/backup_data.sh" >> "$LOG" 2>&1
 backup_rc=$?
 note "== backup exit $backup_rc"
+
+# Failures the decision job cannot see become events in the notification
+# centre; then one digest of the new events goes to the external channels
+# (src/quant_system/app/notify.py; nothing is sent unless one is configured).
+APP="$REPO/.venv/bin/quant-app"
+if [[ -x "$APP" ]]; then
+  day="$(date +%F)"
+  if (( rc != 0 )); then
+    "$APP" --root "$REPO" event add --level critical --category data --id "ingest-$day-$now" \
+      --title "每日数据采集未完成（退出码 $rc）" --body "日志：logs/daily/$day.log" \
+      --hint "查看日志和质量报告；数据页有最近的采集记录" >> "$LOG" 2>&1
+  fi
+  if (( backup_rc != 0 )); then
+    "$APP" --root "$REPO" event add --level critical --category data --id "backup-$day-$now" \
+      --title "数据备份失败（退出码 $backup_rc）" --body "日志：logs/daily/$day.log" \
+      --hint "检查备份盘；下一次成功的备份会补齐" >> "$LOG" 2>&1
+  fi
+  note "== notify"
+  "$APP" --root "$REPO" notify dispatch >> "$LOG" 2>&1
+  note "== notify exit $?"
+fi
 (( rc == 0 && decision_rc != 0 )) && rc=4
 (( rc == 0 && backup_rc != 0 )) && rc=3
 exit "$rc"
