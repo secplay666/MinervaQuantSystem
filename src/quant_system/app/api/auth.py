@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+from collections import deque
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, Request
@@ -29,6 +31,17 @@ from ..security import (
 
 router = APIRouter(prefix="/auth", tags=["认证"])
 _DUMMY_HASH = hash_password("timing-equaliser-not-a-password")
+IP_WINDOW_SECONDS = 15 * 60
+IP_MAX_FAILURES = 20  # per client IP and window, across all usernames (password spraying)
+
+
+def _ip_failures(request: Request, ip: str | None) -> deque:
+    table: dict = request.app.state.__dict__.setdefault("login_failures", {})
+    failures = table.setdefault(ip or "?", deque())
+    cutoff = time.monotonic() - IP_WINDOW_SECONDS
+    while failures and failures[0] < cutoff:
+        failures.popleft()
+    return failures
 
 
 class LoginIn(BaseModel):
@@ -81,9 +94,13 @@ def login(body: LoginIn, request: Request, session: Session = Depends(get_sessio
     settings = settings_of(request)
     now = utc_now()
     ip = client_ip(request)
+    failures = _ip_failures(request, ip)
+    if len(failures) >= IP_MAX_FAILURES:
+        raise api_error(429, "too_many_attempts", "登录失败次数过多，请 15 分钟后再试")
     user = session.scalar(select(User).where(User.username == body.username))
     if user is None:
         verify_password(_DUMMY_HASH, body.password)  # same cost as a real check
+        failures.append(time.monotonic())
         raise api_error(401, "invalid_credentials", "用户名或密码错误")
     if user.locked_until is not None and user.locked_until > now:
         minutes = int((user.locked_until - now).total_seconds() // 60) + 1
@@ -94,6 +111,7 @@ def login(body: LoginIn, request: Request, session: Session = Depends(get_sessio
             raise api_error(401, "totp_required", "请输入两步验证码")
         ok = verify_totp(user.totp_secret, body.totp)
     if not ok:
+        failures.append(time.monotonic())
         user.failed_logins += 1
         locked = user.failed_logins >= settings.lockout_threshold
         if locked:

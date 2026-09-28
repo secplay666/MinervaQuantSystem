@@ -108,6 +108,15 @@ def test_lockout_after_repeated_failures_and_unlock(env) -> None:
     assert client.post("/api/v1/auth/login", json={"username": "nobody", "password": "x"}).status_code == 401
 
 
+def test_login_failures_are_throttled_per_client_ip(env) -> None:
+    _, _, client, sessions = env
+    add_user(sessions, "erin", ["viewer"])
+    for k in range(20):  # spraying different usernames from one address
+        assert client.post("/api/v1/auth/login", json={"username": f"guess{k}", "password": "x"}).status_code == 401
+    throttled = client.post("/api/v1/auth/login", json={"username": "erin", "password": PASSWORD})
+    assert throttled.status_code == 429 and throttled.json()["detail"]["code"] == "too_many_attempts"
+
+
 def test_refresh_tokens_rotate_and_reuse_ends_all_sessions(env) -> None:
     _, _, client, sessions = env
     add_user(sessions, "carol", ["viewer"])

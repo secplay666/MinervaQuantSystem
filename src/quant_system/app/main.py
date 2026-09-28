@@ -55,6 +55,8 @@ def create_app(settings: AppSettings) -> FastAPI:
             response.headers.setdefault(key, value)
         if request.url.path.startswith("/api/"):
             response.headers.setdefault("Cache-Control", "no-store")
+        if request.url.scheme == "https":
+            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
         response.headers["X-Environment"] = settings.environment
         return response
 
