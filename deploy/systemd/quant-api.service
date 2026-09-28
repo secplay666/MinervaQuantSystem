@@ -1,0 +1,16 @@
+[Unit]
+Description=MinervaQuantSystem decision-support API and web frontend (HTTPS on 127.0.0.1)
+Documentation=file://@REPO@/README.md
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@
+Environment=MINERVA_WEB_DIR=@REPO@/web/apps/web-antd/dist
+ExecStart=@REPO@/.venv/bin/quant-app --root @DATA_ROOT@ serve --host 127.0.0.1 --port @PORT@
+Restart=on-failure
+RestartSec=5
+Nice=5
+
+[Install]
+WantedBy=default.target
