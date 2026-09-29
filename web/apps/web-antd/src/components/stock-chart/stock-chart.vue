@@ -8,7 +8,7 @@
  */
 import type { Chart, DataLoader, KLineData, Overlay, OverlayCreate, OverlayMode } from 'klinecharts';
 
-import type { AutoLineData, MarkData, RangeStats } from './extensions';
+import type { AutoLabel, AutoLineData, MarkData, RangeStats } from './extensions';
 
 import type { BarPeriod, ChartAnalysis, ChartMarks, ChartPoint, SavedOverlay } from '#/api';
 
@@ -331,15 +331,24 @@ function renderAuto() {
   const data = chart.getDataList();
   autoEvents.value = {};
   if (!a || !data.length) return;
-  const point = (p: ChartPoint) => {
+  type Pt = { timestamp: number; value: number };
+  const point = (p: ChartPoint): null | Pt => {
     const index = barIndexFor(data, p.date);
     return index < 0 ? null : { timestamp: data[index]!.timestamp, value: p.price };
   };
   const overlays: OverlayCreate[] = [];
-  const line = (name: string, pts: (null | { timestamp: number; value: number })[], extendData: AutoLineData) => {
-    if (pts.length >= 2 && pts.every(Boolean)) {
-      overlays.push({ extendData, groupId: 'auto', lock: true, name, points: pts as { timestamp: number; value: number }[] });
-    }
+  const line = (name: string, pts: (null | Pt)[], extendData: AutoLineData): boolean => {
+    if (pts.length < 2 || !pts.every(Boolean)) return false;
+    overlays.push({ extendData, groupId: 'auto', lock: true, name, points: pts as Pt[] });
+    return true;
+  };
+  // Labels are laid out together (the autoLabels overlay), in this order of precedence.
+  const labelPoints: Pt[] = [];
+  const buckets: AutoLabel[][] = [[], [], [], []]; // patterns, trend lines, targets, price bands
+  const addLabel = (bucket: number, pts: Pt[], spec: Omit<AutoLabel, 'anchor' | 'to'>) => {
+    const anchor = labelPoints.push(pts[0]!) - 1;
+    const to = pts[1] ? labelPoints.push(pts[1]) - 1 : undefined;
+    buckets[bucket]!.push({ ...spec, anchor, to });
   };
   if (settings.auto.pivots && a.pivots.length > 1) {
     line('autoPolyline', a.pivots.map(point).filter(Boolean), { color: '#94a3b8', dashed: true, dots: true });
@@ -348,16 +357,21 @@ function renderAuto() {
     for (const lv of a.levels) {
       const start = barIndexFor(data, lv.first_date);
       const from = data[Math.max(0, start)]!.timestamp;
+      const color = LEVEL_COLOR[lv.kind];
       const text = `${lv.kind === 'resistance' ? '阻力' : '支撑'} ${lv.price.toFixed(2)}${lv.extreme ? (lv.kind === 'resistance' ? ' 区间最高' : ' 区间最低') : ` ×${lv.touches}`}${lv.flipped ? ' ⇅' : ''}`;
-      overlays.push({ extendData: { color: LEVEL_COLOR[lv.kind], label: text }, groupId: 'auto', lock: true, name: 'priceZone',
+      overlays.push({ extendData: { color }, groupId: 'auto', lock: true, name: 'priceZone',
                       points: [{ timestamp: from, value: lv.low }, { timestamp: from, value: lv.high }] });
+      addLabel(3, [{ timestamp: from, value: lv.high }], { color, dy: -1, right: true, text });
     }
   }
   if (settings.auto.trends) {
     for (const tl of a.trendlines) {
       const color = tl.kind === 'up' ? UP_COLOR : DOWN_COLOR;
-      const label = `${tl.kind === 'up' ? '上升趋势线' : '下降趋势线'} ${tl.touches} 次${tl.broken ? (tl.kind === 'up' ? ' 已跌破' : ' 已突破') : ''}`;
-      line('autoLine', [point(tl.start), point(tl.broken ? tl.end : tl.anchor)], { color, extend: !tl.broken, label, width: 1.5 });
+      const text = `${tl.kind === 'up' ? '上升趋势线' : '下降趋势线'} ${tl.touches} 次${tl.broken ? (tl.kind === 'up' ? ' 已跌破' : ' 已突破') : ''}`;
+      const pts = [point(tl.start), point(tl.broken ? tl.end : tl.anchor)];
+      if (line('autoLine', pts, { color, extend: !tl.broken, width: 1.5 })) {
+        addLabel(1, pts as Pt[], { color, extend: !tl.broken, text });
+      }
       if (tl.channel) line('autoLine', [point(tl.channel.start), point(tl.channel.end)], { color, dashed: true, extend: !tl.broken });
     }
   }
@@ -367,15 +381,29 @@ function renderAuto() {
     if (from && to) overlays.push({ groupId: 'auto', lock: true, name: 'fibonacciLine', points: [from, to] });
   }
   if (settings.auto.patterns) {
+    const lastDay = day(data.at(-1)!.timestamp);
     for (const pattern of a.patterns) {
       const color = pattern.status === 'failed' ? '#9ca3af' : DIRECTION_COLOR[pattern.direction] ?? '#eab308';
-      line('autoPolyline', pattern.points.map(point), { color, dots: true, label: `${pattern.name}·${STATUS_LABEL[pattern.status]}`, width: 1.5 });
+      const pts = pattern.points.map(point);
+      if (line('autoPolyline', pts, { color, dots: true, width: 1.5 })) {
+        const top = (pts as Pt[]).reduce((x, y) => (y.value > x.value ? y : x)); // label over the pattern's highest point
+        addLabel(0, [top], { color, dy: -6, text: `${pattern.name}·${STATUS_LABEL[pattern.status]}` });
+      }
       for (const l of pattern.lines) line('autoLine', [point(l.start), point(l.end)], { color, dashed: true });
       if (pattern.target !== null && pattern.status !== 'failed') {
-        line('autoLine', [point({ date: pattern.end_date, price: pattern.target }), point({ date: data.at(-1) ? day(data.at(-1)!.timestamp) : pattern.end_date, price: pattern.target })],
-             { color, dashed: true, label: `目标 ${pattern.target.toFixed(2)}` });
+        const target = [point({ date: pattern.end_date, price: pattern.target }), point({ date: lastDay, price: pattern.target })];
+        if (line('autoLine', target, { color, dashed: true })) {
+          addLabel(2, target as Pt[], { color, text: `${pattern.name}目标 ${pattern.target.toFixed(2)}` });
+        }
       }
     }
+  }
+  const labels = buckets.flat();
+  if (labels.length) {
+    // Keep clear of the legend: the title and time lines, then one line per price-pane indicator.
+    const legendLines = 2 + settings.main.length + (settings.compare ? 1 : 0);
+    overlays.push({ extendData: { labels, reserveTop: legendLines * 19 + 6, reserveWidth: 620 }, groupId: 'auto', lock: true,
+                    name: 'autoLabels', points: labelPoints });
   }
   const events: Record<number, string[]> = {};
   const DIRECTION_TEXT: Record<string, string> = { bearish: '看跌', bullish: '看涨', neutral: '中性' };

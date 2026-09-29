@@ -4,7 +4,7 @@
  */
 import type { KLineData, OverlayFigure } from 'klinecharts';
 
-import { registerIndicator, registerOverlay } from 'klinecharts';
+import { registerIndicator, registerOverlay, utils } from 'klinecharts';
 
 export interface MarkData {
   below: boolean; // under the low (buys) or above the high (everything else)
@@ -12,6 +12,21 @@ export interface MarkData {
   outline?: boolean; // hollow badge (candlestick patterns), so it reads apart from events
   stack: number; // badges on the same bar and side are stacked
   text: string;
+}
+
+/**
+ * A label of the automatic lines, placed by the one ``autoLabels`` overlay so
+ * labels of different kinds (patterns, trend lines, targets, price bands) do
+ * not cover each other.  Points are indices into that overlay's points.
+ */
+export interface AutoLabel {
+  anchor: number;
+  color: string;
+  dy?: number; // preferred offset from the anchor, negative = above
+  extend?: boolean; // with ``to``: the line runs on to the right edge
+  right?: boolean; // pinned to the chart's right edge (price bands)
+  text: string;
+  to?: number; // the label rides the line anchor -> to, at its right-most visible spot
 }
 
 /** Automatic lines (read-only overlays): a line through points, a line that may run to the right edge, a price band. */
@@ -206,6 +221,68 @@ export function registerChartExtensions() {
           styles: { color: d.color, size: 1, style: 'dashed', dashedValue: [2, 3] }, ignoreEvent: true },
         ...(d.label ? [label(bounding.width - 4, top - 1, d.label, d.color, 'right')] : []),
       ];
+    },
+  });
+
+  // All automatic labels in one overlay: each goes where it prefers unless that
+  // spot is taken, then moves up or down one label height at a time and keeps a
+  // thin leader line to its anchor.  Earlier labels win (the caller orders them).
+  const LABEL_HEIGHT = 16;
+  registerOverlay<{ labels: AutoLabel[]; reserveTop?: number; reserveWidth?: number }>({
+    name: 'autoLabels',
+    totalStep: 2,
+    lock: true,
+    needDefaultPointFigure: false,
+    needDefaultXAxisFigure: false,
+    needDefaultYAxisFigure: false,
+    createPointFigures: ({ bounding, coordinates, overlay }) => {
+      const figures: OverlayFigure[] = [];
+      const placed: { x1: number; x2: number; y1: number; y2: number }[] = [];
+      const reserveTop = overlay.extendData?.reserveTop ?? 0; // the chart's own legend at the top left
+      if (reserveTop) placed.push({ x1: 0, x2: Math.min(bounding.width, overlay.extendData?.reserveWidth ?? 600), y1: 0, y2: reserveTop });
+      const overlaps = (box: (typeof placed)[number]) => placed.some((b) => box.x1 < b.x2 + 2 && box.x2 > b.x1 - 2
+                                                                         && box.y1 < b.y2 + 1 && box.y2 > b.y1 - 1);
+      for (const l of overlay.extendData?.labels ?? []) {
+        const a = coordinates[l.anchor];
+        if (!a) continue;
+        let x = a.x;
+        let y = a.y;
+        let align: 'center' | 'left' | 'right' = 'center';
+        if (l.right) {
+          x = bounding.width - 4;
+          align = 'right';
+        } else if (l.to !== undefined && coordinates[l.to]) {
+          const b = coordinates[l.to]!;
+          const end = Math.min(l.extend ? bounding.width : b.x, bounding.width) - 4;
+          const start = Math.max(a.x, 0);
+          if (end <= start || b.x === a.x) continue; // no visible part of the line
+          x = end;
+          y = a.y + ((b.y - a.y) / (b.x - a.x)) * (end - a.x);
+          align = 'right';
+        } else if (a.x < 0 || a.x > bounding.width) {
+          continue;
+        }
+        const width = utils.calcTextWidth(l.text, 11) + 8;
+        let x1 = align === 'right' ? x - width : align === 'center' ? x - width / 2 : x;
+        x1 = Math.max(0, Math.min(x1, bounding.width - width));
+        const base = y + (l.dy ?? -3);
+        let box = { x1, x2: x1 + width, y1: base - LABEL_HEIGHT, y2: base };
+        for (const step of [0, -1, 1, -2, 2, -3, 3, -4, 4]) {
+          const shift = step * (LABEL_HEIGHT + 2);
+          const candidate = { x1, x2: x1 + width, y1: base - LABEL_HEIGHT + shift, y2: base + shift };
+          if (candidate.y1 < 0 || candidate.y2 > bounding.height) continue;
+          box = candidate;
+          if (!overlaps(candidate)) break;
+        }
+        placed.push(box);
+        if (Math.abs(box.y2 - base) > 1) { // moved: a leader line back to where it belongs
+          const edge = box.y2 < base ? box.y2 : box.y1;
+          figures.push({ type: 'line', attrs: { coordinates: [{ x: Math.min(Math.max(x, box.x1), box.x2), y: edge }, { x, y }] },
+                         styles: { color: l.color, size: 1, style: 'dashed', dashedValue: [2, 2] }, ignoreEvent: true });
+        }
+        figures.push(label(box.x1, box.y2, l.text, l.color, 'left'));
+      }
+      return figures;
     },
   });
 
