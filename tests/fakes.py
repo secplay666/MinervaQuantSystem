@@ -16,6 +16,7 @@ from quant_system.data_platform.symbols import market_prefix
 HOLIDAY = date(2026, 9, 25)
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SW_MAPPING = REPO_ROOT / "configs" / "industry" / "sw2014_to_sw2021_l1.json"
+ETF_GROUPS = REPO_ROOT / "configs" / "etf" / "broad_groups.json"
 
 
 def business_days(start: date, end: date) -> list[date]:
@@ -56,6 +57,7 @@ def make_config(**overrides: object) -> DataPlatformConfig:
         sw_mapping_path=str(SW_MAPPING),
         index_weight_symbols=("000300",),
         etf_sse_start="20260901",
+        etf_groups_path=str(ETF_GROUPS),
         etf_szse_start="20260801",
         config_hash="test",
     )
@@ -324,6 +326,30 @@ class FakeProvider(MarketDataProvider):
                 for i, (code, name) in enumerate((("510300", "300ETF"), ("510050", "50ETF")))
                 if day in self._etf_days(day, day)]
         return pd.DataFrame(rows, columns=["STAT_DATE", "ETF_TYPE", "SEC_CODE", "NUM", "SEC_NAME", "TOT_VOL"])
+
+    # Lists: two 沪深300 funds and one 上证50 fund are plain; 561990 is enhanced; 512880 is not broad.
+    etf_lists_failing: bool = False
+    etf_sse_list: list[dict[str, str]] = field(default_factory=lambda: [
+        {"fundCode": "510300", "fundAbbr": "300ETF", "secNameFull": "沪深300ETF华泰柏瑞", "INDEX_CODE": "000300",
+         "INDEX_NAME": "沪深300指数", "companyName": "华泰柏瑞基金", "listingDate": "20120528"},
+        {"fundCode": "510050", "fundAbbr": "50ETF", "secNameFull": "上证50ETF华夏", "INDEX_CODE": "000016",
+         "INDEX_NAME": "上证50指数", "companyName": "华夏基金", "listingDate": "20050223"},
+        {"fundCode": "561990", "fundAbbr": "300增强", "secNameFull": "沪深300增强ETF", "INDEX_CODE": "000300",
+         "INDEX_NAME": "沪深300指数", "companyName": "某基金", "listingDate": "20230101"},
+        {"fundCode": "512880", "fundAbbr": "证券ETF", "secNameFull": "证券ETF国泰", "INDEX_CODE": "399975",
+         "INDEX_NAME": "证券公司指数", "companyName": "国泰基金", "listingDate": "20160808"},
+    ])
+    etf_szse_list: list[dict[str, str]] = field(default_factory=lambda: [
+        {"证券代码": "159919", "证券简称": "沪深300ETF嘉实", "拟合指数": "399300 沪深300", "基金管理人": "嘉实基金"},
+        {"证券代码": "159920", "证券简称": "恒生ETF华夏", "拟合指数": "HSI", "基金管理人": "华夏基金"},
+    ])
+
+    def fetch_etf_lists(self) -> dict[str, pd.DataFrame]:
+        self.calls.append(("etf_lists", ""))
+        if self.etf_lists_failing:
+            raise RuntimeError("fund lists unavailable")
+        return {"sse": pd.DataFrame(self.etf_sse_list).astype("string"),
+                "szse": pd.DataFrame(self.etf_szse_list).astype(str)}
 
     def fetch_etf_shares_szse(self, start: str, end: str) -> pd.DataFrame:
         self.calls.append(("etf_szse", start))

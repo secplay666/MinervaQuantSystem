@@ -26,7 +26,16 @@ import pandas as pd
 
 from .audit import run_audit
 from .config import DataPlatformConfig
-from .etf import etf_fetch_log_row, merge_etf_shares, normalize_etf_sse, normalize_etf_szse
+from .etf import (
+    etf_fetch_log_row,
+    merge_etf_master,
+    merge_etf_shares,
+    normalize_etf_bars,
+    normalize_etf_list_sse,
+    normalize_etf_list_szse,
+    normalize_etf_sse,
+    normalize_etf_szse,
+)
 from .financials import STATEMENTS, merge_financial_versions, normalize_financials
 from .corporate import (
     load_sw2014_mapping,
@@ -154,6 +163,8 @@ class CanonicalRebuilder:
         self._rebuild_classification()
         self._rebuild_fundamentals()
         self._rebuild_etf_shares()
+        self._rebuild_etf_master()
+        self._rebuild_etf_bars(calendar_end)
         self._carry_forward("daily_bars_history_log")
         audit = run_audit(self.staging, calendar_end, self.start_date,
                           self.config.min_latest_coverage, f"rebuild_{self.rebuild_id}")
@@ -473,6 +484,31 @@ class CanonicalRebuilder:
         frame = read_canonical(self.root, dataset)
         if frame is not None and not frame.empty:
             write_canonical_frame(self.staging, dataset, frame)
+
+    def _rebuild_etf_master(self) -> None:
+        merged = None
+        for run_id, directory in _raw_runs(self.raw_root, "etf_master"):
+            parts = []
+            for exchange, normalize in (("sse", normalize_etf_list_sse), ("szse", normalize_etf_list_szse)):
+                path = directory / f"{exchange}_list.parquet"
+                if path.exists():
+                    parts.append(normalize(pd.read_parquet(path), run_id, run_id_to_iso(run_id)))
+            if parts:
+                merged = merge_etf_master(merged, pd.concat(parts, ignore_index=True))
+        if merged is not None and not merged.empty:
+            write_canonical_frame(self.staging, "etf_master", merged)
+
+    def _rebuild_etf_bars(self, calendar_end: date) -> None:
+        start = pd.to_datetime(self.config.etf_sse_start).date()
+        for symbol, entries in _raw_files_by_name(self.raw_root, "etf_bars").items():
+            merged = None
+            for run_id, path in sorted(entries):
+                part = normalize_etf_bars(pd.read_parquet(path), symbol, start, calendar_end, run_id,
+                                          run_id_to_iso(run_id), read_raw_source(path) or SOURCE_TENCENT_INDEX)
+                merged = merge_index_bars(merged, part)
+            if merged is not None and not merged.empty:
+                write_canonical_frame(self.staging, "etf_bars", merged, partition=f"symbol={symbol}")
+                self.counters["etf_bar_partitions"] += 1
 
     def _rebuild_etf_shares(self) -> None:
         """Replay ETF share responses run by run through the ingestion merge,

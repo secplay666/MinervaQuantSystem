@@ -12,18 +12,30 @@ run id's date, so a rebuilt log equals the live one.
 
 from __future__ import annotations
 
+import json
 from datetime import date, timedelta
+from pathlib import Path
 
 import pandas as pd
 
-from .normalization import _lineage, _to_date, as_date
+from .normalization import _lineage, _to_date, as_date, normalize_index_bars
 
 __all__ = [
     "ETF_SHARE_COLUMNS",
     "SOURCE_ETF_SSE",
     "SOURCE_ETF_SZSE",
+    "ETF_MASTER_COLUMNS",
+    "SOURCE_ETF_LIST_SSE",
+    "SOURCE_ETF_LIST_SZSE",
     "etf_fetch_log_row",
+    "etf_prefix",
+    "group_members",
+    "load_etf_groups",
+    "merge_etf_master",
     "merge_etf_shares",
+    "normalize_etf_bars",
+    "normalize_etf_list_sse",
+    "normalize_etf_list_szse",
     "normalize_etf_sse",
     "normalize_etf_szse",
     "sse_etf_dates",
@@ -160,3 +172,127 @@ def merge_etf_shares(existing: pd.DataFrame | None, incoming: pd.DataFrame) -> p
                                                                        keep="last")
     frame["trade_date"] = [as_date(value) for value in frame["trade_date"]]
     return frame.sort_values(["trade_date", "exchange", "symbol"], ignore_index=True)
+
+
+# ---------------------------------------------------------------------------
+# ETF lists: each fund's tracking index, from both exchanges
+# ---------------------------------------------------------------------------
+
+SOURCE_ETF_LIST_SSE = "sse.commonSoaQuery.FUND_LIST"
+SOURCE_ETF_LIST_SZSE = "szse.ShowReport.1945"
+ETF_MASTER_COLUMNS = [
+    "exchange", "symbol", "name", "full_name", "index_code", "index_name", "manager", "list_date",
+    "listed_run_id", "source", "ingested_at", "run_id", "schema_version",
+]
+
+
+def normalize_etf_list_sse(raw: pd.DataFrame, run_id: str, ingested_at: str) -> pd.DataFrame:
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=ETF_MASTER_COLUMNS)
+    def text(column: str) -> pd.Series:
+        if column not in raw:
+            return pd.Series(pd.NA, index=raw.index, dtype="string")
+        return raw[column].astype("string").str.strip()
+
+    frame = pd.DataFrame({
+        "exchange": "SSE",
+        "symbol": text("fundCode"),
+        "name": text("fundAbbr"),
+        "full_name": text("secNameFull"),
+        "index_code": text("INDEX_CODE").replace("", pd.NA),
+        "index_name": text("INDEX_NAME").replace("", pd.NA),
+        "manager": text("companyName"),
+        "list_date": _to_date(raw["listingDate"]) if "listingDate" in raw else None,
+    })
+    return _finish_list(frame, SOURCE_ETF_LIST_SSE, run_id, ingested_at)
+
+
+def normalize_etf_list_szse(raw: pd.DataFrame, run_id: str, ingested_at: str) -> pd.DataFrame:
+    """拟合指数 is "<code> <short name>" ("399006 创业板指"), or a bare code
+    for foreign indices ("HSTECH")."""
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=ETF_MASTER_COLUMNS)
+    tracked = raw["拟合指数"].astype("string").str.strip()
+    frame = pd.DataFrame({
+        "exchange": "SZSE",
+        "symbol": raw["证券代码"].astype("string").str.strip().str.zfill(6),
+        "name": raw["证券简称"].astype("string").str.strip(),
+        "full_name": pd.Series(pd.NA, index=raw.index, dtype="string"),
+        "index_code": tracked.str.split(n=1).str[0].replace("", pd.NA),
+        "index_name": tracked.str.split(n=1).str[1].str.strip(),
+        "manager": raw["基金管理人"].astype("string").str.strip(),
+        "list_date": None,
+    })
+    return _finish_list(frame, SOURCE_ETF_LIST_SZSE, run_id, ingested_at)
+
+
+def _finish_list(frame: pd.DataFrame, source: str, run_id: str, ingested_at: str) -> pd.DataFrame:
+    frame = frame[frame["symbol"].str.fullmatch(r"\d{6}").fillna(False)].drop_duplicates("symbol", keep="last")
+    frame["listed_run_id"] = run_id
+    frame = _lineage(frame.copy(), source, run_id, ingested_at)
+    return frame[ETF_MASTER_COLUMNS].reset_index(drop=True)
+
+
+def merge_etf_master(existing: pd.DataFrame | None, incoming: pd.DataFrame) -> pd.DataFrame:
+    """The latest listing of each fund wins; a fund no longer listed keeps
+    its last record (``listed_run_id`` tells when it was last seen), so the
+    history of a closed fund still maps to its index."""
+    parts = [part for part in (existing, incoming) if part is not None and not part.empty]
+    if not parts:
+        return pd.DataFrame(columns=ETF_MASTER_COLUMNS)
+    frame = pd.concat([part.reindex(columns=ETF_MASTER_COLUMNS) for part in parts], ignore_index=True)
+    frame = frame.sort_values("run_id", kind="stable")
+    # SZSE lists carry no listing date: keep the one learned earlier, if any.
+    known = frame.dropna(subset=["list_date"]).groupby(["exchange", "symbol"])["list_date"].last()
+    frame = frame.drop_duplicates(["exchange", "symbol"], keep="last").set_index(["exchange", "symbol"])
+    frame["list_date"] = frame["list_date"].where(frame["list_date"].notna(), known.reindex(frame.index))
+    return frame.reset_index()[ETF_MASTER_COLUMNS].sort_values(["exchange", "symbol"], ignore_index=True)
+
+
+# ---------------------------------------------------------------------------
+# Broad-index groups (configs/etf/broad_groups.json)
+# ---------------------------------------------------------------------------
+
+def load_etf_groups(path: str | Path) -> dict:
+    """{exclude_name_pattern, groups: [{id, name, index_codes, chart_symbol}]}, groups in display order."""
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    for group in payload["groups"]:
+        missing = {"id", "name", "index_codes", "chart_symbol"} - set(group)
+        if missing:
+            raise ValueError(f"ETF group {group.get('id')!r} lacks {sorted(missing)}")
+    return payload
+
+
+def group_members(master: pd.DataFrame | None, config: dict) -> pd.DataFrame:
+    """exchange, symbol, name, group_id for every plain (not enhanced) fund
+    tracking a group's index."""
+    columns = ["exchange", "symbol", "name", "group_id", "list_date", "listed_run_id"]
+    if master is None or master.empty:
+        return pd.DataFrame(columns=columns)
+    by_code = {code: group["id"] for group in config["groups"] for code in group["index_codes"]}
+    frame = master.assign(group_id=master["index_code"].map(by_code))
+    frame = frame[frame["group_id"].notna()]
+    pattern = config.get("exclude_name_pattern")
+    if pattern:
+        frame = frame[~frame["name"].fillna("").str.contains(pattern, regex=True)]
+    return frame[["exchange", "symbol", "name", "group_id", "list_date", "listed_run_id"]].reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
+# ETF daily bars (Tencent, like the indices)
+# ---------------------------------------------------------------------------
+
+def etf_prefix(symbol: str) -> str:
+    """Exchange prefix of a fund code: SSE funds start with 5, SZSE with 1."""
+    return "sh" if symbol.startswith(("5", "6")) else "sz"
+
+
+def normalize_etf_bars(raw: pd.DataFrame, symbol: str, start: date, end: date, run_id: str,
+                       ingested_at: str, source: str) -> pd.DataFrame:
+    """Index-bar layout keyed by the plain fund code (``name`` is the code
+    too; names live in etf_master and change).  Tencent reports fund volume
+    in lots and AKShare converts it (it only skips index prefixes)."""
+    frame = normalize_index_bars(raw, etf_prefix(symbol) + symbol, symbol, start, end, run_id, ingested_at,
+                                 source=source)
+    frame["symbol"] = symbol
+    return frame

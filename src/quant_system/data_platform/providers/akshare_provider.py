@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import functools
 import importlib
+import io
 import json
 import logging
 import math
 import threading
 import time
+import warnings
 from collections.abc import Callable
 from typing import TypeVar
 
@@ -383,8 +385,10 @@ class AkShareProvider(MarketDataProvider):
         raise AssertionError("unreachable")
 
     def fetch_csindex_daily(self, symbol: str, start_date: str, end_date: str) -> FetchResult:
+        # sh000510 is stored with its exchange prefix (000510 alone is also a stock code).
+        code = symbol[2:] if symbol[:2] in ("sh", "sz") else symbol
         frame = self._call(f"stock_zh_index_hist_csindex:{symbol}", ak.stock_zh_index_hist_csindex,
-                           symbol=symbol, start_date=start_date, end_date=end_date)
+                           symbol=code, start_date=start_date, end_date=end_date)
         return FetchResult(frame, SOURCE_CSINDEX)
 
     def fetch_index_weights(self, symbol: str) -> pd.DataFrame:
@@ -418,6 +422,10 @@ class AkShareProvider(MarketDataProvider):
         # Queried directly: AKShare's fund_etf_scale_sse raises on a day without data.
         time.sleep(SSE_BULLETIN_PAUSE_SECONDS)  # the same throttled SSE query service
         return self._call(f"sse_etf_scale:{trade_date}", _sse_etf_scale, trade_date=trade_date)
+
+    def fetch_etf_lists(self) -> dict[str, pd.DataFrame]:
+        time.sleep(SSE_BULLETIN_PAUSE_SECONDS)
+        return {"sse": self._call("sse_fund_list", _sse_fund_list), "szse": self._call("szse_etf_list", _szse_etf_list)}
 
     def fetch_etf_shares_szse(self, start: str, end: str) -> pd.DataFrame:
         return self._call(f"fund_scale_daily_szse:{start}", ak.fund_scale_daily_szse,
@@ -469,6 +477,38 @@ def _sse_etf_scale(trade_date: str) -> pd.DataFrame:
     if total > len(rows):  # one page of 10,000 holds every fund; more means the query changed
         raise PaginationMismatch(f"SSE ETF scale {trade_date}: {len(rows)} of {total} rows")
     return pd.DataFrame(rows, columns=["STAT_DATE", "ETF_TYPE", "SEC_CODE", "NUM", "SEC_NAME", "TOT_VOL"])
+
+
+def _sse_fund_list() -> pd.DataFrame:
+    params = {
+        "isPagination": "true", "pageHelp.pageSize": "5000", "pageHelp.pageNo": "1", "pageHelp.beginPage": "1",
+        "pageHelp.cacheSize": "1", "pageHelp.endPage": "1", "sqlId": "FUND_LIST", "fundType": "00",
+        "subClass": "01,03,02,04,06,08,09,31,32,33,34,35,36,37,38",
+    }
+    response = requests.get("https://query.sse.com.cn/commonSoaQuery.do", params=params,
+                            headers={"Referer": "https://www.sse.com.cn/", "User-Agent": _BROWSER_UA})
+    response.raise_for_status()
+    help_ = response.json()["pageHelp"]
+    rows, total = help_["data"] or [], int(help_["total"] or 0)
+    if total > len(rows):
+        raise PaginationMismatch(f"SSE fund list: {len(rows)} of {total} rows")
+    return pd.DataFrame(rows).astype("string")
+
+
+def _szse_etf_list() -> pd.DataFrame:
+    response = requests.get(
+        "https://www.szse.cn/api/report/ShowReport",
+        params={"SHOWTYPE": "xlsx", "CATALOGID": "1945", "TABKEY": "tab1", "random": "0.5"},
+        headers={"Referer": "https://www.szse.cn/market/product/list/etfList/index.html", "User-Agent": _BROWSER_UA},
+    )
+    response.raise_for_status()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # openpyxl: workbook has no default style
+        frame = pd.read_excel(io.BytesIO(response.content), engine="openpyxl", dtype=str)
+    missing = {"证券代码", "证券简称", "拟合指数", "基金管理人"} - set(frame.columns)
+    if missing:
+        raise ValueError(f"SZSE ETF list lacks {sorted(missing)}")
+    return frame
 
 
 def _bse_announcement_page(keyword: str, start: str, end: str, page: int) -> tuple[list[dict], int]:

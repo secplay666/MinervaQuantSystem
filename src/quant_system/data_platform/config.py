@@ -66,7 +66,8 @@ class DataPlatformConfig:
     download_corporate: bool = True
     download_classification: bool = True
     download_fundamentals: bool = True
-    download_etf_shares: bool = True
+    download_etf: bool = True
+    etf_groups_path: str = "configs/etf/broad_groups.json"
     etf_sse_start: str = "20150101"
     etf_szse_start: str = "20160101"
     etf_sse_max_dates_per_run: int = 30
@@ -131,7 +132,8 @@ class DataPlatformConfig:
             download_corporate=bool(payload.get("download_corporate", True)),
             download_classification=bool(payload.get("download_classification", True)),
             download_fundamentals=bool(payload.get("download_fundamentals", True)),
-            download_etf_shares=bool(payload.get("download_etf_shares", True)),
+            download_etf=bool(payload.get("download_etf", True)),
+            etf_groups_path=str(payload.get("etf_groups_path", "configs/etf/broad_groups.json")),
             etf_sse_start=str(payload.get("etf_sse_start", "20150101")),
             etf_szse_start=str(payload.get("etf_szse_start", "20160101")),
             etf_sse_max_dates_per_run=max(1, int(payload.get("etf_sse_max_dates_per_run", 30))),

@@ -17,7 +17,8 @@
   "max_listing_shrink_ratio": 0.02,
   "download_status_history": true,
   "suspension_backfill_start": "20230103",
-  "download_etf_shares": true,
+  "download_etf": true,
+  "etf_groups_path": "configs/etf/broad_groups.json",
   "etf_sse_start": "20150101",
   "etf_szse_start": "20160101",
   "etf_sse_max_dates_per_run": 30,
@@ -163,6 +164,19 @@
     {
       "symbol": "sh000905",
       "name": "中证500"
+    },
+    {
+      "symbol": "sh000016",
+      "name": "上证50"
+    },
+    {
+      "symbol": "sh000852",
+      "name": "中证1000"
+    },
+    {
+      "symbol": "sh000510",
+      "name": "中证A500",
+      "source": "csindex"
     },
     {
       "symbol": "H00300",

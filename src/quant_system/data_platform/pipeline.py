@@ -15,10 +15,19 @@ import pandas as pd
 from .audit import run_audit
 from .config import DataPlatformConfig
 from .etf import (
+    SOURCE_ETF_LIST_SSE,
+    SOURCE_ETF_LIST_SZSE,
     SOURCE_ETF_SSE,
     SOURCE_ETF_SZSE,
     etf_fetch_log_row,
+    etf_prefix,
+    group_members,
+    load_etf_groups,
+    merge_etf_master,
     merge_etf_shares,
+    normalize_etf_bars,
+    normalize_etf_list_sse,
+    normalize_etf_list_szse,
     normalize_etf_sse,
     normalize_etf_szse,
     sse_etf_dates,
@@ -116,7 +125,7 @@ from .utils import code_version, ensure_directories, json_dump, run_id_to_iso, u
 
 MAX_RECORDED_ERRORS = 200
 STEPS = ("daily_bars", "adjustment_factors", "indices", "status_history", "market_snapshot", "corporate",
-         "classification", "fundamentals", "etf_shares")
+         "classification", "fundamentals", "etf")
 # Run only when asked (``--steps``): the one-off backfill of history before
 # the earliest stored bar, e.g. after start_date moved earlier.
 OPTIONAL_STEPS = ("bars_history",)
@@ -256,8 +265,8 @@ class IngestionPipeline:
             self._ingest_classification(ctx)
         if "fundamentals" in self.steps and self.config.download_fundamentals:
             self._ingest_fundamentals(ctx)
-        if "etf_shares" in self.steps and self.config.download_etf_shares:
-            self._ingest_etf_shares(ctx)
+        if "etf" in self.steps and self.config.download_etf:
+            self._ingest_etf(ctx)
         self._audit(ctx, universe)
 
     # ------------------------------------------------------------ helpers
@@ -1111,7 +1120,101 @@ class IngestionPipeline:
         if log_rows:
             write_canonical_frame(self.root, "corporate_fetch_log", merge_fetch_log(log, log_rows))
 
-    # ---------------------------------------------------------- ETF shares
+    # ----------------------------------------------------------------- ETF
+
+    def _ingest_etf(self, ctx: RunContext) -> None:
+        """ETF lists (each fund's tracking index), daily shares outstanding,
+        and daily bars of the funds in the broad-index groups.  Problems are
+        warnings: this data feeds a dashboard, not decisions."""
+        master = self._ingest_etf_master(ctx)
+        self._ingest_etf_shares(ctx)
+        self._ingest_etf_bars(ctx, master)
+
+    def _ingest_etf_master(self, ctx: RunContext) -> pd.DataFrame | None:
+        step = "etf_master"
+        master = read_canonical(self.root, step)
+        try:
+            lists = self.provider.fetch_etf_lists()
+        except Exception as exc:
+            ctx.error(step, "lists", exc)
+            ctx.issues.append(QualityIssue(step, "fetch", "warning", f"ETF 列表下载失败，沿用上次的列表：{exc}"))
+            return master
+        incoming = []
+        for exchange, source, normalize in (("sse", SOURCE_ETF_LIST_SSE, normalize_etf_list_sse),
+                                            ("szse", SOURCE_ETF_LIST_SZSE, normalize_etf_list_szse)):
+            raw = lists.get(exchange)
+            self._raw(ctx, step, f"{exchange}_list", raw, source)
+            part = normalize(raw, ctx.run_id, ctx.ingested_at)
+            ctx.count(step, f"{exchange}_funds", len(part))
+            incoming.append(part)
+        merged = merge_etf_master(master, pd.concat(incoming, ignore_index=True))
+        write_canonical_frame(self.root, step, merged)
+        return merged
+
+    def _ingest_etf_bars(self, ctx: RunContext, master: pd.DataFrame | None) -> None:
+        """Tencent daily bars of every fund in configs/etf (prices turn share
+        changes into money).  A fund no longer listed stops refreshing."""
+        assert ctx.expected_latest is not None
+        step = "etf_bars"
+        members = group_members(master, load_etf_groups(self.root / self.config.etf_groups_path))
+        latest_list = None if master is None or master.empty else master["listed_run_id"].max()
+        start = pd.to_datetime(self.config.etf_sse_start).date()
+        jobs: dict[str, date] = {}
+        for row in members.drop_duplicates("symbol").itertuples(index=False):
+            bounds = self._partition_bounds(step, row.symbol)
+            if bounds is not None and row.listed_run_id != latest_list:
+                ctx.count(step, "frozen_unlisted")
+                continue
+            if bounds is not None and ctx.mode == "incremental":
+                fetch_start = session_offset(ctx.open_dates, bounds[1], self.config.overlap_sessions)
+            else:
+                listed = as_date(row.list_date)
+                fetch_start = max(start, listed) if listed else start
+            jobs[row.symbol] = fetch_start
+        ctx.count(step, "requested", len(jobs))
+
+        def fetch(symbol: str) -> FetchResult:
+            return self.provider.fetch_index_daily(etf_prefix(symbol) + symbol, self._date_str(jobs[symbol]),
+                                                   self._date_str(ctx.expected_latest))
+
+        with ThreadPoolExecutor(max_workers=self.config.max_workers) as executor:
+            futures = {executor.submit(fetch, symbol): symbol for symbol in jobs}
+            try:
+                for future in as_completed(futures):
+                    symbol = futures[future]
+                    try:
+                        self._store_etf_bars(ctx, symbol, start, future.result())
+                    except Exception as exc:
+                        ctx.error(step, symbol, exc)
+                        ctx.count(step, "failed")
+            except BaseException:
+                executor.shutdown(wait=False, cancel_futures=True)
+                raise
+        failed = ctx.counters.get(step, {}).get("failed", 0)
+        if failed:
+            ctx.issues.append(QualityIssue(step, "fetch", "warning",
+                                           f"{failed}/{len(jobs)} 只 ETF 日线下载失败，下次运行重试", failed))
+
+    def _store_etf_bars(self, ctx: RunContext, symbol: str, start: date, result: FetchResult) -> None:
+        assert ctx.expected_latest is not None
+        step = "etf_bars"
+        incoming = normalize_etf_bars(result.frame, symbol, start, ctx.expected_latest, ctx.run_id,
+                                      ctx.ingested_at, result.source)
+        existing = read_canonical(self.root, step, f"symbol={symbol}")
+        if incoming.empty:
+            self._raw(ctx, step, symbol, result.frame, result.source)
+            ctx.count(step, "empty")
+            return
+        issues = validate_index_refresh(incoming, existing, symbol)
+        if has_blocking(issues):
+            # Kept aside so a rebuild does not replay it.
+            self._raw(ctx, "etf_bars_rejected", symbol, result.frame, result.source)
+            ctx.issues.extend(replace(issue, dataset=step, severity="warning") for issue in issues)
+            ctx.count(step, "rejected")
+            return
+        self._raw(ctx, step, symbol, result.frame, result.source)
+        write_canonical_frame(self.root, step, merge_index_bars(existing, incoming), partition=f"symbol={symbol}")
+        ctx.count(step, "updated")
 
     def _ingest_etf_shares(self, ctx: RunContext) -> None:
         """Daily ETF shares outstanding: SSE one day per request (newest

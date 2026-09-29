@@ -15,7 +15,7 @@ from .utils import file_sha256, json_hash
 RAW_SOURCE_KEY = b"quant_system.source"
 
 # Canonical datasets materialized into DuckDB, with their layout.
-PARTITIONED_DATASETS = ("daily_bars", "adjustment_factors", "index_bars", "market_snapshot")
+PARTITIONED_DATASETS = ("daily_bars", "adjustment_factors", "index_bars", "market_snapshot", "etf_bars")
 SINGLE_FILE_DATASETS = (
     "security_master",
     "trading_calendar",
@@ -33,6 +33,7 @@ SINGLE_FILE_DATASETS = (
     "fin_balance",
     "fin_cashflow",
     "etf_shares",
+    "etf_master",
 )
 DATE_COLUMNS = {
     "daily_bars": "trade_date",
@@ -51,6 +52,7 @@ DATE_COLUMNS = {
     "fin_balance": "report_date",
     "fin_cashflow": "report_date",
     "etf_shares": "trade_date",
+    "etf_bars": "trade_date",
 }
 
 

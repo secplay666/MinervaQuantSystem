@@ -109,6 +109,13 @@ class MarketDataProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def fetch_etf_lists(self) -> dict[str, pd.DataFrame]:
+        """Current ETF lists with each fund's tracking index: ``sse``
+        (fundCode, fundAbbr, secNameFull, INDEX_CODE, INDEX_NAME, companyName,
+        listingDate) and ``szse`` (证券代码, 证券简称, 拟合指数, 基金管理人)."""
+        raise NotImplementedError
+
+    @abstractmethod
     def fetch_etf_shares_szse(self, start: str, end: str) -> pd.DataFrame:
         """SZSE ETF shares outstanding per day in [start, end] (YYYYMMDD, at
         most six months): 日期, 基金代码, 基金简称, 基金份额 (shares)."""
