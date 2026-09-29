@@ -145,3 +145,16 @@ def test_analyse_returns_dates_and_is_deterministic() -> None:
     assert first["fibonacci"]["levels"][4]["ratio"] == 0.618
     assert analyse(bars[:10])["patterns"] == []
     assert np.isfinite(first["atr"])
+
+
+def test_measured_targets_stay_positive_after_a_crash() -> None:
+    from quant_system.analytics.chart_analysis import measured_move
+
+    assert measured_move(10.0, 2.0, up=False) == 8.0  # ordinary: the height below
+    assert measured_move(340.0, 506.0, up=False) == pytest.approx(340 * 340 / 846)  # a 846 -> 340 pole
+    assert measured_move(10.0, 2.0, up=True) == 12.0
+    # a bear flag after a halving: the target is a price, not below zero
+    bars = path((0, 800), (10, 840), (22, 340), (34, 400), (40, 330))
+    s, atr, pivots = run(bars)
+    for pattern in chart_patterns(s, pivots, atr):
+        assert pattern.target is None or pattern.target > 0

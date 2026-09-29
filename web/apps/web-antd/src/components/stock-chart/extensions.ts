@@ -23,8 +23,9 @@ export interface AutoLabel {
   anchor: number;
   color: string;
   dy?: number; // preferred offset from the anchor, negative = above
+  edge?: boolean; // with ``to``: pinned to the pane's top or bottom when the line is off the price scale
   extend?: boolean; // with ``to``: the line runs on to the right edge
-  right?: boolean; // pinned to the chart's right edge (price bands)
+  right?: boolean; // pinned to the chart's right edge (price bands; ``to`` is the band's other side)
   text: string;
   to?: number; // the label rides the line anchor -> to, at its right-most visible spot
 }
@@ -227,7 +228,32 @@ export function registerChartExtensions() {
   // All automatic labels in one overlay: each goes where it prefers unless that
   // spot is taken, then moves up or down one label height at a time and keeps a
   // thin leader line to its anchor.  Earlier labels win (the caller orders them).
+  // Lines are clipped to the price pane first, so a label sits on the part of
+  // its line that is on screen; nothing is drawn outside the pane.
   const LABEL_HEIGHT = 16;
+  type P = { x: number; y: number };
+  /** Liang-Barsky: the part of segment a-b inside [0, w] x [0, h], or null. */
+  const clip = (a: P, b: P, w: number, h: number): [P, P] | null => {
+    let t0 = 0;
+    let t1 = 1;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    for (const [pv, qv] of [[-dx, a.x], [dx, w - a.x], [-dy, a.y], [dy, h - a.y]] as const) {
+      if (pv === 0) {
+        if (qv < 0) return null;
+        continue;
+      }
+      const r = qv / pv;
+      if (pv < 0) {
+        if (r > t1) return null;
+        t0 = Math.max(t0, r);
+      } else {
+        if (r < t0) return null;
+        t1 = Math.min(t1, r);
+      }
+    }
+    return [{ x: a.x + t0 * dx, y: a.y + t0 * dy }, { x: a.x + t1 * dx, y: a.y + t1 * dy }];
+  };
   registerOverlay<{ labels: AutoLabel[]; reserveTop?: number; reserveWidth?: number }>({
     name: 'autoLabels',
     totalStep: 2,
@@ -236,51 +262,70 @@ export function registerChartExtensions() {
     needDefaultXAxisFigure: false,
     needDefaultYAxisFigure: false,
     createPointFigures: ({ bounding, coordinates, overlay }) => {
+      const W = bounding.width;
+      const H = bounding.height;
       const figures: OverlayFigure[] = [];
       const placed: { x1: number; x2: number; y1: number; y2: number }[] = [];
       const reserveTop = overlay.extendData?.reserveTop ?? 0; // the chart's own legend at the top left
-      if (reserveTop) placed.push({ x1: 0, x2: Math.min(bounding.width, overlay.extendData?.reserveWidth ?? 600), y1: 0, y2: reserveTop });
+      if (reserveTop) placed.push({ x1: 0, x2: Math.min(W, overlay.extendData?.reserveWidth ?? 600), y1: 0, y2: reserveTop });
       const overlaps = (box: (typeof placed)[number]) => placed.some((b) => box.x1 < b.x2 + 2 && box.x2 > b.x1 - 2
                                                                          && box.y1 < b.y2 + 1 && box.y2 > b.y1 - 1);
       for (const l of overlay.extendData?.labels ?? []) {
         const a = coordinates[l.anchor];
         if (!a) continue;
+        const b = l.to === undefined ? undefined : coordinates[l.to];
         let x = a.x;
         let y = a.y;
+        let text = l.text;
         let align: 'center' | 'left' | 'right' = 'center';
-        if (l.right) {
-          x = bounding.width - 4;
+        if (l.right) { // a price band: labelled at the right edge while some of it is on screen
+          const bottom = b ? b.y : a.y;
+          if (Math.max(a.y, bottom) < 0 || Math.min(a.y, bottom) > H) continue;
+          x = W - 4;
+          y = Math.min(Math.max(a.y, LABEL_HEIGHT + 2), H);
           align = 'right';
-        } else if (l.to !== undefined && coordinates[l.to]) {
-          const b = coordinates[l.to]!;
-          const end = Math.min(l.extend ? bounding.width : b.x, bounding.width) - 4;
-          const start = Math.max(a.x, 0);
-          if (end <= start || b.x === a.x) continue; // no visible part of the line
-          x = end;
-          y = a.y + ((b.y - a.y) / (b.x - a.x)) * (end - a.x);
+        } else if (b) { // a line: at the right end of its visible part
+          const far = l.extend && b.x !== a.x && W > b.x ? { x: W, y: a.y + ((b.y - a.y) / (b.x - a.x)) * (W - a.x) } : b;
+          const visible = clip(a, far, W, H);
+          if (visible) {
+            const right = visible[0].x > visible[1].x ? visible[0] : visible[1];
+            x = Math.min(right.x, W - 4);
+            y = right.y;
+          } else if (l.edge && Math.min(a.x, far.x) < W && Math.max(a.x, far.x) > 0) {
+            // off the price scale (a far target): pinned to the nearer edge, with the direction
+            const above = a.y < 0;
+            x = Math.min(Math.max(a.x, far.x), W) - 4;
+            y = above ? LABEL_HEIGHT + 2 : H - 2;
+            text = `${l.text} ${above ? '↑' : '↓'}`;
+          } else {
+            continue; // the line is not on screen
+          }
           align = 'right';
-        } else if (a.x < 0 || a.x > bounding.width) {
+        } else if (a.x < 0 || a.x > W) {
           continue;
+        } else {
+          y = Math.min(Math.max(a.y, LABEL_HEIGHT + 2 - (l.dy ?? -3)), H);
         }
-        const width = utils.calcTextWidth(l.text, 11) + 8;
+        const width = utils.calcTextWidth(text, 11) + 8;
         let x1 = align === 'right' ? x - width : align === 'center' ? x - width / 2 : x;
-        x1 = Math.max(0, Math.min(x1, bounding.width - width));
-        const base = y + (l.dy ?? -3);
+        x1 = Math.max(0, Math.min(x1, W - width));
+        const base = Math.min(Math.max(y + (l.dy ?? -3), LABEL_HEIGHT), H);
         let box = { x1, x2: x1 + width, y1: base - LABEL_HEIGHT, y2: base };
         for (const step of [0, -1, 1, -2, 2, -3, 3, -4, 4]) {
           const shift = step * (LABEL_HEIGHT + 2);
           const candidate = { x1, x2: x1 + width, y1: base - LABEL_HEIGHT + shift, y2: base + shift };
-          if (candidate.y1 < 0 || candidate.y2 > bounding.height) continue;
+          if (candidate.y1 < 0 || candidate.y2 > H) continue;
           box = candidate;
           if (!overlaps(candidate)) break;
         }
         placed.push(box);
+        const anchorY = Math.min(Math.max(y, 0), H);
         if (Math.abs(box.y2 - base) > 1) { // moved: a leader line back to where it belongs
-          const edge = box.y2 < base ? box.y2 : box.y1;
-          figures.push({ type: 'line', attrs: { coordinates: [{ x: Math.min(Math.max(x, box.x1), box.x2), y: edge }, { x, y }] },
+          const edge = box.y2 < anchorY ? box.y2 : box.y1;
+          figures.push({ type: 'line', attrs: { coordinates: [{ x: Math.min(Math.max(x, box.x1), box.x2), y: edge }, { x, y: anchorY }] },
                          styles: { color: l.color, size: 1, style: 'dashed', dashedValue: [2, 2] }, ignoreEvent: true });
         }
-        figures.push(label(box.x1, box.y2, l.text, l.color, 'left'));
+        figures.push(label(box.x1, box.y2, text, l.color, 'left'));
       }
       return figures;
     },

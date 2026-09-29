@@ -361,7 +361,7 @@ function renderAuto() {
       const text = `${lv.kind === 'resistance' ? '阻力' : '支撑'} ${lv.price.toFixed(2)}${lv.extreme ? (lv.kind === 'resistance' ? ' 区间最高' : ' 区间最低') : ` ×${lv.touches}`}${lv.flipped ? ' ⇅' : ''}`;
       overlays.push({ extendData: { color }, groupId: 'auto', lock: true, name: 'priceZone',
                       points: [{ timestamp: from, value: lv.low }, { timestamp: from, value: lv.high }] });
-      addLabel(3, [{ timestamp: from, value: lv.high }], { color, dy: -1, right: true, text });
+      addLabel(3, [{ timestamp: from, value: lv.high }, { timestamp: from, value: lv.low }], { color, dy: -1, right: true, text });
     }
   }
   if (settings.auto.trends) {
@@ -393,7 +393,7 @@ function renderAuto() {
       if (pattern.target !== null && pattern.status !== 'failed') {
         const target = [point({ date: pattern.end_date, price: pattern.target }), point({ date: lastDay, price: pattern.target })];
         if (line('autoLine', target, { color, dashed: true })) {
-          addLabel(2, target as Pt[], { color, text: `${pattern.name}目标 ${pattern.target.toFixed(2)}` });
+          addLabel(2, target as Pt[], { color, edge: true, text: `${pattern.name}目标 ${pattern.target.toFixed(2)}` });
         }
       }
     }

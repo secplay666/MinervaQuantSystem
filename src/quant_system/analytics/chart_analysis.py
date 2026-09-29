@@ -275,6 +275,16 @@ class Pattern:
     note: str = ""
 
 
+def measured_move(start: float, height: float, up: bool) -> float:
+    """A pattern's height projected from ``start``.  Downwards, a move deeper
+    than 80% (big patterns after a run-up) is projected in proportion
+    instead, so the target stays a price: start * start / (start + height)."""
+    if up:
+        return start + height
+    target = start - height
+    return target if target > 0.2 * start else start * start / (start + height)
+
+
 def _near(a: float, b: float, tolerance: float) -> bool:
     return abs(a - b) <= tolerance
 
@@ -322,7 +332,7 @@ def _head_and_shoulders(s: Series, pts: list[Pivot], atr: np.ndarray) -> list[Pa
                            [(t1.index, t1.price, brk if brk is not None else len(s) - 1,
                              neck(brk if brk is not None else len(s) - 1))],
                            s1.index, brk if brk is not None else s2.index, brk,
-                           neck(brk) - sign * height if brk is not None else neck(len(s) - 1) - sign * height,
+                           measured_move(neck(brk if brk is not None else len(s) - 1), height, up=not top),
                            "跌破颈线确认" if top else "突破颈线确认"))
     return out
 
@@ -353,7 +363,8 @@ def _multiple_tops(s: Series, pts: list[Pivot], atr: np.ndarray) -> list[Pattern
             out.append(Pattern(kind, name, "bearish" if top else "bullish", status, [(q.index, q.price) for q in p],
                                [(troughs[0].index, floor, end, floor)], p[0].index,
                                brk if brk is not None else p[-1].index, brk,
-                               floor - (level - floor), "跌破颈线确认" if top else "突破颈线确认"))
+                               measured_move(floor, abs(level - floor), up=not top),
+                               "跌破颈线确认" if top else "突破颈线确认"))
     return out
 
 
@@ -429,7 +440,8 @@ def _consolidations(s: Series, pts: list[Pivot], atr: np.ndarray) -> list[Patter
         if brk is not None and direction != "neutral" and moved != direction:
             status = "failed"  # broke the other way
         height = width_start
-        target = (upper(brk) + height if moved == "bullish" else lower(brk) - height) if brk is not None else None
+        target = (measured_move(upper(brk), height, up=True) if moved == "bullish"
+                  else measured_move(lower(brk), height, up=False)) if brk is not None else None
         out.append(Pattern(kind, name, moved if brk is not None else direction, status,
                            [(q.index, q.price) for q in p],
                            [(first, upper(first), end, upper(end)), (first, lower(first), end, lower(end))],
@@ -485,7 +497,7 @@ def _flags(s: Series, atr: np.ndarray, pole_bars: int = 15, lookback: int = 60) 
                                [(a, float(base)), (b, float(tip))],
                                [(first, float(su * first + iu), end, float(su * end + iu)),
                                 (first, float(sl * first + il), end, float(sl * end + il))],
-                               a, end, brk, float(tip + pole if bull else tip - pole),
+                               a, end, brk, float(measured_move(tip, pole, up=bull)),
                                "旗杆后的小幅整理，突破旗杆顶点确认" if bull else "急跌后的小幅整理，跌破旗杆底点确认"))
             break  # the latest pole in this direction
     return out
