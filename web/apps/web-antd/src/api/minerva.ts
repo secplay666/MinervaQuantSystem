@@ -283,6 +283,23 @@ export const searchApi = (q: string) => requestClient.get<{ board: string; name:
 export const instrumentApi = (symbol: string) => requestClient.get<Record<string, any>>(`/instruments/${symbol}`);
 export const barsApi = (symbol: string, adjust = 'qfq', limit = 250, period: BarPeriod = 'day', end?: string) =>
   requestClient.get<Bar[]>(`/instruments/${symbol}/bars`, { params: { adjust, end, limit, period } });
+export interface ChartPoint { date: string; price: number }
+export interface ChartAnalysis {
+  atr?: number;
+  bars: number;
+  candles: { bars: number; date: string; direction: 'bearish' | 'bullish' | 'neutral'; kind: string; label: string; name: string }[];
+  fibonacci: null | { confirmed: boolean; from: ChartPoint; levels: { price: number; ratio: number }[]; to: ChartPoint };
+  levels: { extreme: boolean; first_date: string; flipped: boolean; high: number; kind: 'resistance' | 'support'; last_date: string;
+            low: number; price: number; score: number; touches: number }[];
+  patterns: { breakout_date: null | string; direction: 'bearish' | 'bullish' | 'neutral'; end_date: string; kind: string;
+              lines: { end: ChartPoint; start: ChartPoint }[]; name: string; note: string; points: ChartPoint[];
+              start_date: string; status: 'confirmed' | 'failed' | 'forming'; target: null | number }[];
+  pivots: (ChartPoint & { confirmed: boolean; kind: 'H' | 'L' })[];
+  trendlines: { anchor: ChartPoint; broken: boolean; broken_date: null | string; channel: null | { end: ChartPoint; start: ChartPoint };
+                end: ChartPoint; kind: 'down' | 'up'; score: number; start: ChartPoint; touches: number }[];
+}
+export const chartAnalysisApi = (symbol: string, params: { adjust: string; bars: number; period: BarPeriod; sensitivity: string }) =>
+  requestClient.get<ChartAnalysis>(`/charts/${symbol}/analysis`, { params });
 export const marksApi = (symbol: string) => requestClient.get<ChartMarks>(`/instruments/${symbol}/marks`);
 export const drawingsApi = (symbol: string) =>
   requestClient.get<{ overlays: SavedOverlay[]; symbol: string; updated_at: null | string }>(`/charts/${symbol}/drawings`);

@@ -72,3 +72,24 @@ def test_search_finds_indices_before_stocks(env) -> None:
     found = client.get("/api/v1/instruments/search", headers=viewer, params={"q": "上证"}).json()
     assert found[0] == {"symbol": "sh000001", "name": "上证指数", "board": "INDEX", "delist_date": None}
     assert [i["symbol"] for i in client.get("/api/v1/market/indices", headers=viewer).json()] == ["H00300", "sh000001"]
+
+
+def test_chart_analysis_endpoint(env) -> None:
+    from test_chart_analysis import path
+
+    _, _, client, sessions = env
+    add_user(sessions, "eve", ["viewer"])
+    viewer = auth(login(client, "eve"))
+    bars = path((0, 10), (15, 12), (25, 11), (40, 13), (50, 11), (65, 12), (80, 10))
+    market = client.app.state.market
+    calls = []
+    market.bars = lambda symbol, start, end, adjust, limit, period: calls.append(("stock", adjust, period)) or bars
+    market.index_bars = lambda symbol, start, end, limit, period: calls.append(("index", None, period)) or bars
+    result = client.get("/api/v1/charts/600000/analysis", headers=viewer,
+                        params={"period": "week", "adjust": "hfq", "sensitivity": "fine"}).json()
+    assert calls[-1] == ("stock", "hfq", "week") and result["sensitivity"] == "fine"
+    assert any(p["kind"] == "head_shoulders_top" for p in result["patterns"])
+    client.get("/api/v1/charts/sh000001/analysis", headers=viewer)
+    assert calls[-1] == ("index", None, "day")
+    assert client.get("/api/v1/charts/xyz/analysis", headers=viewer).status_code == 404
+    assert client.get("/api/v1/charts/600000/analysis", headers=viewer, params={"sensitivity": "wild"}).status_code == 422

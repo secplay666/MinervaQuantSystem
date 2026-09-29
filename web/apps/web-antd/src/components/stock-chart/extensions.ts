@@ -9,8 +9,19 @@ import { registerIndicator, registerOverlay } from 'klinecharts';
 export interface MarkData {
   below: boolean; // under the low (buys) or above the high (everything else)
   color: string;
+  outline?: boolean; // hollow badge (candlestick patterns), so it reads apart from events
   stack: number; // badges on the same bar and side are stacked
   text: string;
+}
+
+/** Automatic lines (read-only overlays): a line through points, a line that may run to the right edge, a price band. */
+export interface AutoLineData {
+  color: string;
+  dashed?: boolean;
+  dots?: boolean;
+  extend?: boolean;
+  label?: string;
+  width?: number;
 }
 
 export interface RangeStats {
@@ -79,9 +90,13 @@ export function registerChartExtensions() {
         type: 'text',
         attrs: { x: c.x, y: mark.below ? c.y + shift : c.y - shift, text: mark.text, align: 'center',
                  baseline: mark.below ? 'top' : 'bottom' },
-        styles: { style: 'fill', color: '#ffffff', size: 11, weight: 'bold', family: 'Helvetica Neue, sans-serif',
-                  backgroundColor: mark.color, borderRadius: 2, paddingLeft: 3, paddingRight: 3, paddingTop: 1,
-                  paddingBottom: 1, borderSize: 0 },
+        styles: mark.outline
+          ? { style: 'stroke_fill', color: mark.color, size: 11, weight: 'bold', family: 'Helvetica Neue, sans-serif',
+              backgroundColor: 'rgba(0, 0, 0, 0)', borderColor: mark.color, borderSize: 1, borderRadius: 2,
+              paddingLeft: 2, paddingRight: 2, paddingTop: 1, paddingBottom: 1 }
+          : { style: 'fill', color: '#ffffff', size: 11, weight: 'bold', family: 'Helvetica Neue, sans-serif',
+              backgroundColor: mark.color, borderRadius: 2, paddingLeft: 3, paddingRight: 3, paddingTop: 1,
+              paddingBottom: 1, borderSize: 0 },
         ignoreEvent: true,
       }];
     },
@@ -113,6 +128,84 @@ export function registerChartExtensions() {
       const [a, b] = coordinates;
       if (!a || !b) return [];
       return [{ type: 'circle', attrs: { x: a.x, y: a.y, r: Math.hypot(b.x - a.x, b.y - a.y) }, styles: shapeStyles }];
+    },
+  });
+
+  const label = (x: number, y: number, text: string, color: string, align: CanvasTextAlign = 'left'): OverlayFigure => ({
+    type: 'text',
+    attrs: { x, y, text, align, baseline: 'bottom' },
+    styles: { style: 'fill', color: '#ffffff', size: 11, backgroundColor: color, borderRadius: 2, paddingLeft: 4,
+              paddingRight: 4, paddingTop: 1, paddingBottom: 1, borderSize: 0 },
+    ignoreEvent: true,
+  });
+  const lineStyle = (d: AutoLineData) => ({ color: d.color, size: d.width ?? 1, style: d.dashed ? 'dashed' : 'solid',
+                                            dashedValue: [4, 3] });
+
+  registerOverlay<AutoLineData>({
+    name: 'autoPolyline',
+    totalStep: 2,
+    lock: true,
+    needDefaultPointFigure: false,
+    needDefaultXAxisFigure: false,
+    needDefaultYAxisFigure: false,
+    createPointFigures: ({ coordinates, overlay }) => {
+      const d = overlay.extendData;
+      if (!d || coordinates.length < 2) return [];
+      const figures: OverlayFigure[] = [{ type: 'line', attrs: { coordinates }, styles: lineStyle(d), ignoreEvent: true }];
+      if (d.dots) {
+        for (const c of coordinates) figures.push({ type: 'circle', attrs: { x: c.x, y: c.y, r: 2.5 },
+                                                     styles: { style: 'fill', color: d.color }, ignoreEvent: true });
+      }
+      if (d.label) {
+        const top = coordinates.reduce((a, b) => (b.y < a.y ? b : a));
+        figures.push(label(top.x, top.y - 6, d.label, d.color, 'center'));
+      }
+      return figures;
+    },
+  });
+
+  registerOverlay<AutoLineData>({
+    name: 'autoLine',
+    totalStep: 3,
+    lock: true,
+    needDefaultPointFigure: false,
+    needDefaultXAxisFigure: false,
+    needDefaultYAxisFigure: false,
+    createPointFigures: ({ bounding, coordinates, overlay }) => {
+      const d = overlay.extendData;
+      const [a, b] = coordinates;
+      if (!d || !a || !b) return [];
+      let end = b;
+      if (d.extend && b.x !== a.x && bounding.width > b.x) {
+        end = { x: bounding.width, y: a.y + ((b.y - a.y) / (b.x - a.x)) * (bounding.width - a.x) };
+      }
+      const figures: OverlayFigure[] = [{ type: 'line', attrs: { coordinates: [a, end] }, styles: lineStyle(d), ignoreEvent: true }];
+      if (d.label) figures.push(label(Math.min(b.x, bounding.width - 4), b.y - 3, d.label, d.color, b.x > bounding.width - 120 ? 'right' : 'left'));
+      return figures;
+    },
+  });
+
+  registerOverlay<AutoLineData>({
+    name: 'priceZone',
+    totalStep: 3,
+    lock: true,
+    needDefaultPointFigure: false,
+    needDefaultXAxisFigure: false,
+    needDefaultYAxisFigure: false,
+    createPointFigures: ({ bounding, coordinates, overlay }) => {
+      const d = overlay.extendData;
+      const [a, b] = coordinates;
+      if (!d || !a || !b) return [];
+      const top = Math.min(a.y, b.y);
+      const height = Math.max(2, Math.abs(b.y - a.y));
+      const x = Math.max(0, Math.min(a.x, bounding.width));
+      return [
+        { type: 'rect', attrs: { x, y: top, width: bounding.width - x, height },
+          styles: { style: 'fill', color: `${d.color}22` }, ignoreEvent: true },
+        { type: 'line', attrs: { coordinates: [{ x, y: top + height / 2 }, { x: bounding.width, y: top + height / 2 }] },
+          styles: { color: d.color, size: 1, style: 'dashed', dashedValue: [2, 3] }, ignoreEvent: true },
+        ...(d.label ? [label(bounding.width - 4, top - 1, d.label, d.color, 'right')] : []),
+      ];
     },
   });
 

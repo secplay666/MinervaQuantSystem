@@ -88,6 +88,29 @@ def marks(symbol: str, request: Request, principal: Principal = Depends(view),
     return {**out, "fills": fills}
 
 
+INDEX_CODE = re.compile(r"(sh|sz|bj)\d{6}|H\d{5}")
+
+
+@router.get("/charts/{symbol}/analysis")
+def chart_analysis(symbol: str, request: Request, period: str = Query("day", pattern="^(day|week|month)$"),
+                   adjust: str = Query("qfq", pattern="^(none|qfq|hfq)$"),
+                   sensitivity: str = Query("medium", pattern="^(fine|medium|coarse)$"),
+                   bars: int = Query(500, ge=60, le=2000), _: Principal = Depends(view)) -> dict:
+    """Automatic lines for the chart (analytics/chart_analysis.py): swing points,
+    support and resistance, trend lines and channels, the latest Fibonacci
+    leg, chart patterns and candlestick patterns, on the chart's own bars."""
+    from ...analytics.chart_analysis import analyse
+
+    market = _market(request)
+    if INDEX_CODE.fullmatch(symbol):
+        series = market.index_bars(symbol, None, None, bars, period)
+    elif re.fullmatch(r"\d{6}", symbol):
+        series = market.bars(symbol, None, None, adjust, bars, period)
+    else:
+        raise api_error(404, "not_found", "证券不存在")
+    return {"symbol": symbol, "period": period, "adjust": adjust, **analyse(series, sensitivity)}
+
+
 class DrawingsIn(BaseModel):
     overlays: list[dict] = Field(max_length=300)
 

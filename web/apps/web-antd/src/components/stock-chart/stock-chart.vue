@@ -8,9 +8,9 @@
  */
 import type { Chart, DataLoader, KLineData, Overlay, OverlayCreate, OverlayMode } from 'klinecharts';
 
-import type { MarkData, RangeStats } from './extensions';
+import type { AutoLineData, MarkData, RangeStats } from './extensions';
 
-import type { BarPeriod, ChartMarks, SavedOverlay } from '#/api';
+import type { BarPeriod, ChartAnalysis, ChartMarks, ChartPoint, SavedOverlay } from '#/api';
 
 import { computed, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
@@ -22,7 +22,7 @@ import {
 } from 'ant-design-vue';
 import { dispose, init } from 'klinecharts';
 
-import { barsApi, drawingsApi, indexBarsApi, isIndexSymbol, marksApi, saveDrawingsApi } from '#/api';
+import { barsApi, chartAnalysisApi, drawingsApi, indexBarsApi, isIndexSymbol, marksApi, saveDrawingsApi } from '#/api';
 import { bigYuan, DOWN_COLOR, UP_COLOR } from '#/utils/format';
 
 import { rangeStats, registerChartExtensions } from './extensions';
@@ -31,8 +31,11 @@ const props = withDefaults(defineProps<{ height?: number | string; name?: string
 
 // -- settings (kept in the browser) -------------------------------------------------------------
 type MarkKind = 'dividends' | 'fills' | 'reports' | 'risk' | 'suspensions';
+type AutoKind = 'candles' | 'fib' | 'levels' | 'patterns' | 'pivots' | 'trends';
 interface ChartSettings {
   adjust: 'hfq' | 'none' | 'qfq';
+  auto: Record<AutoKind, boolean>;
+  axis: 'logarithm' | 'normal' | 'percentage';
   compare?: string;
   magnet: OverlayMode;
   main: string[];
@@ -40,18 +43,22 @@ interface ChartSettings {
   params: Record<string, number[]>;
   period: BarPeriod;
   panel: boolean;
+  sensitivity: 'coarse' | 'fine' | 'medium';
   subs: string[];
 }
 const STORAGE_KEY = 'minerva.chart.v1';
 const DEFAULTS: ChartSettings = {
-  adjust: 'qfq', compare: undefined, magnet: 'weak_magnet', main: ['MA'], panel: true, period: 'day', subs: ['VOL', 'MACD'],
+  adjust: 'qfq', axis: 'normal', compare: undefined, magnet: 'weak_magnet', main: ['MA'], panel: true, period: 'day',
+  sensitivity: 'medium', subs: ['VOL', 'MACD'],
+  auto: { candles: true, fib: false, levels: true, patterns: true, pivots: false, trends: true },
   marks: { dividends: true, fills: true, reports: true, risk: true, suspensions: true },
   params: { MA: [5, 10, 20, 60] },
 };
 function loadSettings(): ChartSettings {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
-    return { ...DEFAULTS, ...saved, marks: { ...DEFAULTS.marks, ...saved.marks }, params: { ...DEFAULTS.params, ...saved.params } };
+    return { ...DEFAULTS, ...saved, auto: { ...DEFAULTS.auto, ...saved.auto }, marks: { ...DEFAULTS.marks, ...saved.marks },
+             params: { ...DEFAULTS.params, ...saved.params } };
   } catch {
     return { ...DEFAULTS };
   }
@@ -69,6 +76,13 @@ const COMPARE: Record<string, string> = {
   H00300: '沪深300全收益', H00852: '中证1000全收益', H00905: '中证500全收益', sh000001: '上证指数', sh000300: '沪深300',
   sh000688: '科创50', sh000905: '中证500', sz399001: '深证成指', sz399006: '创业板指',
 };
+const AUTO_LABEL: Record<AutoKind, string> = {
+  candles: 'K 线组合', fib: '黄金分割', levels: '支撑阻力', patterns: '形态', pivots: '转折点连线', trends: '趋势线与通道',
+};
+const SENSITIVITY_LABEL = { coarse: '粗', fine: '细', medium: '中' };
+const STATUS_LABEL: Record<string, string> = { confirmed: '已确认', failed: '已失效', forming: '形成中' };
+const DIRECTION_COLOR: Record<string, string> = { bearish: DOWN_COLOR, bullish: UP_COLOR, neutral: '#eab308' };
+const LEVEL_COLOR = { resistance: '#f97316', support: '#0ea5e9' };
 const MARK_LABEL: Record<MarkKind, string> = {
   dividends: '除权除息', fills: '买卖点', reports: '财报', risk: '风险警示', suspensions: '停牌',
 };
@@ -110,6 +124,8 @@ const drawingsLocked = ref(false);
 const drawingsHidden = ref(false);
 const drawingCount = ref(0);
 const range = ref<null | RangeStats>();
+const analysis = ref<ChartAnalysis>();
+let markStacks = new Map<number, { above: number; below: number }>(); // badges per bar from the event marks
 const fullscreen = ref(false);
 const paramsDialog = reactive<{ name: string; open: boolean; text: string }>({ name: '', open: false, text: '' });
 let quiet = false; // true while overlays are removed or restored by code, so no save is triggered
@@ -218,6 +234,7 @@ async function afterInit(token: number) {
   quiet = false;
   drawingCount.value = saved?.overlays.length ?? 0;
   applyDrawingState();
+  void loadAnalysis(token);
 }
 
 // -- marks --------------------------------------------------------------------------------------
@@ -279,14 +296,131 @@ function renderMarks() {
   }
   barEvents.value = events;
   const overlays: OverlayCreate[] = [];
+  markStacks = new Map();
   for (const [index, slot] of slots) {
     const bar = data[index]!;
+    markStacks.set(bar.timestamp, { above: slot.above.length, below: slot.below.length });
     for (const mark of [...slot.above, ...slot.below]) {
       overlays.push({ extendData: mark, groupId: 'marks', lock: true, name: 'eventMark',
                       points: [{ timestamp: bar.timestamp, value: mark.below ? bar.low : bar.high }] });
     }
   }
   if (overlays.length) chart.createOverlay(overlays);
+  renderAuto(); // candlestick badges stack after the event badges
+}
+
+// -- automatic lines (analytics/chart_analysis.py on the server) ------------------------------------
+async function loadAnalysis(token = loadToken) {
+  const { adjust, period, sensitivity } = settings;
+  const symbol = props.symbol;
+  try {
+    const result = await chartAnalysisApi(symbol, { adjust, bars: Math.min(500, PAGE[period]), period, sensitivity });
+    if (token !== loadToken || symbol !== props.symbol) return;
+    analysis.value = result;
+  } catch {
+    analysis.value = undefined;
+  }
+  renderAuto();
+}
+
+const autoEvents = ref<Record<number, string[]>>({});
+function renderAuto() {
+  if (!chart) return;
+  chart.removeOverlay({ groupId: 'auto' });
+  const a = analysis.value;
+  const data = chart.getDataList();
+  autoEvents.value = {};
+  if (!a || !data.length) return;
+  const point = (p: ChartPoint) => {
+    const index = barIndexFor(data, p.date);
+    return index < 0 ? null : { timestamp: data[index]!.timestamp, value: p.price };
+  };
+  const overlays: OverlayCreate[] = [];
+  const line = (name: string, pts: (null | { timestamp: number; value: number })[], extendData: AutoLineData) => {
+    if (pts.length >= 2 && pts.every(Boolean)) {
+      overlays.push({ extendData, groupId: 'auto', lock: true, name, points: pts as { timestamp: number; value: number }[] });
+    }
+  };
+  if (settings.auto.pivots && a.pivots.length > 1) {
+    line('autoPolyline', a.pivots.map(point).filter(Boolean), { color: '#94a3b8', dashed: true, dots: true });
+  }
+  if (settings.auto.levels) {
+    for (const lv of a.levels) {
+      const start = barIndexFor(data, lv.first_date);
+      const from = data[Math.max(0, start)]!.timestamp;
+      const text = `${lv.kind === 'resistance' ? '阻力' : '支撑'} ${lv.price.toFixed(2)}${lv.extreme ? (lv.kind === 'resistance' ? ' 区间最高' : ' 区间最低') : ` ×${lv.touches}`}${lv.flipped ? ' ⇅' : ''}`;
+      overlays.push({ extendData: { color: LEVEL_COLOR[lv.kind], label: text }, groupId: 'auto', lock: true, name: 'priceZone',
+                      points: [{ timestamp: from, value: lv.low }, { timestamp: from, value: lv.high }] });
+    }
+  }
+  if (settings.auto.trends) {
+    for (const tl of a.trendlines) {
+      const color = tl.kind === 'up' ? UP_COLOR : DOWN_COLOR;
+      const label = `${tl.kind === 'up' ? '上升趋势线' : '下降趋势线'} ${tl.touches} 次${tl.broken ? (tl.kind === 'up' ? ' 已跌破' : ' 已突破') : ''}`;
+      line('autoLine', [point(tl.start), point(tl.broken ? tl.end : tl.anchor)], { color, extend: !tl.broken, label, width: 1.5 });
+      if (tl.channel) line('autoLine', [point(tl.channel.start), point(tl.channel.end)], { color, dashed: true, extend: !tl.broken });
+    }
+  }
+  if (settings.auto.fib && a.fibonacci) {
+    const from = point(a.fibonacci.from);
+    const to = point(a.fibonacci.to);
+    if (from && to) overlays.push({ groupId: 'auto', lock: true, name: 'fibonacciLine', points: [from, to] });
+  }
+  if (settings.auto.patterns) {
+    for (const pattern of a.patterns) {
+      const color = pattern.status === 'failed' ? '#9ca3af' : DIRECTION_COLOR[pattern.direction] ?? '#eab308';
+      line('autoPolyline', pattern.points.map(point), { color, dots: true, label: `${pattern.name}·${STATUS_LABEL[pattern.status]}`, width: 1.5 });
+      for (const l of pattern.lines) line('autoLine', [point(l.start), point(l.end)], { color, dashed: true });
+      if (pattern.target !== null && pattern.status !== 'failed') {
+        line('autoLine', [point({ date: pattern.end_date, price: pattern.target }), point({ date: data.at(-1) ? day(data.at(-1)!.timestamp) : pattern.end_date, price: pattern.target })],
+             { color, dashed: true, label: `目标 ${pattern.target.toFixed(2)}` });
+      }
+    }
+  }
+  const events: Record<number, string[]> = {};
+  const DIRECTION_TEXT: Record<string, string> = { bearish: '看跌', bullish: '看涨', neutral: '中性' };
+  for (const c of a.candles) {
+    const index = barIndexFor(data, c.date);
+    if (index < 0) continue;
+    const bar = data[index]!;
+    (events[bar.timestamp] ??= []).push(`K 线组合：${c.name}（${DIRECTION_TEXT[c.direction]}）`);
+    if (!settings.auto.candles) continue;
+    const below = c.direction === 'bullish';
+    const stacked = markStacks.get(bar.timestamp);
+    const mark: MarkData = { below, color: c.direction === 'neutral' ? '#a1a1aa' : DIRECTION_COLOR[c.direction]!, outline: true,
+                             stack: below ? stacked?.below ?? 0 : stacked?.above ?? 0, text: c.label };
+    overlays.push({ extendData: mark, groupId: 'auto', lock: true, name: 'eventMark',
+                    points: [{ timestamp: bar.timestamp, value: below ? bar.low : bar.high }] });
+  }
+  autoEvents.value = events;
+  if (overlays.length) chart.createOverlay(overlays);
+}
+
+function keepLevel(price: number) {
+  const last = chart?.getDataList().at(-1);
+  if (!chart || !last) return;
+  chart.createOverlay(drawingOverlay('horizontalStraightLine', { name: 'horizontalStraightLine', points: [{ timestamp: last.timestamp, value: price }] }));
+  scheduleSave();
+  message.success('已保存为我的画线');
+}
+function keepTrend(tl: ChartAnalysis['trendlines'][number]) {
+  const data = chart?.getDataList() ?? [];
+  const a = barIndexFor(data, tl.start.date);
+  const b = barIndexFor(data, (tl.broken ? tl.end : tl.anchor).date);
+  if (!chart || a < 0 || b < 0) return;
+  const name = tl.broken ? 'segment' : 'rayLine';
+  chart.createOverlay(drawingOverlay(name, { name, points: [{ timestamp: data[a]!.timestamp, value: tl.start.price },
+                                                            { timestamp: data[b]!.timestamp, value: (tl.broken ? tl.end : tl.anchor).price }] }));
+  scheduleSave();
+  message.success('已保存为我的画线');
+}
+function locate(date: string) {
+  const data = chart?.getDataList() ?? [];
+  const index = barIndexFor(data, date);
+  if (chart && index >= 0) chart.scrollToTimestamp(data[index]!.timestamp);
+}
+function applyAxis() {
+  chart?.overrideYAxis({ name: settings.axis, paneId: 'candle_pane' });
 }
 
 // -- indicators -----------------------------------------------------------------------------------
@@ -567,9 +701,11 @@ function reload() {
   chart?.removeOverlay({ groupId: 'marks' });
   chart?.removeOverlay({ groupId: 'drawings' });
   chart?.removeOverlay({ groupId: 'range' });
+  chart?.removeOverlay({ groupId: 'auto' });
   quiet = false;
   range.value = null;
   selectedId.value = '';
+  analysis.value = undefined;
 }
 
 onMounted(() => {
@@ -582,6 +718,7 @@ onMounted(() => {
   chart.subscribeAction('onCrosshairChange', (data: any) => hover(data?.x));
   chart.subscribeAction('onVisibleRangeChange', rebaseCompare);
   applyIndicators();
+  applyAxis();
   chart.setSymbol({ pricePrecision: 2, ticker: props.symbol, volumePrecision: 0 });
   chart.setPeriod({ span: 1, type: settings.period });
   loadToken += 1;
@@ -624,6 +761,9 @@ watch(() => [settings.main.join(), settings.subs.join()], applyIndicators);
 watch(() => settings.compare, () => void applyCompare());
 watch(() => ({ ...settings.marks }), renderMarks);
 watch(isDark, applyTheme);
+watch(() => settings.sensitivity, () => void loadAnalysis());
+watch(() => ({ ...settings.auto }), renderAuto);
+watch(() => settings.axis, applyAxis);
 watch(() => settings.panel, () => nextTick(() => chart?.resize()));
 
 // -- data window ----------------------------------------------------------------------------------
@@ -648,7 +788,9 @@ const shownAmplitude = computed(() => {
   if (typeof bar.amplitude === 'number') return bar.amplitude / 100;
   return shownPrev.value ? (bar.high - bar.low) / shownPrev.value.close : undefined;
 });
-const shownEvents = computed(() => (shown.value ? barEvents.value[shown.value.timestamp] ?? [] : []));
+const shownEvents = computed(() => (shown.value
+  ? [...(barEvents.value[shown.value.timestamp] ?? []), ...(autoEvents.value[shown.value.timestamp] ?? [])]
+  : []));
 const PERIOD_LABEL: Record<BarPeriod, string> = { day: '日', month: '月', week: '周' };
 </script>
 
@@ -662,9 +804,9 @@ const PERIOD_LABEL: Record<BarPeriod, string> = { day: '日', month: '月', week
                  :options="[{ label: '日K', value: 'day' }, { label: '周K', value: 'week' }, { label: '月K', value: 'month' }]" />
       <Segmented v-if="!isIndex" v-model:value="settings.adjust" size="small"
                  :options="[{ label: '前复权', value: 'qfq' }, { label: '不复权', value: 'none' }, { label: '后复权', value: 'hfq' }]" />
-      <Select v-model:value="settings.main" mode="multiple" size="small" :max-tag-count="2" placeholder="主图指标" style="min-width: 170px"
+      <Select v-model:value="settings.main" mode="multiple" size="small" :max-tag-count="2" placeholder="主图指标" style="min-width: 150px"
               :options="Object.entries(MAIN_INDICATORS).map(([value, label]) => ({ label, value }))" />
-      <Select v-model:value="settings.subs" mode="multiple" size="small" :max-tag-count="3" placeholder="副图指标" style="min-width: 220px"
+      <Select v-model:value="settings.subs" mode="multiple" size="small" :max-tag-count="3" placeholder="副图指标" style="min-width: 190px"
               :options="Object.entries(SUB_INDICATORS).map(([value, label]) => ({ label, value }))" />
       <Dropdown :trigger="['click']">
         <Button size="small">指标参数</Button>
@@ -674,8 +816,24 @@ const PERIOD_LABEL: Record<BarPeriod, string> = { day: '日', month: '月', week
           </Menu>
         </template>
       </Dropdown>
-      <Select v-model:value="settings.compare" allow-clear size="small" placeholder="叠加指数对比" style="width: 150px"
+      <Select v-model:value="settings.compare" allow-clear size="small" placeholder="叠加指数" style="width: 120px"
               :options="Object.entries(COMPARE).map(([value, label]) => ({ label, value }))" />
+      <Dropdown :trigger="['click']">
+        <Button size="small" :type="Object.values(settings.auto).some(Boolean) ? 'primary' : 'default'" ghost>自动画线</Button>
+        <template #overlay>
+          <div class="bg-background w-44 rounded p-2 shadow" @click.stop>
+            <div v-for="(label, kind) in AUTO_LABEL" :key="kind"><Checkbox v-model:checked="settings.auto[kind]">{{ label }}</Checkbox></div>
+            <Divider class="my-2" />
+            <div class="mb-1 text-xs">灵敏度（转折点的幅度）</div>
+            <Segmented v-model:value="settings.sensitivity" size="small" block
+                       :options="(['fine', 'medium', 'coarse'] as const).map((value) => ({ label: SENSITIVITY_LABEL[value], value }))" />
+          </div>
+        </template>
+      </Dropdown>
+      <Tooltip title="价格坐标：普通（等距）、对数（等比，看长期走势）、百分比（相对左侧第一根 K 线）">
+        <Segmented v-model:value="settings.axis" size="small"
+                   :options="[{ label: '普通', value: 'normal' }, { label: '对数', value: 'logarithm' }, { label: '%', value: 'percentage' }]" />
+      </Tooltip>
       <Dropdown :trigger="['click']">
         <Button size="small">标记</Button>
         <template #overlay>
@@ -689,9 +847,16 @@ const PERIOD_LABEL: Record<BarPeriod, string> = { day: '日', month: '月', week
       <Tooltip title="框选一段 K 线，统计涨跌幅、振幅、成交">
         <Button size="small" :type="tool === 'rangeStat' ? 'primary' : 'default'" @click="startRange">区间统计</Button>
       </Tooltip>
-      <Button size="small" @click="savePicture">截图</Button>
-      <Button size="small" @click="toggleFullscreen">{{ fullscreen ? '退出全屏' : '全屏' }}</Button>
-      <Button size="small" @click="settings.panel = !settings.panel">{{ settings.panel ? '隐藏数据' : '数据窗口' }}</Button>
+      <Dropdown :trigger="['click']">
+        <Button size="small">更多</Button>
+        <template #overlay>
+          <Menu @click="({ key }: any) => (key === 'picture' ? savePicture() : key === 'fullscreen' ? toggleFullscreen() : (settings.panel = !settings.panel))">
+            <Menu.Item key="picture">截图（含画线）</Menu.Item>
+            <Menu.Item key="fullscreen">{{ fullscreen ? '退出全屏' : '全屏' }}</Menu.Item>
+            <Menu.Item key="panel">{{ settings.panel ? '隐藏数据窗口' : '显示数据窗口' }}</Menu.Item>
+          </Menu>
+        </template>
+      </Dropdown>
     </div>
 
     <div class="flex min-h-0 flex-1">
@@ -745,6 +910,27 @@ const PERIOD_LABEL: Record<BarPeriod, string> = { day: '日', month: '月', week
             <div class="mb-1 font-semibold">当期事件</div>
             <div v-for="(line, k) in shownEvents" :key="k" class="mb-0.5">{{ line }}</div>
           </template>
+        </template>
+        <template v-if="analysis && (analysis.patterns.length || analysis.levels.length || analysis.trendlines.length)">
+          <Divider class="my-2" />
+          <div class="mb-1 font-semibold">自动分析（{{ SENSITIVITY_LABEL[settings.sensitivity] }}）</div>
+          <div v-for="(pattern, k) in analysis.patterns" :key="`p${k}`" class="mb-1">
+            <a :style="{ color: pattern.status === 'failed' ? '#9ca3af' : DIRECTION_COLOR[pattern.direction] }" @click="locate(pattern.start_date)">
+              {{ pattern.name }}·{{ STATUS_LABEL[pattern.status] }}
+            </a>
+            <div class="text-muted-foreground">
+              {{ pattern.start_date.slice(2) }} ~ {{ pattern.end_date.slice(2) }}{{ pattern.target !== null && pattern.status !== 'failed' ? `，目标 ${pattern.target.toFixed(2)}` : '' }}
+            </div>
+          </div>
+          <div v-for="(tl, k) in analysis.trendlines" :key="`t${k}`" class="flex justify-between">
+            <span :style="{ color: tl.kind === 'up' ? UP_COLOR : DOWN_COLOR }">{{ tl.kind === 'up' ? '上升' : '下降' }}趋势线 {{ tl.touches }} 次{{ tl.broken ? '（已破）' : '' }}</span>
+            <a @click="keepTrend(tl)">保留</a>
+          </div>
+          <div v-for="(lv, k) in [...analysis.levels].reverse()" :key="`l${k}`" class="flex justify-between">
+            <span :style="{ color: LEVEL_COLOR[lv.kind] }">{{ lv.kind === 'resistance' ? '阻力' : '支撑' }} {{ lv.price.toFixed(2) }}{{ lv.extreme ? '' : ` ×${lv.touches}` }}</span>
+            <a @click="keepLevel(lv.price)">保留</a>
+          </div>
+          <div class="text-muted-foreground mt-1">"保留"会复制成你自己的画线，可以再调整。形态和线条按规则自动识别，仅供参考。</div>
         </template>
         <template v-if="range">
           <Divider class="my-2" />
