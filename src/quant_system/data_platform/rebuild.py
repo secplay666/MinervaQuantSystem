@@ -26,6 +26,7 @@ import pandas as pd
 
 from .audit import run_audit
 from .config import DataPlatformConfig
+from .etf import etf_fetch_log_row, merge_etf_shares, normalize_etf_sse, normalize_etf_szse
 from .financials import STATEMENTS, merge_financial_versions, normalize_financials
 from .corporate import (
     load_sw2014_mapping,
@@ -152,6 +153,8 @@ class CanonicalRebuilder:
         self._rebuild_corporate()
         self._rebuild_classification()
         self._rebuild_fundamentals()
+        self._rebuild_etf_shares()
+        self._carry_forward("daily_bars_history_log")
         audit = run_audit(self.staging, calendar_end, self.start_date,
                           self.config.min_latest_coverage, f"rebuild_{self.rebuild_id}")
         if not audit.gaps.empty:
@@ -463,6 +466,35 @@ class CanonicalRebuilder:
                 write_canonical_frame(self.staging, dataset, merged)
         if log_rows:
             write_canonical_frame(self.staging, "corporate_fetch_log", merge_fetch_log(None, log_rows))
+
+    def _carry_forward(self, dataset: str) -> None:
+        """Keep an operational log that raw data cannot reproduce (the
+        history backfill's no-data and rejected outcomes) across a rebuild."""
+        frame = read_canonical(self.root, dataset)
+        if frame is not None and not frame.empty:
+            write_canonical_frame(self.staging, dataset, frame)
+
+    def _rebuild_etf_shares(self) -> None:
+        """Replay ETF share responses run by run through the ingestion merge,
+        and rebuild their fetch log."""
+        merged, log_rows = None, []
+        for run_id, directory in _raw_runs(self.raw_root, "etf_shares"):
+            for path in sorted(directory.glob("*.parquet")):
+                raw = pd.read_parquet(path)
+                window = path.stem
+                if window.startswith("sse_"):
+                    day = date(int(window[4:8]), int(window[8:10]), int(window[10:12]))
+                    part, _ = normalize_etf_sse(raw, day, run_id, run_id_to_iso(run_id))
+                else:
+                    part, _ = normalize_etf_szse(raw, run_id, run_id_to_iso(run_id))
+                merged = merge_etf_shares(merged, part)
+                row = etf_fetch_log_row(window, len(part), run_id)
+                if row is not None:
+                    log_rows.append(row)
+        if merged is not None and not merged.empty:
+            write_canonical_frame(self.staging, "etf_shares", merged)
+        if log_rows:
+            write_canonical_frame(self.staging, "etf_shares_fetch_log", merge_fetch_log(None, log_rows))
 
     def _rebuild_fundamentals(self) -> None:
         """Replay statement windows run by run, in name order, through the

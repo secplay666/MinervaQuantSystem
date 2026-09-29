@@ -32,6 +32,7 @@ SINGLE_FILE_DATASETS = (
     "fin_income",
     "fin_balance",
     "fin_cashflow",
+    "etf_shares",
 )
 DATE_COLUMNS = {
     "daily_bars": "trade_date",
@@ -49,6 +50,7 @@ DATE_COLUMNS = {
     "fin_income": "report_date",
     "fin_balance": "report_date",
     "fin_cashflow": "report_date",
+    "etf_shares": "trade_date",
 }
 
 

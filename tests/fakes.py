@@ -55,6 +55,8 @@ def make_config(**overrides: object) -> DataPlatformConfig:
         ),
         sw_mapping_path=str(SW_MAPPING),
         index_weight_symbols=("000300",),
+        etf_sse_start="20260901",
+        etf_szse_start="20260801",
         config_hash="test",
     )
     values.update(overrides)
@@ -304,6 +306,33 @@ class FakeProvider(MarketDataProvider):
     def fetch_dividends(self, report_date: str) -> pd.DataFrame:
         self.calls.append(("dividends", report_date))
         return pd.DataFrame([r for r in self.dividend_rows if str(r["REPORT_DATE"])[:10] == report_date])
+
+    # ETF shares: two SSE funds and one SZSE fund, 1e8 shares plus 1e6 a day
+    etf_failing: set[str] = field(default_factory=set)  # "sse:YYYYMMDD" / "szse:YYYYMM" raise
+    etf_unpublished: set[date] = field(default_factory=set)  # days whose table is not out yet
+
+    def _etf_days(self, start: date, end: date) -> list[date]:
+        return [d for d in OPEN_DATES if start <= d <= min(end, self.today) and d not in self.etf_unpublished]
+
+    def fetch_etf_shares_sse(self, trade_date: str) -> pd.DataFrame:
+        self.calls.append(("etf_sse", trade_date))
+        if f"sse:{trade_date}" in self.etf_failing:
+            raise RuntimeError("SSE ETF scale unavailable")
+        day = pd.to_datetime(trade_date).date()
+        rows = [{"STAT_DATE": day.isoformat(), "ETF_TYPE": "单市场ETF", "SEC_CODE": code, "NUM": str(i + 1),
+                 "SEC_NAME": name, "TOT_VOL": f"{(1e8 + 1e6 * OPEN_DATES.index(day)) / 1e4:.2f}"}
+                for i, (code, name) in enumerate((("510300", "300ETF"), ("510050", "50ETF")))
+                if day in self._etf_days(day, day)]
+        return pd.DataFrame(rows, columns=["STAT_DATE", "ETF_TYPE", "SEC_CODE", "NUM", "SEC_NAME", "TOT_VOL"])
+
+    def fetch_etf_shares_szse(self, start: str, end: str) -> pd.DataFrame:
+        self.calls.append(("etf_szse", start))
+        if f"szse:{start[:6]}" in self.etf_failing:
+            raise RuntimeError("SZSE report unavailable")
+        days = self._etf_days(pd.to_datetime(start).date(), pd.to_datetime(end).date())
+        return pd.DataFrame([{"日期": d, "基金代码": "159919", "基金简称": "沪深300ETF嘉实",
+                              "基金份额": 1e8 + 1e6 * OPEN_DATES.index(d)} for d in days],
+                            columns=["日期", "基金代码", "基金简称", "基金份额"])
 
     fin_periods: tuple[str, ...] = ("2025-06-30", "2025-09-30", "2025-12-31", "2026-03-31", "2026-06-30")
     fin_revision: bool = False  # restate 600001's 2025 annual report (new UPDATE_DATE)

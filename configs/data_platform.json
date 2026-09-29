@@ -2,7 +2,7 @@
   "provider": "akshare",
   "provider_version": "1.18.78",
   "market": "A_SHARE",
-  "start_date": "20200101",
+  "start_date": "20050101",
   "index_start_date": "19900101",
   "request_pause_seconds": 0.35,
   "max_retries": 4,
@@ -17,6 +17,10 @@
   "max_listing_shrink_ratio": 0.02,
   "download_status_history": true,
   "suspension_backfill_start": "20230103",
+  "download_etf_shares": true,
+  "etf_sse_start": "20150101",
+  "etf_szse_start": "20160101",
+  "etf_sse_max_dates_per_run": 30,
   "manual_delistings": [
     {
       "symbol": "920680",

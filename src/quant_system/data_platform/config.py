@@ -66,6 +66,10 @@ class DataPlatformConfig:
     download_corporate: bool = True
     download_classification: bool = True
     download_fundamentals: bool = True
+    download_etf_shares: bool = True
+    etf_sse_start: str = "20150101"
+    etf_szse_start: str = "20160101"
+    etf_sse_max_dates_per_run: int = 30
     sw_mapping_path: str = "configs/industry/sw2014_to_sw2021_l1.json"
     index_weight_symbols: tuple[str, ...] = ("000300", "000905", "000852")
     config_hash: str = ""
@@ -127,6 +131,10 @@ class DataPlatformConfig:
             download_corporate=bool(payload.get("download_corporate", True)),
             download_classification=bool(payload.get("download_classification", True)),
             download_fundamentals=bool(payload.get("download_fundamentals", True)),
+            download_etf_shares=bool(payload.get("download_etf_shares", True)),
+            etf_sse_start=str(payload.get("etf_sse_start", "20150101")),
+            etf_szse_start=str(payload.get("etf_szse_start", "20160101")),
+            etf_sse_max_dates_per_run=max(1, int(payload.get("etf_sse_max_dates_per_run", 30))),
             sw_mapping_path=str(payload.get("sw_mapping_path", "configs/industry/sw2014_to_sw2021_l1.json")),
             index_weight_symbols=tuple(str(item) for item in payload.get("index_weight_symbols",
                                                                          ("000300", "000905", "000852"))),

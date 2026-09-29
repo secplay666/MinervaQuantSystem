@@ -100,3 +100,16 @@ class MarketDataProvider(ABC):
     def fetch_dividends(self, report_date: str) -> pd.DataFrame:
         """Dividend and bonus-share plans for one report period (YYYY-MM-DD)."""
         raise NotImplementedError
+
+    @abstractmethod
+    def fetch_etf_shares_sse(self, trade_date: str) -> pd.DataFrame:
+        """SSE ETF shares outstanding on one day (YYYYMMDD), as published:
+        STAT_DATE, ETF_TYPE, SEC_CODE, SEC_NAME, TOT_VOL (10,000 shares).
+        Empty on a day without data."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def fetch_etf_shares_szse(self, start: str, end: str) -> pd.DataFrame:
+        """SZSE ETF shares outstanding per day in [start, end] (YYYYMMDD, at
+        most six months): 日期, 基金代码, 基金简称, 基金份额 (shares)."""
+        raise NotImplementedError

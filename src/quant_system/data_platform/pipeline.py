@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import bisect
 import logging
 import os
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import asdict, dataclass, field
-from datetime import date, datetime
+from dataclasses import asdict, dataclass, field, replace
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,18 @@ import pandas as pd
 
 from .audit import run_audit
 from .config import DataPlatformConfig
+from .etf import (
+    SOURCE_ETF_SSE,
+    SOURCE_ETF_SZSE,
+    etf_fetch_log_row,
+    merge_etf_shares,
+    normalize_etf_sse,
+    normalize_etf_szse,
+    sse_etf_dates,
+    sse_window,
+    szse_etf_months,
+    szse_window,
+)
 from .financials import (
     SOURCE_FINANCIALS,
     STATEMENTS,
@@ -103,8 +116,18 @@ from .utils import code_version, ensure_directories, json_dump, run_id_to_iso, u
 
 MAX_RECORDED_ERRORS = 200
 STEPS = ("daily_bars", "adjustment_factors", "indices", "status_history", "market_snapshot", "corporate",
-         "classification", "fundamentals")
+         "classification", "fundamentals", "etf_shares")
+# Run only when asked (``--steps``): the one-off backfill of history before
+# the earliest stored bar, e.g. after start_date moved earlier.
+OPTIONAL_STEPS = ("bars_history",)
+ALL_STEPS = STEPS + OPTIONAL_STEPS
 CORPORATE_MAX_CONSECUTIVE_FAILURES = 3
+ETF_MAX_CONSECUTIVE_FAILURES = 2
+# A delisted symbol with no bars at all that left the market this long ago is
+# history to backfill (bars_history), not something the daily run fetches.
+HISTORY_ONLY_DELISTED_DAYS = 365
+HISTORY_FINAL_STATUSES = ("done", "no_data", "quarantined")
+HISTORY_LOG_COLUMNS = ["symbol", "window_start", "head_end", "status", "rows", "first_date", "detail", "run_id"]
 BAIDU_MAX_CONSECUTIVE_FAILURES = 10
 BULLETIN_MAX_CONSECUTIVE_FAILURES = 2
 
@@ -179,9 +202,9 @@ class IngestionPipeline:
         master, audit and finalization always run)."""
         if mode not in {"full", "incremental"}:
             raise ValueError("mode must be one of: full, incremental")
-        unknown = set(steps or ()) - set(STEPS)
+        unknown = set(steps or ()) - set(ALL_STEPS)
         if unknown:
-            raise ValueError(f"unknown steps {sorted(unknown)}; choose from {list(STEPS)}")
+            raise ValueError(f"unknown steps {sorted(unknown)}; choose from {list(ALL_STEPS)}")
         self.steps = set(steps) if steps else set(STEPS)
         ensure_directories(self.root)
         run_id = unique_run_id(self.root)
@@ -217,6 +240,8 @@ class IngestionPipeline:
         universe = self._daily_universe(ctx)
         if "daily_bars" in self.steps:
             self._ingest_daily_bars(ctx, universe)
+        if "bars_history" in self.steps:
+            self._ingest_bars_history(ctx, universe)
         if "adjustment_factors" in self.steps and self.config.download_adjustment_factors:
             self._ingest_adjustment_factors(ctx, universe)
         if "indices" in self.steps:
@@ -231,6 +256,8 @@ class IngestionPipeline:
             self._ingest_classification(ctx)
         if "fundamentals" in self.steps and self.config.download_fundamentals:
             self._ingest_fundamentals(ctx)
+        if "etf_shares" in self.steps and self.config.download_etf_shares:
+            self._ingest_etf_shares(ctx)
         self._audit(ctx, universe)
 
     # ------------------------------------------------------------ helpers
@@ -428,10 +455,9 @@ class IngestionPipeline:
     ) -> date:
         if ctx.mode == "full" or bounds is None:
             return window_start
-        existing_min, existing_max, _ = bounds
-        first_session = next((d for d in ctx.open_dates if d >= window_start), window_start)
-        if existing_min > first_session:
-            return window_start  # head missing (e.g. start_date moved earlier)
+        # History before the first stored bar (start_date moved earlier, or
+        # no trading on the first sessions) is the bars_history step's job.
+        _, existing_max, _ = bounds
         # Re-fetch a few sessions so late vendor revisions replace old rows.
         overlap_start = session_offset(ctx.open_dates, existing_max, self.config.overlap_sessions)
         return max(window_start, overlap_start)
@@ -477,6 +503,9 @@ class IngestionPipeline:
                 ctx.first_bar_dates[item.symbol] = bounds[0]
             if window_end < window_start:
                 ctx.count(step, "empty_window")
+                continue
+            if ctx.mode == "incremental" and bounds is None and self._history_only(ctx, item):
+                ctx.count(step, "history_pending")
                 continue
             if (ctx.mode == "incremental" and bounds is not None
                     and self._delisted_history_final(ctx, item, bounds[1], bounds[2])):
@@ -581,6 +610,138 @@ class IngestionPipeline:
         if incoming.empty and existing is not None and not existing.empty:
             ctx.count(step, "no_new_rows")
         return "updated"
+
+    @staticmethod
+    def _history_only(ctx: RunContext, item: UniverseItem) -> bool:
+        assert ctx.expected_latest is not None
+        return (item.is_delisted and item.delist_date is not None
+                and item.delist_date < ctx.expected_latest - timedelta(days=HISTORY_ONLY_DELISTED_DAYS))
+
+    # ------------------------------------------------------ bars history
+
+    def _ingest_bars_history(self, ctx: RunContext, universe: list[UniverseItem]) -> None:
+        """Backfill bars before each symbol's first stored bar, and whole
+        histories of long-delisted symbols that have none.
+
+        Only the missing head is fetched and it never replaces stored rows.
+        An accepted head is kept as raw ``daily_bars`` (so a rebuild replays
+        it); a head failing validation is kept as raw
+        ``daily_bars_history_rejected`` plus a quarantine copy and reported
+        as a warning, so old vendor data cannot make daily runs partial.
+        The log records final outcomes per (symbol, window start).
+        """
+        step = "bars_history"
+        log = read_canonical(self.root, "daily_bars_history_log")
+        final = set()
+        if log is not None and not log.empty:
+            for row in log[log["status"].isin(HISTORY_FINAL_STATUSES)].itertuples(index=False):
+                final.add((row.symbol, str(row.window_start)))
+        jobs: dict[str, tuple[UniverseItem, date, date, date | None]] = {}
+        sessions = ctx.open_dates
+        for item in universe:
+            window_start, window_end = self._bar_window(ctx, item)
+            at = bisect.bisect_left(sessions, window_start)
+            if at == len(sessions) or sessions[at] > window_end:
+                continue
+            first_session = sessions[at]
+            if (item.symbol, str(window_start)) in final:
+                ctx.count(step, "logged")
+                continue
+            bounds = self._partition_bounds("daily_bars", item.symbol)
+            if bounds is None:
+                if not item.is_delisted:
+                    ctx.count(step, "no_partition_live")  # the daily step's job
+                    continue
+                jobs[item.symbol] = (item, window_start, window_end, None)
+            elif bounds[0] > first_session:
+                head_end = sessions[bisect.bisect_left(sessions, bounds[0]) - 1]
+                jobs[item.symbol] = (item, window_start, head_end, bounds[0])
+            else:
+                ctx.count(step, "complete")
+        ctx.count(step, "requested", len(jobs))
+        self.logger.info("Bars history: %s heads to fetch", len(jobs))
+        log_rows: list[dict[str, Any]] = []
+
+        def flush() -> None:
+            nonlocal log
+            if log_rows:
+                parts = [part for part in (log, pd.DataFrame(log_rows, columns=HISTORY_LOG_COLUMNS))
+                         if part is not None and not part.empty]
+                log = pd.concat(parts, ignore_index=True).drop_duplicates(["symbol", "window_start"], keep="last")
+                write_canonical_frame(self.root, "daily_bars_history_log",
+                                      log.sort_values(["symbol", "window_start"], ignore_index=True))
+                log_rows.clear()
+
+        def fetch(symbol: str) -> FetchResult:
+            item, head_start, head_end, _ = jobs[symbol]
+            return self.provider.fetch_daily_bars(symbol, self._date_str(head_start), self._date_str(head_end),
+                                                  delisted=item.is_delisted)
+
+        with ThreadPoolExecutor(max_workers=self.config.max_workers) as executor:
+            futures = {executor.submit(fetch, symbol): symbol for symbol in jobs}
+            try:
+                for done, future in enumerate(as_completed(futures), start=1):
+                    symbol = futures[future]
+                    item, head_start, head_end, _ = jobs[symbol]
+                    try:
+                        status, rows, first, detail = self._store_bars_head(ctx, item, head_start, head_end,
+                                                                            future.result())
+                    except Exception as exc:
+                        self.logger.warning("Bars history failed for %s: %s", symbol, exc)
+                        ctx.error(step, symbol, exc)
+                        ctx.count(step, "failed")
+                        continue
+                    ctx.count(step, status)
+                    log_rows.append({"symbol": symbol, "window_start": head_start, "head_end": head_end,
+                                     "status": status, "rows": rows, "first_date": first, "detail": detail,
+                                     "run_id": ctx.run_id})
+                    if done % 200 == 0 or done == len(futures):
+                        self.logger.info("Bars history progress: %s/%s", done, len(futures))
+                        flush()
+            except BaseException:
+                executor.shutdown(wait=False, cancel_futures=True)
+                flush()
+                raise
+        flush()
+        counters = ctx.counters.get(step, {})
+        if counters.get("failed"):
+            ctx.issues.append(QualityIssue(
+                step, "fetch_failed", "warning",
+                f"{counters['failed']} 只证券的历史日线下载失败，下次回补运行重试", counters["failed"]))
+        if counters.get("no_data"):
+            ctx.issues.append(QualityIssue(
+                step, "no_data", "warning",
+                f"{counters['no_data']} 只证券在回补区间内数据源没有日线（已记录，不再重复请求）", counters["no_data"]))
+
+    def _store_bars_head(
+        self, ctx: RunContext, item: UniverseItem, head_start: date, head_end: date, result: FetchResult
+    ) -> tuple[str, int, date | None, str]:
+        """(status, rows, first date, detail) for one fetched head."""
+        symbol = item.symbol
+        incoming = normalize_daily_bars(result.frame, symbol, ctx.run_id, ctx.ingested_at, result.source)
+        incoming, dropped = drop_invalid_price_rows(incoming)
+        if dropped:
+            ctx.count("bars_history", "invalid_price_rows_dropped", dropped)
+        head, _ = clip_bars(incoming, head_start, head_end)
+        if head.empty:
+            self._raw(ctx, "daily_bars", symbol, result.frame, result.source)
+            return "no_data", 0, None, ""
+        existing = read_canonical(self.root, "daily_bars", f"symbol={symbol}")
+        merged = merge_daily_bars(existing, head)
+        issues = validate_bars(merged, "daily_bars", symbol) + validate_volume_units(merged, symbol)
+        if has_blocking(issues):
+            self._raw(ctx, "daily_bars_history_rejected", symbol, result.frame, result.source)
+            self._quarantine(ctx, "daily_bars_history", f"symbol={symbol}", head)
+            rules = sorted({issue.rule for issue in issues if issue.severity == "blocking"})
+            ctx.issues.extend(replace(issue, dataset="bars_history", severity="warning",
+                                      message=f"历史回补未采用：{issue.message}")
+                              for issue in issues if issue.severity == "blocking")
+            return "quarantined", len(head), head["trade_date"].min(), ",".join(rules)
+        self._raw(ctx, "daily_bars", symbol, result.frame, result.source)
+        ctx.issues.extend(issues)
+        write_canonical_frame(self.root, "daily_bars", merged, partition=f"symbol={symbol}")
+        ctx.first_bar_dates[symbol] = merged["trade_date"].min()
+        return "done", len(head), head["trade_date"].min(), ""
 
     # ------------------------------------------------- adjustment factors
 
@@ -949,6 +1110,68 @@ class IngestionPipeline:
                     f"{dataset} 抓取：{failed} 个窗口失败、{deferred} 个窗口推迟，下次运行重试", failed + deferred))
         if log_rows:
             write_canonical_frame(self.root, "corporate_fetch_log", merge_fetch_log(log, log_rows))
+
+    # ---------------------------------------------------------- ETF shares
+
+    def _ingest_etf_shares(self, ctx: RunContext) -> None:
+        """Daily ETF shares outstanding: SSE one day per request (newest
+        first, a capped number per run), SZSE one month per request."""
+        assert ctx.expected_latest is not None
+        log = read_canonical(self.root, "etf_shares_fetch_log")
+        merged = read_canonical(self.root, "etf_shares")
+        log_rows: list[dict[str, Any]] = []
+        step = "etf_shares"
+        days, left = sse_etf_dates(ctx.open_dates, pd.to_datetime(self.config.etf_sse_start).date(),
+                                   ctx.expected_latest, log, self.config.etf_sse_max_dates_per_run)
+        jobs: list[tuple[str, str, tuple[str, ...]]] = [
+            ("sse", sse_window(day), (self._date_str(day),)) for day in days]
+        jobs += [("szse", szse_window(first), (self._date_str(first), self._date_str(last)))
+                 for first, last in szse_etf_months(pd.to_datetime(self.config.etf_szse_start).date(),
+                                                    ctx.expected_latest, log)]
+        consecutive = {"sse": 0, "szse": 0}
+        for exchange, window, args in jobs:
+            if consecutive[exchange] >= ETF_MAX_CONSECUTIVE_FAILURES:
+                ctx.count(step, f"{exchange}_deferred")
+                continue
+            try:
+                if exchange == "sse":
+                    raw = self.provider.fetch_etf_shares_sse(*args)
+                    part, counts = normalize_etf_sse(raw, pd.to_datetime(args[0]).date(), ctx.run_id,
+                                                     ctx.ingested_at)
+                else:
+                    raw = self.provider.fetch_etf_shares_szse(*args)
+                    part, counts = normalize_etf_szse(raw, ctx.run_id, ctx.ingested_at)
+            except Exception as exc:
+                ctx.error(step, window, exc)
+                ctx.count(step, f"{exchange}_failed")
+                consecutive[exchange] += 1
+                continue
+            consecutive[exchange] = 0
+            self._raw(ctx, step, window, raw, SOURCE_ETF_SSE if exchange == "sse" else SOURCE_ETF_SZSE)
+            merged = merge_etf_shares(merged, part)
+            ctx.count(step, f"{exchange}_windows")
+            ctx.count(step, "rows", len(part))
+            for key, value in counts.items():
+                if value:
+                    ctx.count(step, key, value)
+            if part.empty:
+                ctx.count(step, f"{exchange}_empty")
+            row = etf_fetch_log_row(window, len(part), ctx.run_id)
+            if row is not None:
+                log_rows.append(row)
+        if merged is not None and not merged.empty:
+            write_canonical_frame(self.root, step, merged)
+        if log_rows:
+            write_canonical_frame(self.root, "etf_shares_fetch_log", merge_fetch_log(log, log_rows))
+        counters = ctx.counters.get(step, {})
+        failed = counters.get("sse_failed", 0) + counters.get("szse_failed", 0)
+        deferred = counters.get("sse_deferred", 0) + counters.get("szse_deferred", 0)
+        if failed or deferred:
+            ctx.issues.append(QualityIssue(
+                step, "fetch_windows", "warning",
+                f"ETF 份额抓取：{failed} 个请求失败、{deferred} 个推迟，下次运行重试", failed + deferred))
+        if left:
+            ctx.count(step, "sse_backlog", left)
 
     # -------------------------------------------------------- fundamentals
 

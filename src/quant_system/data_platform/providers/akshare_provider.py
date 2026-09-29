@@ -414,6 +414,15 @@ class AkShareProvider(MarketDataProvider):
     def fetch_dividends(self, report_date: str) -> pd.DataFrame:
         return self.fetch_datacenter("RPT_SHAREBONUS_DET", f"(REPORT_DATE='{report_date}')", "SECUCODE")
 
+    def fetch_etf_shares_sse(self, trade_date: str) -> pd.DataFrame:
+        # Queried directly: AKShare's fund_etf_scale_sse raises on a day without data.
+        time.sleep(SSE_BULLETIN_PAUSE_SECONDS)  # the same throttled SSE query service
+        return self._call(f"sse_etf_scale:{trade_date}", _sse_etf_scale, trade_date=trade_date)
+
+    def fetch_etf_shares_szse(self, start: str, end: str) -> pd.DataFrame:
+        return self._call(f"fund_scale_daily_szse:{start}", ak.fund_scale_daily_szse,
+                          start_date=start, end_date=end, symbol="ETF")
+
 
 SOURCE_CSINDEX = "akshare.stock_zh_index_hist_csindex.csindex"
 SSE_PAGE_SIZE = 100
@@ -443,6 +452,23 @@ def _sse_bulletin_page(title: str, start: str, end: str, page: int) -> tuple[lis
     help_ = payload["pageHelp"]
     data = [item for row in (help_["data"] or []) for item in (row if isinstance(row, list) else [row])]
     return data, int(help_["total"] or 0)
+
+
+def _sse_etf_scale(trade_date: str) -> pd.DataFrame:
+    params = {
+        "isPagination": "true", "pageHelp.pageSize": "10000", "pageHelp.pageNo": "1", "pageHelp.beginPage": "1",
+        "pageHelp.cacheSize": "1", "pageHelp.endPage": "1", "sqlId": "COMMON_SSE_ZQPZ_ETFZL_XXPL_ETFGM_SEARCH_L",
+        "STAT_DATE": f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}",
+    }
+    response = requests.get("https://query.sse.com.cn/commonQuery.do", params=params,
+                            headers={"Referer": "https://www.sse.com.cn/", "User-Agent": _BROWSER_UA})
+    response.raise_for_status()
+    payload = response.json()
+    rows = payload.get("result") or []
+    total = int((payload.get("pageHelp") or {}).get("total") or 0)
+    if total > len(rows):  # one page of 10,000 holds every fund; more means the query changed
+        raise PaginationMismatch(f"SSE ETF scale {trade_date}: {len(rows)} of {total} rows")
+    return pd.DataFrame(rows, columns=["STAT_DATE", "ETF_TYPE", "SEC_CODE", "NUM", "SEC_NAME", "TOT_VOL"])
 
 
 def _bse_announcement_page(keyword: str, start: str, end: str, page: int) -> tuple[list[dict], int]:

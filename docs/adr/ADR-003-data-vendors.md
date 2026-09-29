@@ -27,6 +27,8 @@ MVP 使用 AKShare（开源、免费、聚合多家网站）。2026-09 的探测
 | 停复牌 | 东方财富数据中心 `stock_tfp_em`（每次运行快照）+ 百度 `news_trade_notify_suspend_baidu`（逐日，2023-01-03 起） | 只追加，不覆盖 |
 | 深市简称变更 | 深交所 `stock_info_sz_change_name` | 用于带日期的 ST 历史 |
 | 全市场快照 | 东方财富，失败则腾讯 | 单次调用，按抓取时间标注交易日 |
+| 上交所 ETF 份额 | 上交所 `commonQuery.do`（`COMMON_SSE_ZQPZ_ETFZL_XXPL_ETFGM_SEARCH_L`，与 AKShare `fund_etf_scale_sse` 同一接口） | 直接请求：AKShare 的包装器在无数据的日子抛异常、且没有超时。份额单位为"万份"，标准层换算为"份"；每次请求前停 3 秒 |
+| 深交所 ETF 份额 | 深交所 `fund_scale_daily_szse` | 每次最多 6 个月，按月请求；单位为"份"；晚一天公布 |
 
 适配器层的已知缺陷及处理：
 
