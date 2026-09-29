@@ -9,7 +9,7 @@ import { useRouter } from 'vue-router';
 import { Page } from '@vben/common-ui';
 import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
 
-import { AutoComplete, Card, Col, Row, Segmented, Space, Statistic, Tag } from 'ant-design-vue';
+import { AutoComplete, Button, Card, Col, Row, Segmented, Space, Statistic, Tag } from 'ant-design-vue';
 
 import { indexBarsApi, overviewApi, searchApi } from '#/api';
 import KlineChart from '#/components/kline-chart.vue';
@@ -88,6 +88,9 @@ onMounted(async () => {
                 <Segmented v-model:value="indexSymbol" size="small" :options="overview.indices.map((i) => ({ label: i.name, value: i.symbol }))"
                            @change="loadIndex" />
               </Space>
+            </template>
+            <template #extra>
+              <Button size="small" type="primary" ghost @click="router.push({ path: '/chart', query: { symbol: indexSymbol } })">大图看盘</Button>
             </template>
             <KlineChart v-if="indexBars.length" :bars="indexBars" :ticker="indexSymbol" :height="440" :indicators="['VOL']" />
           </Card>

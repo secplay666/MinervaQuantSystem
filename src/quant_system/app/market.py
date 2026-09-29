@@ -66,6 +66,7 @@ class MarketQueries:
         self.database = database
         self.rules = MarketRules.load(rules_path)
         self._overview: dict[tuple[date, float], dict[str, Any]] = {}
+        self._indices: tuple[float, list[dict[str, Any]]] | None = None
 
     def _query(self, sql: str, params: list | None = None) -> pd.DataFrame:
         with duckdb.connect(str(self.database), read_only=True) as con:
@@ -108,12 +109,29 @@ class MarketQueries:
                             "FROM security_master WHERE symbol = ?", [symbol])
         return records(frame)[0] if len(frame) else None
 
+    def indices(self) -> list[dict[str, Any]]:
+        """Indices with daily bars (price and total-return), for search and the chart."""
+        key = self.database.stat().st_mtime
+        if self._indices is None or self._indices[0] != key:
+            try:
+                frame = self._query("SELECT symbol, any_value(name) AS name, max(trade_date) AS latest "
+                                    "FROM index_bars GROUP BY symbol ORDER BY symbol")
+            except duckdb.CatalogException:  # a database without indices
+                frame = pd.DataFrame(columns=["symbol", "name", "latest"])
+            self._indices = (key, records(frame))
+        return self._indices[1]
+
     def search(self, q: str, limit: int = 20) -> list[dict[str, Any]]:
-        pattern = f"%{q.strip()}%"
+        """Indices first (by code or name, e.g. 上证 or 000300), then stocks."""
+        text = q.strip()
+        needle = text.lower()
+        indices = [{"symbol": i["symbol"], "name": i["name"], "board": "INDEX", "delist_date": None}
+                   for i in self.indices() if needle in i["symbol"].lower() or text in (i["name"] or "")]
+        pattern = f"%{text}%"
         frame = self._query("SELECT symbol, name, board, delist_date FROM security_master "
                             "WHERE symbol LIKE ? OR name LIKE ? ORDER BY delist_date IS NOT NULL, symbol LIMIT ?",
-                            [f"{q.strip()}%", pattern, limit])
-        return records(frame)
+                            [f"{text}%", pattern, limit])
+        return (indices + records(frame))[:limit]
 
     def industries(self, symbols: list[str]) -> dict[str, str]:
         """{symbol: SW level-1 industry name} at the latest session."""

@@ -274,8 +274,11 @@ export const readAllEventsApi = () => requestClient.post('/events/read-all');
 
 // -- market --------------------------------------------------------------------------------
 export const overviewApi = (tradeDate?: string) => requestClient.get<Overview>('/market/overview', { params: { trade_date: tradeDate } });
-export const indexBarsApi = (symbol: string, limit = 250, period: BarPeriod = 'day') =>
-  requestClient.get<Bar[]>(`/market/indices/${symbol}/bars`, { params: { limit, period } });
+export const indexBarsApi = (symbol: string, limit = 250, period: BarPeriod = 'day', end?: string) =>
+  requestClient.get<Bar[]>(`/market/indices/${symbol}/bars`, { params: { end, limit, period } });
+export const indicesApi = () => requestClient.get<{ latest: string; name: string; symbol: string }[]>('/market/indices');
+/** Index codes (sh000001, sz399006, H00300) as opposed to six-digit stock codes. */
+export const isIndexSymbol = (symbol: string) => /^(sh|sz|bj)\d{6}$|^H\d{5}$/.test(symbol);
 export const searchApi = (q: string) => requestClient.get<{ board: string; name: string; symbol: string }[]>('/instruments/search', { params: { q } });
 export const instrumentApi = (symbol: string) => requestClient.get<Record<string, any>>(`/instruments/${symbol}`);
 export const barsApi = (symbol: string, adjust = 'qfq', limit = 250, period: BarPeriod = 'day', end?: string) =>

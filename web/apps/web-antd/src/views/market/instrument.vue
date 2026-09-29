@@ -95,7 +95,7 @@ onMounted(load);
             </span>
           </template>
           <template #extra>
-            <Button size="small" type="primary" ghost @click="router.push(`/chart/${symbol}`)">大图看盘</Button>
+            <Button size="small" type="primary" ghost @click="router.push({ path: '/chart', query: { symbol } })">大图看盘</Button>
           </template>
           <StockChart :symbol="symbol" :height="680" />
           <div class="text-muted-foreground mt-1 text-xs">前复权以最近一次除权为锚点，仅用于展示；收益计算使用后复权（ADR-004）。</div>

@@ -34,6 +34,11 @@ def overview(request: Request, trade_date: date | None = None, _: Principal = De
     return _market(request).overview(trade_date)
 
 
+@router.get("/market/indices")
+def indices(request: Request, _: Principal = Depends(view)) -> list:
+    return _market(request).indices()
+
+
 @router.get("/market/indices/{symbol}/bars")
 def index_bars(symbol: str, request: Request, start: date | None = None, end: date | None = None,
                limit: int = Query(250, le=6000), period: str = Query("day", pattern="^(day|week|month)$"),

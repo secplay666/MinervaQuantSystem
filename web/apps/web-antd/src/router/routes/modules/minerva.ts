@@ -55,15 +55,9 @@ const routes: RouteRecordRaw[] = [
   },
   {
     name: 'Chart',
-    path: '/chart',
+    path: '/chart', // ?symbol=600000 or sh000001; one tab for all symbols (fullPathKey: false)
     component: () => import('#/views/market/chart.vue'),
-    meta: { authority: ['market:view'], icon: 'lucide:chart-candlestick', order: 4, title: '看盘' },
-  },
-  {
-    name: 'ChartSymbol',
-    path: '/chart/:symbol',
-    component: () => import('#/views/market/chart.vue'),
-    meta: { activePath: '/chart', authority: ['market:view'], hideInMenu: true, title: '看盘' },
+    meta: { authority: ['market:view'], fullPathKey: false, icon: 'lucide:chart-candlestick', order: 4, title: '看盘' },
   },
   {
     name: 'DataHealth',

@@ -87,6 +87,35 @@ export function registerChartExtensions() {
     },
   });
 
+  // Rectangle and circle drawings: KLineChart has these as figures only, not as drawing tools.
+  const shapeStyles = { borderColor: '#1677ff', borderSize: 1, borderStyle: 'solid', color: 'rgba(22, 119, 255, 0.10)',
+                        style: 'stroke_fill' };
+  registerOverlay({
+    name: 'rectBox',
+    totalStep: 3,
+    needDefaultPointFigure: true,
+    needDefaultXAxisFigure: true,
+    needDefaultYAxisFigure: true,
+    createPointFigures: ({ coordinates }) => {
+      const [a, b] = coordinates;
+      if (!a || !b) return [];
+      return [{ type: 'rect', attrs: { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), width: Math.abs(b.x - a.x),
+                                       height: Math.abs(b.y - a.y) }, styles: shapeStyles }];
+    },
+  });
+  registerOverlay({
+    name: 'circleShape',
+    totalStep: 3,
+    needDefaultPointFigure: true,
+    needDefaultXAxisFigure: true,
+    needDefaultYAxisFigure: true,
+    createPointFigures: ({ coordinates }) => {
+      const [a, b] = coordinates;
+      if (!a || !b) return [];
+      return [{ type: 'circle', attrs: { x: a.x, y: a.y, r: Math.hypot(b.x - a.x, b.y - a.y) }, styles: shapeStyles }];
+    },
+  });
+
   registerOverlay({
     name: 'rangeStat',
     totalStep: 3,

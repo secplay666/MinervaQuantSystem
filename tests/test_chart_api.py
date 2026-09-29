@@ -55,3 +55,20 @@ def test_drawings_are_per_user_and_marks_show_fills_only_with_account_access(env
     marks = client.get("/api/v1/instruments/600000/marks", headers=ann).json()
     assert set(marks) == {"dividends", "fills", "reports", "risk", "suspensions"} and marks["fills"] == []
     assert client.get("/api/v1/instruments/x/marks", headers=ann).status_code == 404
+
+
+def test_search_finds_indices_before_stocks(env) -> None:
+    import duckdb
+
+    root, _, client, sessions = env
+    add_user(sessions, "dora", ["viewer"])
+    viewer = auth(login(client, "dora"))
+    assert [r["symbol"] for r in client.get("/api/v1/instruments/search", headers=viewer,
+                                            params={"q": "600000"}).json()] == ["600000"]  # no index table yet
+    with duckdb.connect(str(root / "data" / "market.duckdb")) as con:
+        con.execute("CREATE TABLE index_bars (symbol VARCHAR, name VARCHAR, trade_date DATE, close DOUBLE)")
+        con.execute("INSERT INTO index_bars VALUES ('sh000001', '上证指数', DATE '2026-09-24', 3888.37), "
+                    "('H00300', '沪深300全收益', DATE '2026-09-24', 6000.0)")
+    found = client.get("/api/v1/instruments/search", headers=viewer, params={"q": "上证"}).json()
+    assert found[0] == {"symbol": "sh000001", "name": "上证指数", "board": "INDEX", "delist_date": None}
+    assert [i["symbol"] for i in client.get("/api/v1/market/indices", headers=viewer).json()] == ["H00300", "sh000001"]

@@ -22,7 +22,7 @@ import {
 } from 'ant-design-vue';
 import { dispose, init } from 'klinecharts';
 
-import { barsApi, drawingsApi, indexBarsApi, marksApi, saveDrawingsApi } from '#/api';
+import { barsApi, drawingsApi, indexBarsApi, isIndexSymbol, marksApi, saveDrawingsApi } from '#/api';
 import { bigYuan, DOWN_COLOR, UP_COLOR } from '#/utils/format';
 
 import { rangeStats, registerChartExtensions } from './extensions';
@@ -83,8 +83,8 @@ const DRAW_TOOLS = [
   { label: '平行', name: 'parallelStraightLine', tip: '平行线：三点确定' },
   { label: '通道', name: 'priceChannelLine', tip: '价格通道' },
   { label: '黄金', name: 'fibonacciLine', tip: '黄金分割（斐波那契回撤）' },
-  { label: '矩形', name: 'rect', tip: '矩形区域' },
-  { label: '圆', name: 'circle', tip: '圆' },
+  { label: '矩形', name: 'rectBox', tip: '矩形区域：拖出对角两点' },
+  { label: '圆', name: 'circleShape', tip: '圆：先点圆心，再点圆周上一点' },
   { label: '画笔', name: 'brush', tip: '自由画笔' },
   { label: '注释', name: 'simpleAnnotation', tip: '文字注释（带指向）' },
   { label: '标签', name: 'simpleTag', tip: '价格标签' },
@@ -104,6 +104,8 @@ const barEvents = ref<Record<number, string[]>>({}); // bar timestamp -> event l
 const hovered = ref<KLineData>();
 const hoveredIndex = ref(-1);
 const tool = ref('');
+const selectedId = ref(''); // the drawing clicked last, for the delete button and the Delete key
+const isIndex = computed(() => isIndexSymbol(props.symbol));
 const drawingsLocked = ref(false);
 const drawingsHidden = ref(false);
 const drawingCount = ref(0);
@@ -169,7 +171,9 @@ const loader: DataLoader = {
     try {
       if (type === 'init') {
         loading.value = true;
-        const bars = await barsApi(symbol, adjust, PAGE[period], period);
+        const bars = isIndexSymbol(symbol)
+          ? await indexBarsApi(symbol, PAGE[period], period)
+          : await barsApi(symbol, adjust, PAGE[period], period);
         if (token !== loadToken) return;
         empty.value = bars.length === 0;
         callback(bars.map(toData), { backward: false, forward: bars.length >= PAGE[period] });
@@ -177,7 +181,10 @@ const loader: DataLoader = {
         await nextTick();
         await afterInit(token);
       } else if (type === 'forward' && timestamp) {
-        const bars = await barsApi(symbol, adjust, PAGE[period], period, beforePeriod(day(timestamp), period));
+        const end = beforePeriod(day(timestamp), period);
+        const bars = isIndexSymbol(symbol)
+          ? await indexBarsApi(symbol, PAGE[period], period, end)
+          : await barsApi(symbol, adjust, PAGE[period], period, end);
         if (token !== loadToken) return;
         callback(bars.map(toData), { backward: false, forward: bars.length >= PAGE[period] });
         dataVersion.value += 1;
@@ -198,7 +205,10 @@ async function afterInit(token: number) {
   hovered.value = undefined;
   range.value = null;
   const symbol = props.symbol;
-  const [m, saved] = await Promise.all([marksApi(symbol).catch(() => undefined), drawingsApi(symbol).catch(() => undefined)]);
+  const [m, saved] = await Promise.all([
+    isIndexSymbol(symbol) ? undefined : marksApi(symbol).catch(() => undefined),
+    drawingsApi(symbol).catch(() => undefined),
+  ]);
   if (token !== loadToken || !chart) return;
   marks.value = m;
   renderMarks();
@@ -382,10 +392,19 @@ function drawingOverlay(name: string, saved?: SavedOverlay): OverlayCreate {
       tool.value = '';
       scheduleSave();
     },
+    onDeselected: (event) => {
+      if (selectedId.value === event.overlay.id) selectedId.value = '';
+    },
     onPressedMoveEnd: () => scheduleSave(),
-    onRemoved: () => scheduleSave(),
+    onRemoved: (event) => {
+      if (selectedId.value === event.overlay.id) selectedId.value = '';
+      scheduleSave();
+    },
     onRightClick: (event) => {
       chart?.removeOverlay({ id: event.overlay.id });
+    },
+    onSelected: (event) => {
+      selectedId.value = event.overlay.id;
     },
   };
 }
@@ -413,11 +432,14 @@ let saveTimer: null | ReturnType<typeof setTimeout> = null;
 function scheduleSave() {
   if (quiet || !chart) return;
   const symbol = props.symbol;
-  const overlays = serialize();
-  drawingCount.value = overlays.length;
   if (saveTimer) clearTimeout(saveTimer);
+  // Read the drawings when saving, not now: onRemoved fires before the overlay leaves the list.
+  setTimeout(() => (drawingCount.value = serialize().length), 0);
   saveTimer = setTimeout(() => {
     saveTimer = null;
+    if (symbol !== props.symbol) return; // switched stocks: the watcher saved these already
+    const overlays = serialize();
+    drawingCount.value = overlays.length;
     saveDrawingsApi(symbol, overlays).catch(() => message.error('画线保存失败'));
   }, 800);
 }
@@ -427,6 +449,10 @@ function serialize(): SavedOverlay[] {
     .map((o: Overlay) => ({ extendData: o.extendData, lock: o.lock, name: o.name,
                             points: o.points.map((p) => ({ timestamp: p.timestamp!, value: p.value! })),
                             styles: o.styles ?? undefined }));
+}
+function deleteSelected() {
+  if (selectedId.value) chart?.removeOverlay({ id: selectedId.value });
+  selectedId.value = '';
 }
 function applyDrawingState() {
   chart?.overrideOverlay({ groupId: 'drawings', lock: drawingsLocked.value, mode: settings.magnet, visible: !drawingsHidden.value });
@@ -489,6 +515,8 @@ function onKeydown(event: KeyboardEvent) {
     ArrowLeft: () => moveCrosshair(-1),
     ArrowRight: () => moveCrosshair(1),
     ArrowUp: () => chart!.zoomAtDataIndex(1.25, index),
+    Backspace: deleteSelected,
+    Delete: deleteSelected,
     End: () => chart!.scrollToRealTime(),
     Escape: () => {
       tool.value = '';
@@ -541,6 +569,7 @@ function reload() {
   chart?.removeOverlay({ groupId: 'range' });
   quiet = false;
   range.value = null;
+  selectedId.value = '';
 }
 
 onMounted(() => {
@@ -549,6 +578,7 @@ onMounted(() => {
   chart = init(container.value, { locale: 'zh-CN', timezone: 'Asia/Shanghai' });
   if (!chart) return;
   applyTheme();
+  if (localStorage.getItem('minerva.debug')) (window as any).__stockChart = chart; // browser tests only
   chart.subscribeAction('onCrosshairChange', (data: any) => hover(data?.x));
   chart.subscribeAction('onVisibleRangeChange', rebaseCompare);
   applyIndicators();
@@ -611,6 +641,13 @@ const shownChange = computed(() => {
   if (pct !== null && pct !== undefined) return pct / 100;
   return shownPrev.value ? bar.close / shownPrev.value.close - 1 : undefined;
 });
+/** From the data when given, else from high, low and the previous close (indices have no amplitude field). */
+const shownAmplitude = computed(() => {
+  const bar = shown.value;
+  if (!bar) return undefined;
+  if (typeof bar.amplitude === 'number') return bar.amplitude / 100;
+  return shownPrev.value ? (bar.high - bar.low) / shownPrev.value.close : undefined;
+});
 const shownEvents = computed(() => (shown.value ? barEvents.value[shown.value.timestamp] ?? [] : []));
 const PERIOD_LABEL: Record<BarPeriod, string> = { day: '日', month: '月', week: '周' };
 </script>
@@ -623,7 +660,7 @@ const PERIOD_LABEL: Record<BarPeriod, string> = { day: '日', month: '月', week
       <b v-if="name" class="mr-1">{{ name }}</b>
       <Segmented v-model:value="settings.period" size="small"
                  :options="[{ label: '日K', value: 'day' }, { label: '周K', value: 'week' }, { label: '月K', value: 'month' }]" />
-      <Segmented v-model:value="settings.adjust" size="small"
+      <Segmented v-if="!isIndex" v-model:value="settings.adjust" size="small"
                  :options="[{ label: '前复权', value: 'qfq' }, { label: '不复权', value: 'none' }, { label: '后复权', value: 'hfq' }]" />
       <Select v-model:value="settings.main" mode="multiple" size="small" :max-tag-count="2" placeholder="主图指标" style="min-width: 170px"
               :options="Object.entries(MAIN_INDICATORS).map(([value, label]) => ({ label, value }))" />
@@ -673,6 +710,9 @@ const PERIOD_LABEL: Record<BarPeriod, string> = { day: '日', month: '月', week
         <Tooltip :title="drawingsHidden ? '显示画线' : '隐藏画线'" placement="right">
           <button class="draw-btn" :class="{ active: drawingsHidden }" @click="drawingsHidden = !drawingsHidden; applyDrawingState()">{{ drawingsHidden ? '显示' : '隐藏' }}</button>
         </Tooltip>
+        <Tooltip title="删除选中的画线（先单击线条选中；也可以按 Delete 键，或在线条上右键）" placement="right">
+          <button class="draw-btn danger" :disabled="!selectedId" @click="deleteSelected">删除</button>
+        </Tooltip>
         <Popconfirm :title="`删除这只股票上的全部 ${drawingCount} 条画线？`" placement="right" @confirm="clearDrawings">
           <button class="draw-btn danger" :disabled="!drawingCount">清空</button>
         </Popconfirm>
@@ -680,7 +720,7 @@ const PERIOD_LABEL: Record<BarPeriod, string> = { day: '日', month: '月', week
 
       <!-- chart -->
       <div class="relative min-w-0 flex-1">
-        <div ref="container" class="absolute inset-0"></div>
+        <div ref="container" class="absolute inset-0" @contextmenu.prevent></div>
         <div v-if="empty && !loading" class="text-muted-foreground absolute inset-0 flex items-center justify-center">没有行情数据</div>
       </div>
 
@@ -695,10 +735,10 @@ const PERIOD_LABEL: Record<BarPeriod, string> = { day: '日', month: '月', week
             <span class="text-muted-foreground">收盘</span><span class="text-right" :style="{ color: colorOf(shownChange) }">{{ fmt(shown.close) }}</span>
             <span class="text-muted-foreground">涨跌幅</span>
             <span class="text-right" :style="{ color: colorOf(shownChange) }">{{ shownChange === undefined ? '—' : `${shownChange > 0 ? '+' : ''}${(shownChange * 100).toFixed(2)}%` }}</span>
-            <span class="text-muted-foreground">振幅</span><span class="text-right">{{ fmt(shown.amplitude) }}%</span>
+            <span class="text-muted-foreground">振幅</span><span class="text-right">{{ shownAmplitude === undefined ? '—' : `${(shownAmplitude * 100).toFixed(2)}%` }}</span>
             <span class="text-muted-foreground">成交量</span><span class="text-right">{{ shown.volume ? `${(shown.volume / 1e6).toFixed(2)} 万手` : '—' }}</span>
             <span class="text-muted-foreground">成交额</span><span class="text-right">{{ shown.turnover ? `${bigYuan(shown.turnover, false)}` : '—' }}</span>
-            <span class="text-muted-foreground">换手率</span><span class="text-right">{{ fmt(shown.turnover_rate) }}%</span>
+            <span class="text-muted-foreground">换手率</span><span class="text-right">{{ typeof shown.turnover_rate === 'number' ? `${fmt(shown.turnover_rate)}%` : '—' }}</span>
           </div>
           <template v-if="shownEvents.length">
             <Divider class="my-2" />
@@ -724,7 +764,8 @@ const PERIOD_LABEL: Record<BarPeriod, string> = { day: '日', month: '月', week
         </template>
         <Divider class="my-2" />
         <div class="text-muted-foreground leading-5">
-          ←/→ 逐根移动，↑/↓ 放大缩小，End 回到最新；鼠标拖动平移、滚轮缩放。画线：点左侧工具后在图上点击放置，拖动端点调整，右键删除，自动保存。
+          ←/→ 逐根移动，↑/↓ 放大缩小，End 回到最新；鼠标拖动平移、滚轮缩放。<br />
+          画线：点左侧工具后在图上点击放置，拖动端点调整；单击线条选中后按 Delete 键或点"删除"，也可以右键删除；自动保存。
         </div>
       </div>
     </div>
