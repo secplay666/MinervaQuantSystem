@@ -37,6 +37,12 @@ const coreRoutes: RouteRecordRaw[] = [
         component: () => import('#/views/_core/authentication/login.vue'),
         meta: { title: '登录' },
       },
+      {
+        name: 'Register',
+        path: 'register',
+        component: () => import('#/views/_core/authentication/register.vue'),
+        meta: { title: '注册' },
+      },
     ],
   },
 ];

@@ -9,11 +9,12 @@ from datetime import timedelta
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..audit import audit
 from ..db.base import utc_now
-from ..db.models import RefreshToken, User
+from ..db.models import Invitation, RefreshToken, Role, User, UserRole
 from ..deps import Principal, api_error, authenticated, client_ip, get_session, settings_of
 from ..rbac import user_permissions, user_roles
 from ..security import (
@@ -22,6 +23,7 @@ from ..security import (
     needs_rehash,
     new_refresh_token,
     new_totp_secret,
+    normalize_invitation_code,
     password_problems,
     token_hash,
     totp_uri,
@@ -73,6 +75,13 @@ class LoginIn(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=1, max_length=256)
     totp: str | None = None
+
+
+class RegisterIn(BaseModel):
+    code: str = Field(min_length=4, max_length=64)
+    username: str = Field(pattern=r"^[A-Za-z0-9_.-]{3,64}$")
+    display_name: str = Field(min_length=1, max_length=128)
+    password: str = Field(min_length=1, max_length=256)
 
 
 class RefreshIn(BaseModel):
@@ -156,6 +165,51 @@ def login(body: LoginIn, request: Request, session: Session = Depends(get_sessio
     audit(session, user.username, "auth.login", "user", str(user.id), user_id=user.id, ip=ip)
     session.commit()
     return tokens
+
+
+@router.post("/register", status_code=201)
+def register(body: RegisterIn, request: Request, session: Session = Depends(get_session)) -> dict:
+    """Self-registration with an invitation code.  Wrong codes count towards
+    the same per-address throttle as failed logins."""
+    ip = client_ip(request)
+    failures = _ip_failures(request, ip)
+    if len(failures) >= IP_MAX_FAILURES:
+        raise api_error(429, "too_many_attempts", "尝试次数过多，请 15 分钟后再试")
+    now = utc_now()
+    invitation = session.scalar(select(Invitation).where(
+        Invitation.code_hash == token_hash(normalize_invitation_code(body.code))))
+    usable = (invitation is not None and invitation.revoked_at is None
+              and invitation.used_count < invitation.max_uses and invitation.expires_at > now)
+    if not usable:
+        failures.append(time.monotonic())
+        raise api_error(400, "invalid_invitation", "邀请码无效、已过期或已用完")
+    if session.scalar(select(User.id).where(User.username == body.username)) is not None:
+        raise api_error(409, "exists", "用户名已被使用")
+    problems = password_problems(body.password, body.username, settings_of(request).min_password_length)
+    if problems:
+        raise api_error(400, "weak_password", "密码不符合要求：" + "；".join(problems))
+    # Take a use conditionally, so concurrent registrations cannot exceed max_uses.
+    taken = session.execute(update(Invitation).where(
+        Invitation.id == invitation.id, Invitation.revoked_at.is_(None),
+        Invitation.used_count < Invitation.max_uses, Invitation.expires_at > now)
+        .values(used_count=Invitation.used_count + 1))
+    if taken.rowcount != 1:
+        session.rollback()
+        raise api_error(400, "invalid_invitation", "邀请码无效、已过期或已用完")
+    roles = sorted(set(session.scalars(select(Role.code).where(Role.code.in_(invitation.roles)))))
+    user = User(username=body.username, display_name=body.display_name, password_hash=hash_password(body.password),
+                must_change_password=False, invitation_id=invitation.id)
+    session.add(user)
+    try:
+        session.flush()
+    except IntegrityError:
+        session.rollback()
+        raise api_error(409, "exists", "用户名已被使用") from None
+    session.add_all(UserRole(user_id=user.id, role_code=code) for code in roles)
+    audit(session, body.username, "user.register", "user", str(user.id), user_id=user.id, ip=ip,
+          after={"invitation": invitation.id, "roles": roles})
+    session.commit()
+    return {"username": user.username, "roles": roles}
 
 
 @router.post("/refresh")

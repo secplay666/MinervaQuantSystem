@@ -93,5 +93,19 @@ def verify_totp(secret: str, code: str) -> bool:
     return bool(code) and pyotp.TOTP(secret).verify(code.strip(), valid_window=1)
 
 
+INVITATION_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I: codes are read out and typed
+
+
+def new_invitation_code() -> str:
+    """XXXX-XXXX-XXXX from 32 letters and digits (60 bits)."""
+    chars = "".join(secrets.choice(INVITATION_ALPHABET) for _ in range(12))
+    return "-".join(chars[k:k + 4] for k in range(0, 12, 4))
+
+
+def normalize_invitation_code(code: str) -> str:
+    """What is hashed: upper case, without separators and spaces."""
+    return "".join(ch for ch in code.upper() if ch.isalnum())
+
+
 def temporary_password() -> str:
     return secrets.token_urlsafe(9) + "7a"  # 14+ chars, letters and digits

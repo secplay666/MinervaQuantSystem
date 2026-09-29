@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import type { NotificationItem } from '@vben/layouts';
 
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { AuthenticationLoginExpiredModal } from '@vben/common-ui';
@@ -42,8 +42,13 @@ function handleClick(item: NotificationItem) {
   if (item.link) router.push(item.link);
 }
 
+// Before the initial password is changed every API call except the profile is
+// refused, so the notification bell waits (homePath is /profile exactly then).
+const mustChangePassword = computed(() => userStore.userInfo?.homePath === '/profile');
+watch(mustChangePassword, (pending) => (pending ? events.stop() : events.start()));
+
 onMounted(async () => {
-  events.start();
+  if (!mustChangePassword.value) events.start();
   try {
     environment.value = (await metaApi()).environment_label;
   } catch {

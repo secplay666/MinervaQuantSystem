@@ -11,8 +11,9 @@ defineOptions({ name: 'Login' });
 
 const authStore = useAuthStore();
 
-// Accounts are created by an administrator: no registration, password
-// recovery, QR or SMS login.  The TOTP field is only needed when enabled.
+// Accounts are created by an administrator or registered with an invitation
+// code; no password recovery, QR or SMS login.  The TOTP field is only needed
+// when enabled.
 const formSchema = computed((): VbenFormSchema[] => [
   {
     component: 'VbenInput',
@@ -45,10 +46,10 @@ const formSchema = computed((): VbenFormSchema[] => [
     :show-code-login="false"
     :show-forget-password="false"
     :show-qrcode-login="false"
-    :show-register="false"
+    :show-register="true"
     :show-remember-me="false"
     :show-third-party-login="false"
-    sub-title="请使用管理员分配的账号登录"
+    sub-title="使用管理员分配的账号登录；有邀请码可以注册"
     title="Minerva 决策辅助"
     @submit="authStore.authLogin"
   />

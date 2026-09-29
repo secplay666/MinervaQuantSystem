@@ -17,7 +17,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import accounts, auth, decisions, events, market, system, users
+from .api import accounts, auth, decisions, events, invitations, market, system, users
 from .db.base import open_database
 from .market import MarketQueries
 from .rbac import sync_roles
@@ -64,7 +64,7 @@ def create_app(settings: AppSettings) -> FastAPI:
     async def value_error(_request: Request, exc: ValueError) -> JSONResponse:
         return JSONResponse(status_code=400, content={"detail": {"code": "invalid", "message": str(exc)}})
 
-    for module in (system, auth, users, events, market, accounts, decisions):
+    for module in (system, auth, users, invitations, events, market, accounts, decisions):
         app.include_router(module.router, prefix=API_PREFIX)
     if settings.mobile_dir is not None and (settings.mobile_dir / "index.html").is_file():
         # Mounted before the PC catch-all; relative asset paths and hash routes need nothing else.

@@ -6,10 +6,12 @@ import { onMounted, reactive, ref } from 'vue';
 import { Page } from '@vben/common-ui';
 import { useUserStore } from '@vben/stores';
 
-import { Alert, Button, Card, Form, Input, message, Modal, Select, Space, Switch, Table, Tag, Typography } from 'ant-design-vue';
+import { Alert, Button, Card, Form, Input, message, Modal, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'ant-design-vue';
 
 import { createUserApi, patchUserApi, resetPasswordApi, rolesApi, unlockUserApi, usersApi } from '#/api';
 import { dateTime, ROLE_LABEL } from '#/utils/format';
+
+import Invitations from './invitations.vue';
 
 const users = ref<ManagedUser[]>([]);
 const roles = ref<{ label: string; value: string }[]>([]);
@@ -18,6 +20,7 @@ const me = useUserStore();
 const create = reactive({ display_name: '', open: false, roles: ['viewer'] as string[], username: '' });
 const edit = reactive<{ display_name: string; open: boolean; roles: string[]; user?: ManagedUser }>({ display_name: '', open: false, roles: [] });
 const secret = reactive({ open: false, password: '', username: '' });
+const tab = ref('users');
 
 async function load() {
   loading.value = true;
@@ -95,9 +98,13 @@ onMounted(load);
 </script>
 
 <template>
-  <Page title="用户" description="账号由管理员创建；新账号和重置后的账号首次登录必须修改临时密码">
-    <template #extra><Button type="primary" @click="create.open = true">新建用户</Button></template>
+  <Page title="账号管理" description="管理员直接创建账号（首次登录须修改临时密码），或生成邀请码让用户自行注册">
+    <template #extra>
+      <Button v-if="tab === 'users'" type="primary" @click="create.open = true">新建用户</Button>
+    </template>
     <Card size="small">
+      <Tabs v-model:active-key="tab">
+        <Tabs.TabPane key="users" :tab="`用户（${users.length}）`">
       <Table :columns="columns" :data-source="users" :loading="loading" row-key="id" size="middle" :pagination="false">
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'roles'">
@@ -121,6 +128,11 @@ onMounted(load);
           </template>
         </template>
       </Table>
+        </Tabs.TabPane>
+        <Tabs.TabPane key="invitations" tab="邀请码">
+          <Invitations />
+        </Tabs.TabPane>
+      </Tabs>
     </Card>
 
     <Modal v-model:open="create.open" title="新建用户" ok-text="创建" @ok="submitCreate">

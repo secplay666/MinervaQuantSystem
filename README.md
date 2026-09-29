@@ -285,6 +285,7 @@ quant-app openapi --out web/openapi.json                 # 导出接口定义，
 - **安全**（[ADR-010](docs/adr/ADR-010-frontend-api-access.md)）：
   - 密码用 argon2id 哈希；访问令牌 15 分钟过期；刷新令牌 7 天，每次使用后轮换，发现旧令牌被重复使用时吊销该用户的全部会话。
   - 连续 5 次登录失败锁定 15 分钟；首次登录必须修改临时密码；可选 TOTP 两步验证。
+  - 账号由管理员直接创建，或凭管理员生成的邀请码自行注册（邀请码不能授予管理员权限）。
   - 服务只监听 127.0.0.1，外网经 frp 的 TCP 转发访问，TLS 由服务自身终止（自建 CA）。
 - **外部通知**：未配置时不发送。在 `app.env` 里设置 `MINERVA_NOTIFY_WECOM`（企业微信群机器人）或 `MINERVA_NOTIFY_SERVERCHAN`（Server酱）后，每日任务结束时推送一条汇总。
   - 汇总只含事件标题；持仓风险只发条数。

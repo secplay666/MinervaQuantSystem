@@ -32,6 +32,11 @@ export async function loginApi(data: AuthApi.LoginParams) {
   return baseRequestClient.post<AuthApi.Tokens>('/auth/login', data);
 }
 
+/** Self-registration with an invitation code (no token needed). */
+export async function registerApi(data: { code: string; display_name: string; password: string; username: string }) {
+  return baseRequestClient.post<{ roles: string[]; username: string }>('/auth/register', data);
+}
+
 export async function refreshTokenApi(refreshToken: string) {
   return baseRequestClient.post<AuthApi.Tokens>('/auth/refresh', { refresh_token: refreshToken });
 }

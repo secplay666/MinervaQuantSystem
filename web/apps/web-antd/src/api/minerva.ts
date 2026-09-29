@@ -252,6 +252,25 @@ export interface Signals {
 export const signalsApi = (symbol: string) => requestClient.get<Signals>(`/instruments/${symbol}/signals`);
 
 // -- administration ------------------------------------------------------------------------
+export interface InvitationItem {
+  code?: string; // only in the response that created it
+  created_at: string;
+  created_by: string;
+  expires_at: string;
+  hint: string;
+  id: number;
+  max_uses: number;
+  note: null | string;
+  revoked_at: null | string;
+  roles: string[];
+  state: 'active' | 'expired' | 'revoked' | 'used_up';
+  used_count: number;
+  users: string[];
+}
+export const invitationsApi = () => requestClient.get<InvitationItem[]>('/invitations');
+export const createInvitationApi = (body: { days: number; max_uses: number; note?: string; roles: string[] }) =>
+  requestClient.post<InvitationItem>('/invitations', body);
+export const revokeInvitationApi = (id: number) => requestClient.post<InvitationItem>(`/invitations/${id}/revoke`);
 export const usersApi = () => requestClient.get<ManagedUser[]>('/users');
 export const createUserApi = (body: { display_name: string; roles: string[]; username: string }) =>
   requestClient.post<ManagedUser>('/users', body);
