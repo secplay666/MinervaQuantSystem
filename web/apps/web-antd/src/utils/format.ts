@@ -39,6 +39,17 @@ export function changeColor(value?: null | number): string | undefined {
   return value > 0 ? UP_COLOR : DOWN_COLOR;
 }
 
+/** "3 天 5 小时" / "2 小时 10 分" / "8 分钟" until ``iso``; empty once it has passed. */
+export function timeLeft(iso?: null | string, now = Date.now()): string {
+  if (!iso) return '';
+  const minutes = Math.floor((new Date(iso).getTime() - now) / 60_000);
+  if (minutes <= 0) return '';
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor((minutes % 1440) / 60);
+  if (days) return `${days} 天 ${hours} 小时`;
+  return hours ? `${hours} 小时 ${minutes % 60} 分` : `${minutes} 分钟`;
+}
+
 export function dateTime(iso?: null | string): string {
   return iso ? dayjs(iso).format('YYYY-MM-DD HH:mm') : '—';
 }

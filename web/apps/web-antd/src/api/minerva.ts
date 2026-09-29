@@ -33,6 +33,7 @@ export interface Intent {
   limit_down_fen: null | number;
   limit_up_fen: null | number;
   name?: null | string;
+  paper_locked?: boolean; // paper account: traded at the open, locked until the evening's paper run
   proposed_qty: number;
   qty: number;
   rank: null | number;
@@ -44,6 +45,7 @@ export interface Intent {
   side: 'buy' | 'sell';
   status: string;
   symbol: string;
+  target_weight?: null | number;
   valid_until: string;
 }
 
@@ -68,6 +70,8 @@ export interface DecisionRun {
 }
 
 export interface DecisionDetail extends DecisionRun {
+  account_mode: null | string;
+  paper_cutoff: null | string;
   events: { action_hint: null | string; body: null | string; event_id: string; level: string; symbol: null | string; title: string }[];
   intents: Intent[];
   run_checks: Check[];
@@ -189,6 +193,21 @@ export const rejectIntentApi = (id: string, reason: string) => requestClient.pos
 export const modifyIntentApi = (id: string, qty: number, reason: string) =>
   requestClient.post<Intent>(`/intents/${id}/modify`, { qty, reason });
 export const overrideIntentApi = (id: string, reason: string) => requestClient.post<Intent>(`/intents/${id}/override`, { reason });
+export const reviewBatchApi = (runId: string, body: { action: 'approve' | 'reject'; intent_ids: string[]; reason?: string }) =>
+  requestClient.post<{ done: number; failed: { intent_id: string; message: string; symbol: null | string }[] }>(
+    `/decisions/${runId}/review-batch`, body);
+export interface TodoAccount {
+  account_id: string;
+  latest: { failed_gate: null | { gate: string; message: string }; kind: string; reason: null | string; run_id: string;
+            status: string; trade_date: string };
+  mode: string;
+  name: string;
+  pending: number;
+  pending_runs: { kind: string; next_session: null | string; paper_cutoff: null | string; pending: number; run_id: string;
+                  trade_date: string; valid_until: string }[];
+}
+export const todoApi = () =>
+  requestClient.get<{ accounts: TodoAccount[]; critical_unread: { account_id: null | string; at: string; event_id: string; run_id: null | string; title: string }[] }>('/todo');
 export const approveAllApi = (runId: string, includeWarnings: boolean) =>
   requestClient.post<{ approved: number }>(`/decisions/${runId}/approve-all`, { include_warnings: includeWarnings });
 export const triggerDecisionApi = (accountId: string, reason: string, rerun = false) =>

@@ -14,9 +14,20 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ...decision.review import Operator, ReviewError, approve, approve_run, modify, override, reject
+from ...decision.paper import cutoff
+from ...decision.review import (
+    EXECUTABLE,
+    Operator,
+    ReviewError,
+    approve,
+    approve_run,
+    modify,
+    override,
+    paper_locked,
+    reject,
+)
 from ..db.base import utc_now
-from ..db.models import Account, Approval, DecisionRun, Event, OrderIntent, RiskCheck, TargetPosition
+from ..db.models import Account, Approval, DecisionRun, Event, EventRead, OrderIntent, RiskCheck, TargetPosition
 from ..deps import Principal, api_error, get_session, require, settings_of
 from ..services import account_costs, exchange_sessions
 
@@ -37,6 +48,12 @@ class ModifyIn(BaseModel):
 
 class ApproveAllIn(BaseModel):
     include_warnings: bool = False
+
+
+class BatchIn(BaseModel):
+    intent_ids: list[str] = Field(min_length=1, max_length=500)
+    action: str = Field(pattern=r"^(approve|reject)$")
+    reason: str | None = Field(default=None, max_length=500)
 
 
 class TriggerIn(BaseModel):
@@ -119,10 +136,19 @@ def get_decision(run_id: str, request: Request, _: Principal = Depends(view),
     market = request.app.state.market
     symbols = sorted({i.symbol for i in intents} | {t.symbol for t in targets})
     names = market.names(symbols) if symbols and market.available() else {}
-    return {**run_view(run),
+    account = session.get(Account, run.account_id)
+    paper = account is not None and account.mode == "paper"
+    now = utc_now()
+    sessions = exchange_sessions(settings_of(request).root) if paper else None
+    weights = {t.symbol: t.target_weight for t in targets}
+    return {**run_view(run), "account_mode": account.mode if account else None,
+            # Paper accounts: approvals up to this moment trade at the execution session's open (ADR-008 §6).
+            "paper_cutoff": cutoff(run.next_session).isoformat() if paper and run.next_session else None,
             "intents": [{**intent_view(i, [c for c in checks if c.intent_id == i.intent_id],
                                        [a for a in approvals if a.intent_id == i.intent_id]),
-                         "name": names.get(i.symbol)} for i in intents],
+                         "name": names.get(i.symbol), "target_weight": weights.get(i.symbol),
+                         "paper_locked": paper and i.status in EXECUTABLE and paper_locked(session, i, now, sessions)}
+                        for i in intents],
             "run_checks": [{"rule_id": c.rule_id, "decision": c.decision, "message": c.message, "actual": c.actual,
                             "limit": c.limit_value} for c in checks if c.intent_id is None],
             "targets": [{"symbol": t.symbol, "name": names.get(t.symbol), "target_weight": t.target_weight,
@@ -194,6 +220,80 @@ def approve_all(run_id: str, body: ApproveAllIn, principal: Principal = Depends(
         raise api_error(404 if exc.code == "not_found" else 409, exc.code, str(exc)) from None
     session.commit()
     return {"approved": count}
+
+
+@router.post("/decisions/{run_id}/review-batch")
+def review_batch(run_id: str, body: BatchIn, request: Request, principal: Principal = Depends(approver),
+                 session: Session = Depends(get_session)) -> dict:
+    """Approve or reject several intents of one run.  Each is its own
+    transaction: one that cannot be changed is reported and the rest go on."""
+    if session.get(DecisionRun, run_id) is None:
+        raise api_error(404, "not_found", "决策不存在")
+    if body.action == "reject" and not (body.reason or "").strip():
+        raise api_error(400, "reason_required", "拒绝需要填写原因")
+    sessions = exchange_sessions(settings_of(request).root) if body.action == "reject" else None
+    done, failed = 0, []
+    for intent_id in dict.fromkeys(body.intent_ids):
+        intent = session.get(OrderIntent, intent_id)
+        try:
+            if intent is None or intent.run_id != run_id:
+                raise ReviewError("not_found", "不属于这次决策")
+            if body.action == "approve":
+                approve(session, intent_id, operator(principal), utc_now(), body.reason or "批量批准")
+            else:
+                reject(session, intent_id, operator(principal), utc_now(), body.reason or "", sessions=sessions)
+            session.commit()
+            done += 1
+        except ReviewError as exc:
+            session.rollback()
+            failed.append({"intent_id": intent_id, "symbol": intent.symbol if intent else None, "message": str(exc)})
+    return {"done": done, "failed": failed}
+
+
+@router.get("/todo")
+def todo(principal: Principal = Depends(view), session: Session = Depends(get_session)) -> dict:
+    """What needs attention, for the home page: per active account, every
+    complete decision that still has intents to review (a later blocked day
+    does not hide them), whether its latest decision was blocked or failed,
+    and the user's unread critical events."""
+    now = utc_now()
+    accounts = []
+    for account in session.scalars(select(Account).where(Account.is_active.is_(True)).order_by(Account.account_id)):
+        latest = session.scalars(select(DecisionRun).where(DecisionRun.account_id == account.account_id,
+                                                           DecisionRun.status != "superseded")
+                                 .order_by(DecisionRun.trade_date.desc(), DecisionRun.created_at.desc()).limit(1)).first()
+        if latest is None:
+            continue
+        pending = session.execute(
+            select(DecisionRun, OrderIntent).join(OrderIntent, OrderIntent.run_id == DecisionRun.run_id)
+            .where(DecisionRun.account_id == account.account_id, DecisionRun.status == "complete",
+                   OrderIntent.status == "pending_approval", OrderIntent.valid_until > now)
+            .order_by(DecisionRun.trade_date, OrderIntent.seq)).all()
+        runs: dict[str, dict] = {}
+        for run, intent in pending:
+            entry = runs.setdefault(run.run_id, {
+                "run_id": run.run_id, "trade_date": run.trade_date.isoformat(), "kind": run.kind,
+                "next_session": run.next_session.isoformat() if run.next_session else None, "pending": 0,
+                "valid_until": intent.valid_until.isoformat(),
+                "paper_cutoff": cutoff(run.next_session).isoformat()
+                if account.mode == "paper" and run.next_session else None})
+            entry["pending"] += 1
+            entry["valid_until"] = min(entry["valid_until"], intent.valid_until.isoformat())
+        failed_gate = next((g for g in latest.gates if not g.get("passed")), None)
+        accounts.append({
+            "account_id": account.account_id, "name": account.name, "mode": account.mode,
+            "pending": sum(r["pending"] for r in runs.values()), "pending_runs": list(runs.values()),
+            "latest": {"run_id": latest.run_id, "trade_date": latest.trade_date.isoformat(), "kind": latest.kind,
+                       "status": latest.status,
+                       "failed_gate": {"gate": failed_gate.get("gate"), "message": failed_gate.get("message")}
+                       if failed_gate else None,
+                       "reason": latest.reason if latest.status == "failed" else None}})
+    read = select(EventRead.event_id).where(EventRead.user_id == principal.user.id)
+    critical = list(session.scalars(select(Event).where(Event.level == "critical", Event.event_id.not_in(read))
+                                    .order_by(Event.at.desc()).limit(5)))
+    return {"accounts": accounts,
+            "critical_unread": [{"event_id": e.event_id, "title": e.title, "at": e.at.isoformat(),
+                                 "account_id": e.account_id, "run_id": e.run_id} for e in critical]}
 
 
 @router.post("/decisions/trigger", status_code=202)

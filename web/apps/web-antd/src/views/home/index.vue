@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import type { Account, DecisionRun, EventItem, Overview } from '#/api';
+import type { Account, DecisionRun, EventItem, Overview, TodoAccount } from '#/api';
 
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
@@ -7,10 +7,10 @@ import { useRouter } from 'vue-router';
 import { useAccess } from '@vben/access';
 import { Page } from '@vben/common-ui';
 
-import { Card, Col, Empty, List, Row, Space, Statistic, Table, Tag } from 'ant-design-vue';
+import { Button, Card, Col, Empty, List, Row, Space, Statistic, Table, Tag } from 'ant-design-vue';
 
-import { accountsApi, decisionsApi, eventsApi, overviewApi, systemStatusApi } from '#/api';
-import { bigYuan, changeColor, dateTime, LEVEL, pct, RUN_KIND, RUN_STATUS, yuan } from '#/utils/format';
+import { accountsApi, decisionsApi, eventsApi, overviewApi, systemStatusApi, todoApi } from '#/api';
+import { bigYuan, changeColor, dateTime, LEVEL, pct, RUN_KIND, RUN_STATUS, timeLeft, yuan } from '#/utils/format';
 
 const router = useRouter();
 const { hasAccessByCodes } = useAccess();
@@ -20,11 +20,39 @@ const accounts = ref<Account[]>([]);
 const decisions = ref<DecisionRun[]>([]);
 const events = ref<EventItem[]>([]);
 const unread = ref(0);
+const todo = ref<{ accounts: TodoAccount[]; critical_unread: { at: string; event_id: string; run_id: null | string; title: string }[] }>();
+const todoItems = computed(() => {
+  const items: { action: () => void; button: string; color: string; detail: string; title: string }[] = [];
+  for (const a of todo.value?.accounts ?? []) {
+    for (const r of a.pending_runs) {
+      const paper = r.paper_cutoff && timeLeft(r.paper_cutoff)
+        ? `；模拟账户 ${dateTime(r.paper_cutoff)} 前批准才按开盘成交（剩 ${timeLeft(r.paper_cutoff)}）` : '';
+      items.push({ action: () => router.push(`/decisions/${r.run_id}`), button: '去审核', color: 'warning',
+                   title: `${a.name}：${r.pending} 条交易意图待审核`,
+                   detail: `${r.trade_date} ${RUN_KIND[r.kind] ?? r.kind}，审核截止 ${dateTime(r.valid_until)}（剩 ${timeLeft(r.valid_until) || '—'}）${paper}` });
+    }
+    const latest = a.latest;
+    const open = () => router.push(`/decisions/${latest.run_id}`);
+    if (latest.status === 'blocked') {
+      items.push({ action: open, button: '查看', color: 'error', title: `${a.name}：${latest.trade_date} 的决策被闸门阻断`,
+                   detail: latest.failed_gate ? `${latest.failed_gate.gate} ${latest.failed_gate.message}` : '' });
+    } else if (latest.status === 'failed') {
+      items.push({ action: open, button: '查看', color: 'error', title: `${a.name}：${latest.trade_date} 的决策运行失败`,
+                   detail: latest.reason ?? '' });
+    }
+  }
+  // A blocked or failed run is listed above already; skip its own critical event.
+  const shown = new Set((todo.value?.accounts ?? []).filter((a) => ['blocked', 'failed'].includes(a.latest.status))
+    .map((a) => a.latest.run_id));
+  for (const e of (todo.value?.critical_unread ?? []).filter((x) => !x.run_id || !shown.has(x.run_id))) {
+    items.push({ action: () => router.push('/events'), button: '通知中心', color: 'error', title: e.title,
+                 detail: `严重通知 · ${dateTime(e.at)}` });
+  }
+  return items;
+});
+const pendingTotal = computed(() => (todo.value?.accounts ?? []).reduce((n, a) => n + a.pending, 0));
 
 const latestIngest = computed(() => status.value?.ingest_runs?.find((r: any) => r.mode !== undefined && r.mode !== null));
-const pending = computed(() =>
-  decisions.value.filter((d) => d.status === 'complete').reduce((n, d) => n + (d.summary?.buys ?? 0) + (d.summary?.sells ?? 0), 0),
-);
 const totalNav = computed(() => accounts.value.reduce((n, a) => n + (a.latest?.nav_fen ?? 0), 0));
 
 async function load() {
@@ -32,7 +60,9 @@ async function load() {
   if (hasAccessByCodes(['data:view'])) tasks.push(systemStatusApi().then((v) => (status.value = v)));
   if (hasAccessByCodes(['market:view'])) tasks.push(overviewApi().then((v) => (overview.value = v)));
   if (hasAccessByCodes(['account:view'])) tasks.push(accountsApi().then((v) => (accounts.value = v)));
-  if (hasAccessByCodes(['decision:view'])) tasks.push(decisionsApi({ limit: 10 }).then((v) => (decisions.value = v)));
+  if (hasAccessByCodes(['decision:view'])) {
+    tasks.push(decisionsApi({ limit: 10 }).then((v) => (decisions.value = v)), todoApi().then((v) => (todo.value = v)));
+  }
   if (hasAccessByCodes(['event:view']))
     tasks.push(eventsApi({ limit: 8 }).then((v) => ((events.value = v.items), (unread.value = v.unread))));
   await Promise.allSettled(tasks);
@@ -61,8 +91,9 @@ onMounted(load);
       </Col>
       <Col :xs="12" :md="6">
         <Card size="small" class="cursor-pointer" @click="router.push('/decisions')">
-          <Statistic title="最近决策中的交易意图" :value="pending" suffix="条" />
-          <div class="text-muted-foreground mt-1 text-xs">点击进入审核</div>
+          <Statistic title="待审核的交易意图" :value="pendingTotal" suffix="条"
+                     :value-style="{ color: pendingTotal ? '#d97706' : undefined }" />
+          <div class="text-muted-foreground mt-1 text-xs">所有仍在审核期内的清单；点击进入审核</div>
         </Card>
       </Col>
       <Col :xs="12" :md="6">
@@ -75,6 +106,24 @@ onMounted(load);
         <Card size="small" class="cursor-pointer" @click="router.push('/events')">
           <Statistic title="未读通知" :value="unread" suffix="条" />
           <div class="text-muted-foreground mt-1 text-xs">点击查看通知中心</div>
+        </Card>
+      </Col>
+
+      <Col v-if="todo" :span="24">
+        <Card size="small" title="待办">
+          <Empty v-if="!todoItems.length" description="暂无待办" :image-style="{ height: '40px' }" />
+          <List v-else size="small" :data-source="todoItems">
+            <template #renderItem="{ item }">
+              <List.Item>
+                <List.Item.Meta :description="item.detail">
+                  <template #title>
+                    <Tag :color="item.color">{{ item.color === 'error' ? '需处理' : '待审核' }}</Tag>{{ item.title }}
+                  </template>
+                </List.Item.Meta>
+                <template #actions><Button size="small" type="link" @click="item.action()">{{ item.button }}</Button></template>
+              </List.Item>
+            </template>
+          </List>
         </Card>
       </Col>
 
