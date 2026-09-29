@@ -38,6 +38,25 @@ def _clean(value: Any) -> Any:
     return value
 
 
+PERIOD_DAYS = {"day": 1, "week": 5, "month": 23}  # most sessions per bar, to size the daily query
+
+
+def aggregate_bars(frame: pd.DataFrame, period: str, with_turnover_rate: bool = False) -> pd.DataFrame:
+    """Weekly (ISO week) or monthly bars from daily rows, dated by the last session."""
+    dates = pd.to_datetime(frame["trade_date"])
+    iso = dates.dt.isocalendar()
+    key = iso["year"] * 100 + iso["week"] if period == "week" else dates.dt.year * 100 + dates.dt.month
+    rules = {"trade_date": "last", "open": "first", "high": "max", "low": "min", "close": "last",
+             "volume": "sum", "amount": "sum", "hfq_close": "last"}
+    if with_turnover_rate:
+        rules["turnover_rate"] = "sum"
+    out = frame.groupby(key.values, sort=True).agg(rules).reset_index(drop=True)
+    out["pct_change"] = (out["hfq_close"] / out["hfq_close"].shift(1) - 1) * 100
+    previous = out["close"].shift(1)
+    out["amplitude"] = (out["high"] - out["low"]) / previous * 100
+    return out
+
+
 def records(frame: pd.DataFrame) -> list[dict[str, Any]]:
     return [{k: _clean(v) for k, v in row.items()} for row in frame.to_dict(orient="records")]
 
@@ -126,23 +145,59 @@ class MarketQueries:
         return info
 
     def bars(self, symbol: str, start: date | None, end: date | None, adjust: str = "qfq",
-             limit: int = 500) -> list[dict[str, Any]]:
+             limit: int = 500, period: str = "day") -> list[dict[str, Any]]:
+        """The last ``limit`` bars up to ``end`` (daily, weekly or monthly).
+        Weekly and monthly bars are built from the daily ones and dated by
+        their last session; their change is measured on hfq closes, so it is
+        right across ex-dates whatever the display adjustment."""
         o, h, l, c = ADJUST_COLUMNS[adjust]
         end = end or self.latest_session()
-        start = start or (end - timedelta(days=int(limit * 1.6)))
+        days = limit * PERIOD_DAYS[period]
+        start = start or (end - timedelta(days=int(days * 1.6) + 10))
         frame = self._query(
             f"SELECT trade_date, {o} AS open, {h} AS high, {l} AS low, {c} AS close, volume_shares AS volume, "
-            f"turnover_cny AS amount, pct_change FROM daily_bars_adjusted WHERE symbol = ? "
-            f"AND trade_date BETWEEN ? AND ? ORDER BY trade_date DESC LIMIT ?", [symbol, start, end, limit])
-        return records(frame.iloc[::-1])
+            f"turnover_cny AS amount, pct_change, turnover_rate_pct AS turnover_rate, amplitude_pct AS amplitude, "
+            f"hfq_close FROM daily_bars_adjusted WHERE symbol = ? AND trade_date BETWEEN ? AND ? "
+            f"ORDER BY trade_date DESC LIMIT ?", [symbol, start, end, days + 2 * PERIOD_DAYS[period]])
+        frame = frame.iloc[::-1].reset_index(drop=True)
+        if period != "day":
+            frame = aggregate_bars(frame, period, with_turnover_rate=True)
+        # Two spare periods were read, so the oldest (maybe cut) week or month falls outside ``limit``.
+        return records(frame.drop(columns=["hfq_close"]).tail(limit))
 
-    def index_bars(self, symbol: str, start: date | None, end: date | None, limit: int = 500) -> list[dict]:
+    def index_bars(self, symbol: str, start: date | None, end: date | None, limit: int = 500,
+                   period: str = "day") -> list[dict]:
         end = end or self.latest_session()
-        start = start or (end - timedelta(days=int(limit * 1.6)))
+        days = limit * PERIOD_DAYS[period]
+        start = start or (end - timedelta(days=int(days * 1.6) + 10))
         frame = self._query("SELECT trade_date, open, high, low, close, volume_shares AS volume, "
-                            "turnover_cny AS amount FROM index_bars WHERE symbol = ? AND trade_date BETWEEN ? AND ? "
-                            "ORDER BY trade_date DESC LIMIT ?", [symbol, start, end, limit])
-        return records(frame.iloc[::-1])
+                            "turnover_cny AS amount, close AS hfq_close FROM index_bars WHERE symbol = ? "
+                            "AND trade_date BETWEEN ? AND ? ORDER BY trade_date DESC LIMIT ?",
+                            [symbol, start, end, days + 2 * PERIOD_DAYS[period]])
+        frame = frame.iloc[::-1].reset_index(drop=True)
+        if period != "day":
+            frame = aggregate_bars(frame, period)
+        return records(frame.drop(columns=["hfq_close"]).tail(limit))
+
+    def marks(self, symbol: str) -> dict[str, list[dict[str, Any]]]:
+        """Events to mark on the chart: implemented dividends and splits (ex-dates),
+        periodic reports (first notice), risk-warning intervals, suspensions."""
+        def query(sql: str) -> list[dict[str, Any]]:
+            try:
+                return records(self._query(sql, [symbol]))
+            except duckdb.CatalogException:  # a database without that table
+                return []
+
+        return {
+            "dividends": query("SELECT ex_date, report_date, plan_profile, cash_per_10, bonus_per_10, transfer_per_10 "
+                               "FROM dividends WHERE symbol = ? AND ex_date IS NOT NULL ORDER BY ex_date"),
+            "reports": query("SELECT report_date, MIN(notice_date) AS notice_date FROM fin_income WHERE symbol = ? "
+                             "AND notice_date IS NOT NULL GROUP BY report_date ORDER BY notice_date"),
+            "risk": query("SELECT status, start_date, end_date, start_title FROM risk_warning_intervals "
+                          "WHERE symbol = ? ORDER BY start_date"),
+            "suspensions": query("SELECT suspend_start, suspend_end, reason FROM suspension_events WHERE symbol = ? "
+                                 "AND suspend_start IS NOT NULL ORDER BY suspend_start"),
+        }
 
     def fundamentals(self, symbol: str, periods: int = 8) -> list[dict[str, Any]]:
         frame = self._query(

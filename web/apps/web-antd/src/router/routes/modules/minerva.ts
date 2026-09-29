@@ -54,6 +54,18 @@ const routes: RouteRecordRaw[] = [
     meta: { authority: ['event:view'], icon: 'lucide:bell', order: 4, title: '通知中心' },
   },
   {
+    name: 'Chart',
+    path: '/chart',
+    component: () => import('#/views/market/chart.vue'),
+    meta: { authority: ['market:view'], icon: 'lucide:chart-candlestick', order: 4, title: '看盘' },
+  },
+  {
+    name: 'ChartSymbol',
+    path: '/chart/:symbol',
+    component: () => import('#/views/market/chart.vue'),
+    meta: { activePath: '/chart', authority: ['market:view'], hideInMenu: true, title: '看盘' },
+  },
+  {
     name: 'DataHealth',
     path: '/data',
     component: () => import('#/views/data/index.vue'),

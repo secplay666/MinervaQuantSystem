@@ -365,6 +365,20 @@ class EventRead(Base):
     read_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
 
 
+class ChartDrawing(Base):
+    """A user's drawings (KLineChart overlays: name, points by timestamp and
+    value, styles) on one security's chart."""
+
+    __tablename__ = "chart_drawings"
+    __table_args__ = (UniqueConstraint("user_id", "symbol", name="uq_chart_drawings_user_symbol"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    symbol: Mapped[str] = mapped_column(String(16))
+    overlays: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
+
+
 class EventPush(Base):
     """Delivery of an event to an external channel (app/notify.py): one row per
     event and channel, so a failing channel does not resend on the others."""

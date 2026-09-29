@@ -127,13 +127,35 @@ export interface EventItem {
 
 export interface Bar {
   amount: null | number;
+  amplitude?: null | number; // %
   close: number;
   high: number;
   low: number;
   open: number;
-  pct_change?: null | number;
+  pct_change?: null | number; // %
   trade_date: string;
+  turnover_rate?: null | number; // %
   volume: null | number;
+}
+
+export type BarPeriod = 'day' | 'month' | 'week';
+
+export interface ChartMarks {
+  dividends: { bonus_per_10: null | number; cash_per_10: null | number; ex_date: string; plan_profile: null | string;
+               report_date: string; transfer_per_10: null | number }[];
+  fills: { account_id: string; account_name: string; price: number; qty: number; side: 'buy' | 'sell'; source: string;
+           trade_date: string }[];
+  reports: { notice_date: string; report_date: string }[];
+  risk: { end_date: null | string; start_date: string; start_title: null | string; status: string }[];
+  suspensions: { reason: null | string; suspend_end: null | string; suspend_start: string }[];
+}
+
+export interface SavedOverlay {
+  extendData?: unknown;
+  lock?: boolean;
+  name: string;
+  points: { timestamp: number; value: number }[];
+  styles?: unknown;
 }
 
 export interface Overview {
@@ -252,12 +274,17 @@ export const readAllEventsApi = () => requestClient.post('/events/read-all');
 
 // -- market --------------------------------------------------------------------------------
 export const overviewApi = (tradeDate?: string) => requestClient.get<Overview>('/market/overview', { params: { trade_date: tradeDate } });
-export const indexBarsApi = (symbol: string, limit = 250) =>
-  requestClient.get<Bar[]>(`/market/indices/${symbol}/bars`, { params: { limit } });
+export const indexBarsApi = (symbol: string, limit = 250, period: BarPeriod = 'day') =>
+  requestClient.get<Bar[]>(`/market/indices/${symbol}/bars`, { params: { limit, period } });
 export const searchApi = (q: string) => requestClient.get<{ board: string; name: string; symbol: string }[]>('/instruments/search', { params: { q } });
 export const instrumentApi = (symbol: string) => requestClient.get<Record<string, any>>(`/instruments/${symbol}`);
-export const barsApi = (symbol: string, adjust = 'qfq', limit = 250) =>
-  requestClient.get<Bar[]>(`/instruments/${symbol}/bars`, { params: { adjust, limit } });
+export const barsApi = (symbol: string, adjust = 'qfq', limit = 250, period: BarPeriod = 'day', end?: string) =>
+  requestClient.get<Bar[]>(`/instruments/${symbol}/bars`, { params: { adjust, end, limit, period } });
+export const marksApi = (symbol: string) => requestClient.get<ChartMarks>(`/instruments/${symbol}/marks`);
+export const drawingsApi = (symbol: string) =>
+  requestClient.get<{ overlays: SavedOverlay[]; symbol: string; updated_at: null | string }>(`/charts/${symbol}/drawings`);
+export const saveDrawingsApi = (symbol: string, overlays: SavedOverlay[]) =>
+  requestClient.put<{ count: number }>(`/charts/${symbol}/drawings`, { overlays });
 export const fundamentalsApi = (symbol: string) => requestClient.get<Record<string, any>[]>(`/instruments/${symbol}/fundamentals`);
 export interface Signals {
   account_id: null | string;

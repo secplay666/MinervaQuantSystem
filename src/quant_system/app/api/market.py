@@ -3,15 +3,18 @@ and the strategy's scores of a stock."""
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import date
 
 import pandas as pd
 from fastapi import APIRouter, Depends, Query, Request
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..db.models import DecisionRun, TargetPosition
+from ..db.base import utc_now
+from ..db.models import Account, ChartDrawing, DecisionRun, Fill, TargetPosition
 from ..deps import Principal, api_error, get_session, require, settings_of
 from ..market import records
 
@@ -33,8 +36,9 @@ def overview(request: Request, trade_date: date | None = None, _: Principal = De
 
 @router.get("/market/indices/{symbol}/bars")
 def index_bars(symbol: str, request: Request, start: date | None = None, end: date | None = None,
-               limit: int = Query(250, le=2000), _: Principal = Depends(view)) -> list:
-    return _market(request).index_bars(symbol, start, end, limit)
+               limit: int = Query(250, le=6000), period: str = Query("day", pattern="^(day|week|month)$"),
+               _: Principal = Depends(view)) -> list:
+    return _market(request).index_bars(symbol, start, end, limit, period)
 
 
 @router.get("/instruments/search")
@@ -53,9 +57,62 @@ def instrument(symbol: str, request: Request, _: Principal = Depends(view)) -> d
 @router.get("/instruments/{symbol}/bars")
 def bars(symbol: str, request: Request, start: date | None = None, end: date | None = None,
          adjust: str = Query("qfq", pattern="^(none|qfq|hfq)$"), limit: int = Query(250, le=2000),
-         _: Principal = Depends(view)) -> list:
-    """qfq is anchored at the latest ex-date and only for display (ADR-004)."""
-    return _market(request).bars(symbol, start, end, adjust, limit)
+         period: str = Query("day", pattern="^(day|week|month)$"), _: Principal = Depends(view)) -> list:
+    """qfq is anchored at the latest ex-date and only for display (ADR-004).
+    ``end`` pages backwards: the chart asks for older bars when scrolled left."""
+    return _market(request).bars(symbol, start, end, adjust, limit, period)
+
+
+@router.get("/instruments/{symbol}/marks")
+def marks(symbol: str, request: Request, principal: Principal = Depends(view),
+          session: Session = Depends(get_session)) -> dict:
+    """Chart marks: ex-dates, reports, risk warnings, suspensions and, for
+    users who may see accounts, the fills of every account in this stock."""
+    if not re.fullmatch(r"\d{6}", symbol):
+        raise api_error(404, "not_found", "证券不存在")
+    market = request.app.state.market
+    out = market.marks(symbol) if market.available() else {"dividends": [], "reports": [], "risk": [],
+                                                            "suspensions": []}
+    fills = []
+    if "account:view" in principal.permissions:
+        rows = session.execute(select(Fill, Account.name).join(Account, Account.account_id == Fill.account_id)
+                               .where(Fill.symbol == symbol, Fill.reversed_by.is_(None))
+                               .order_by(Fill.trade_date, Fill.fill_id))
+        fills = [{"trade_date": f.trade_date.isoformat(), "account_id": f.account_id, "account_name": name,
+                  "side": f.side, "qty": f.qty, "price": f.price_fen / 100, "source": f.source} for f, name in rows]
+    return {**out, "fills": fills}
+
+
+class DrawingsIn(BaseModel):
+    overlays: list[dict] = Field(max_length=300)
+
+
+@router.get("/charts/{symbol}/drawings")
+def get_drawings(symbol: str, principal: Principal = Depends(view), session: Session = Depends(get_session)) -> dict:
+    """The current user's drawings on this stock (their own, not shared)."""
+    row = session.scalar(select(ChartDrawing).where(ChartDrawing.user_id == principal.user.id,
+                                                    ChartDrawing.symbol == symbol))
+    return {"symbol": symbol, "overlays": row.overlays if row else [],
+            "updated_at": row.updated_at.isoformat() if row else None}
+
+
+@router.put("/charts/{symbol}/drawings")
+def put_drawings(symbol: str, body: DrawingsIn, principal: Principal = Depends(view),
+                 session: Session = Depends(get_session)) -> dict:
+    if not re.fullmatch(r"[A-Za-z0-9]{6,8}", symbol):
+        raise api_error(400, "invalid_symbol", "代码不合法")
+    if len(json.dumps(body.overlays)) > 200_000:
+        raise api_error(400, "too_large", "画线太多，请删除一些后再保存")
+    row = session.scalar(select(ChartDrawing).where(ChartDrawing.user_id == principal.user.id,
+                                                    ChartDrawing.symbol == symbol))
+    if row is None:
+        row = ChartDrawing(user_id=principal.user.id, symbol=symbol, overlays=body.overlays)
+        session.add(row)
+    else:
+        row.overlays = body.overlays
+        row.updated_at = utc_now()
+    session.commit()
+    return {"symbol": symbol, "count": len(body.overlays), "updated_at": row.updated_at.isoformat()}
 
 
 @router.get("/instruments/{symbol}/fundamentals")

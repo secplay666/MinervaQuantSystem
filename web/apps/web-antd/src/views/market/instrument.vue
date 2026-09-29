@@ -10,10 +10,10 @@ import { useAccess } from '@vben/access';
 import { Page } from '@vben/common-ui';
 import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
 
-import { Button, Card, Col, Descriptions, Empty, Row, Segmented, Table, Tag } from 'ant-design-vue';
+import { Button, Card, Col, Descriptions, Empty, Row, Table, Tag } from 'ant-design-vue';
 
 import { barsApi, fundamentalsApi, instrumentApi, signalsApi } from '#/api';
-import KlineChart from '#/components/kline-chart.vue';
+import StockChart from '#/components/stock-chart/stock-chart.vue';
 import { bigYuan, changeColor, DOWN_COLOR, FAMILY_LABEL, FAMILY_ORDER, pct, UP_COLOR } from '#/utils/format';
 
 const route = useRoute();
@@ -21,7 +21,6 @@ const router = useRouter();
 const symbol = computed(() => String(route.params.symbol));
 const info = ref<Record<string, any>>();
 const bars = ref<Bar[]>([]);
-const adjust = ref('qfq');
 const fundamentals = ref<Record<string, any>[]>([]);
 const last = computed(() => bars.value.at(-1));
 const { hasAccessByCodes } = useAccess();
@@ -57,7 +56,7 @@ const BOARD: Record<string, string> = { BSE: '北交所', CHINEXT: '创业板', 
 const RISK: Record<string, string> = { '*ST': '*ST', DELISTING: '退市整理', normal: '正常', ST: 'ST' };
 
 async function loadBars() {
-  bars.value = await barsApi(symbol.value, adjust.value, 500);
+  bars.value = await barsApi(symbol.value, 'none', 2); // the latest price for the header; the chart loads its own
 }
 
 async function load() {
@@ -84,7 +83,7 @@ onMounted(load);
   <Page :title="info ? `${info.name}（${symbol}）` : symbol">
     <template #extra><Button @click="router.back()">返回</Button></template>
     <Row :gutter="[16, 16]">
-      <Col :xs="24" :lg="17">
+      <Col :xs="24" :lg="24">
         <Card size="small">
           <template #title>
             <span v-if="last" class="mr-3">
@@ -96,16 +95,14 @@ onMounted(load);
             </span>
           </template>
           <template #extra>
-            <Segmented v-model:value="adjust" size="small" :options="[{ label: '前复权', value: 'qfq' }, { label: '不复权', value: 'none' },
-                                                                        { label: '后复权', value: 'hfq' }]" @change="loadBars" />
+            <Button size="small" type="primary" ghost @click="router.push(`/chart/${symbol}`)">大图看盘</Button>
           </template>
-          <KlineChart v-if="bars.length" :bars="bars" :ticker="symbol" :height="520" />
-          <Empty v-else />
+          <StockChart :symbol="symbol" :height="680" />
           <div class="text-muted-foreground mt-1 text-xs">前复权以最近一次除权为锚点，仅用于展示；收益计算使用后复权（ADR-004）。</div>
         </Card>
       </Col>
-      <Col :xs="24" :lg="7">
-        <Card v-if="info" size="small" title="基本信息">
+      <Col :xs="24" :lg="10">
+        <Card v-if="info" size="small" title="基本信息" class="h-full">
           <Descriptions :column="1" size="small">
             <Descriptions.Item label="代码">{{ info.symbol }}</Descriptions.Item>
             <Descriptions.Item label="板块">{{ BOARD[info.board] ?? info.board }}</Descriptions.Item>
@@ -120,7 +117,9 @@ onMounted(load);
             <Descriptions.Item v-if="last" label="成交额">{{ bigYuan(last.amount, false) }} 元</Descriptions.Item>
           </Descriptions>
         </Card>
-        <Card v-if="signals?.run_id" class="mt-4" size="small" :title="`策略得分（${signals.trade_date} 调仓）`">
+      </Col>
+      <Col v-if="signals?.run_id" :xs="24" :lg="14">
+        <Card v-if="signals?.run_id" size="small" :title="`策略得分（${signals.trade_date} 调仓）`">
           <template v-if="signals.row">
             <Descriptions :column="1" size="small">
               <Descriptions.Item label="综合得分">{{ signals.row.score?.toFixed(3) ?? '—' }}</Descriptions.Item>
