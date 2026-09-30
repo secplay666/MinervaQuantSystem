@@ -66,6 +66,7 @@ def test_abnormal_days_need_both_a_high_score_and_a_large_share() -> None:
     flagged = daily[daily["abnormal"].notna()]
     assert flagged["trade_date"].tolist() == [SESSIONS[280], SESSIONS[290]]
     assert flagged["abnormal"].tolist() == ["in", "out"]
+    assert flagged["strong"].tolist() == [True, True]  # 4% and 3% of the group's size, z far above 8
     # Day 285 is unusual (z far above 4) but only 0.3% of the group's size.
     assert daily.loc[285, "z"] > 4 and daily.loc[285, "abnormal"] is None
 

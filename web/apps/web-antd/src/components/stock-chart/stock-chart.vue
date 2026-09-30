@@ -295,8 +295,8 @@ function renderMarks() {
   }
   for (const e of m.etf ?? []) {
     const inflow = e.abnormal === 'in';
-    add('etf', e.trade_date, { below: inflow, color: inflow ? UP_COLOR : DOWN_COLOR, text: inflow ? '申' : '赎' },
-        `${e.group} ETF 异常净${inflow ? '申购' : '赎回'} ${(e.flow / 1e8).toFixed(1)} 亿（占规模 ${(e.flow_pct * 100).toFixed(2)}%，z ${e.z}）`);
+    add('etf', e.trade_date, { below: inflow, color: inflow ? UP_COLOR : DOWN_COLOR, text: `${e.strong ? '强' : ''}${inflow ? '申' : '赎'}` },
+        `${e.group} ETF ${e.strong ? '强' : ''}异常净${inflow ? '申购' : '赎回'} ${(e.flow / 1e8).toFixed(1)} 亿（占规模 ${(e.flow_pct * 100).toFixed(2)}%，z ${e.z}）`);
   }
   for (const s of m.suspensions) {
     add('suspensions', s.suspend_start, { below: false, color: '#6b7280', text: '停' },

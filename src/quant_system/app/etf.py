@@ -20,6 +20,8 @@ from ..analytics.etf_flows import (
     ABNORMAL_MIN_SHARE,
     ABNORMAL_Z,
     BASELINE_SESSIONS,
+    STRONG_MIN_SHARE,
+    STRONG_Z,
     fund_flows,
     group_flows,
 )
@@ -90,6 +92,7 @@ class EtfQueries:
             partial = series["trade_date"] > complete_until
             series["partial"] = partial
             series.loc[partial, ["z", "abnormal"]] = None
+            series.loc[partial, "strong"] = False
             daily[group["id"]] = series
         names = members.drop_duplicates("symbol").set_index("symbol")
         return {"groups": groups, "daily": daily, "funds": funds, "names": names,
@@ -120,11 +123,14 @@ class EtfQueries:
                 **{f"flow_{n}d": _num(np.nansum(flows[-n:])) if len(flows) else None for n in (1, 5, 20, 60, 250)},
                 "abnormal_in_250d": int((recent["abnormal"] == "in").sum()),
                 "abnormal_out_250d": int((recent["abnormal"] == "out").sum()),
-                "last_abnormal": records(abnormal.tail(1)[["trade_date", "abnormal", "flow", "flow_pct", "z"]])[0]
+                "strong_250d": int(recent["strong"].sum()),
+                "last_abnormal": records(abnormal.tail(1)[["trade_date", "abnormal", "flow", "flow_pct", "z",
+                                                           "strong"]])[0]
                 if len(abnormal) else None,
             })
         return {"as_of": state["complete_until"], "latest": state["latest"], "groups": rows,
-                "rules": {"z": ABNORMAL_Z, "min_share": ABNORMAL_MIN_SHARE, "baseline": BASELINE_SESSIONS}}
+                "rules": {"z": ABNORMAL_Z, "min_share": ABNORMAL_MIN_SHARE, "baseline": BASELINE_SESSIONS,
+                          "strong_z": STRONG_Z, "strong_min_share": STRONG_MIN_SHARE}}
 
     def series(self, group_id: str, start: date | None = None, end: date | None = None) -> dict[str, Any]:
         state = self._load()
@@ -137,7 +143,7 @@ class EtfQueries:
         frame = frame.assign(cumulative=frame["flow"].fillna(0).cumsum())
         return {"group": {k: group[k] for k in ("id", "name", "chart_symbol")},
                 "as_of": state["complete_until"],
-                "rows": records(frame[["trade_date", "aum", "flow", "flow_pct", "cumulative", "z", "abnormal",
+                "rows": records(frame[["trade_date", "aum", "flow", "flow_pct", "cumulative", "z", "abnormal", "strong",
                                        "funds", "events", "partial"]])}
 
     def marks(self, chart_symbol: str) -> list[dict[str, Any]]:
@@ -150,7 +156,7 @@ class EtfQueries:
             frame = state["daily"][group["id"]]
             frame = frame[frame["abnormal"].notna()]
             rows += [{**row, "group": group["name"]}
-                     for row in records(frame[["trade_date", "abnormal", "flow", "flow_pct", "z"]])]
+                     for row in records(frame[["trade_date", "abnormal", "flow", "flow_pct", "z", "strong"]])]
         return sorted(rows, key=lambda row: row["trade_date"])
 
     def funds(self, group_id: str, day: date | None = None) -> dict[str, Any]:

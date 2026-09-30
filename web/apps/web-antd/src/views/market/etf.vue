@@ -29,6 +29,9 @@ const chartRef = ref<EchartsUIType>();
 const { renderEcharts } = useEcharts(chartRef);
 
 const group = computed(() => overview.value?.groups.find((g) => g.id === groupId.value));
+const TILE_TIP = '当日净申购：该组各 ETF 当天的份额变化 × 收盘价之和，即所有投资者在一级市场申购减去赎回的净额（估算，单位元）；'
+  + '负数为净赎回。二级市场买卖不改变份额，不计在内；也无法区分是谁申购。近 20 日：最近 20 个交易日的累计。规模：份额 × 收盘价。'
+  + '近一年异常日：最近 250 个交易日里异常净申购、异常净赎回的天数，以及其中强异常的天数。';
 const EVENT_LABEL: Record<string, string> = { gap: '数据间断', jump: '份额突变（无价格核对）', new: '首日', split: '份额折算' };
 
 /** 亿元 with a sign, e.g. +12.35 亿. */
@@ -87,9 +90,11 @@ async function draw() {
   const marks = days.value.filter((d) => d.abnormal).map((d) => {
     const b = closeByDate.value.get(d.trade_date);
     const inflow = d.abnormal === 'in';
-    return b ? { coord: [d.trade_date, inflow ? b.low : b.high], symbolOffset: [0, inflow ? 12 : -12],
-                 itemStyle: { color: inflow ? UP_COLOR : DOWN_COLOR },
-                 label: { color: '#fff', fontSize: 10, formatter: inflow ? '申' : '赎' }, value: d.abnormal } : null;
+    const size = d.strong ? 22 : 16;
+    return b ? { coord: [d.trade_date, inflow ? b.low : b.high], symbolOffset: [0, (inflow ? 1 : -1) * (size / 2 + 4)],
+                 symbolSize: size, itemStyle: { borderColor: '#fff', borderWidth: d.strong ? 1.5 : 0, color: inflow ? UP_COLOR : DOWN_COLOR },
+                 label: { color: '#fff', fontSize: d.strong ? 12 : 10, fontWeight: d.strong ? 'bold' : 'normal',
+                          formatter: inflow ? '申' : '赎' }, value: d.abnormal } : null;
   }).filter(Boolean);
   const start = Math.max(0, dates.length - 500);
   const symbol = group.value?.chart_symbol ?? '';
@@ -118,7 +123,7 @@ async function draw() {
         lineStyle: { width: 2 }, color: '#2563eb', data: days.value.map((d) => +(d.cumulative / 1e8).toFixed(2)) },
     ] as any[]),
     title: [
-      { text: `${indexName} 日 K（标记：申 = 异常净申购，赎 = 异常净赎回）`, left: 64, top: 4, textStyle: { fontSize: 12, fontWeight: 'normal' } },
+      { text: `${indexName} 日 K（标记：申 = 异常净申购，赎 = 异常净赎回；大而带白边的是强异常）`, left: 64, top: 4, textStyle: { fontSize: 12, fontWeight: 'normal' } },
       { text: '当日净申购（亿元）', left: 64, top: '53%', textStyle: { fontSize: 12, fontWeight: 'normal' } },
       { text: '累计净申购（亿元，自所示起点）', left: 64, top: '74%', textStyle: { fontSize: 12, fontWeight: 'normal' } },
     ],
@@ -134,7 +139,7 @@ async function draw() {
         const lines = [`<b>${d.trade_date}</b>${d.partial ? '（深交所数据未出，不完整）' : ''}`];
         if (b) lines.push(`${indexName} 收盘 ${b.close.toFixed(2)}　${pct(change, 2, true)}`);
         lines.push(`净申购 ${yi(d.flow)}（占规模 ${pct(d.flow_pct, 2, true)}）`, `z 值 ${d.z ?? '—'}　基金数 ${d.funds}`);
-        if (d.abnormal) lines.push(`<b style="color:${d.abnormal === 'in' ? UP_COLOR : DOWN_COLOR}">${d.abnormal === 'in' ? '异常净申购' : '异常净赎回'}</b>`);
+        if (d.abnormal) lines.push(`<b style="color:${d.abnormal === 'in' ? UP_COLOR : DOWN_COLOR}">${d.strong ? '强' : ''}${d.abnormal === 'in' ? '异常净申购' : '异常净赎回'}</b>`);
         if (d.events) lines.push(`${d.events} 只基金当天有份额折算或数据问题，未计入`);
         return lines.join('<br/>');
       },
@@ -200,13 +205,17 @@ onMounted(async () => {
     <template v-if="overview">
       <Row :gutter="[12, 12]" class="mb-4">
         <Col v-for="g in overview.groups" :key="g.id" :xs="12" :md="6" :xl="3">
-          <Card size="small" class="h-full cursor-pointer" :class="{ 'etf-selected': g.id === groupId }" @click="selectGroup(g)">
-            <div class="font-semibold">{{ g.name }}</div>
-            <div class="text-muted-foreground text-xs">{{ g.funds }} 只 · 规模 {{ yi(g.aum, false) }}</div>
-            <div class="mt-1 text-lg" :style="{ color: changeColor(g.flow_1d) }">{{ yi(g.flow_1d) }}</div>
-            <div class="text-xs">20 日 <span :style="{ color: changeColor(g.flow_20d) }">{{ yi(g.flow_20d) }}</span></div>
-            <div class="text-muted-foreground text-xs">近一年异常 申 {{ g.abnormal_in_250d }} · 赎 {{ g.abnormal_out_250d }}</div>
-          </Card>
+          <Tooltip :title="TILE_TIP" placement="bottom" :mouse-enter-delay="0.6">
+            <Card size="small" class="h-full cursor-pointer" :class="{ 'etf-selected': g.id === groupId }" @click="selectGroup(g)">
+              <div class="font-semibold">{{ g.name }}</div>
+              <div class="text-muted-foreground text-xs">{{ g.funds }} 只 · 规模 {{ yi(g.aum, false) }}</div>
+              <div class="text-muted-foreground mt-1 text-xs">当日净申购（{{ overview.as_of.slice(5) }}）</div>
+              <div class="text-lg leading-6" :style="{ color: changeColor(g.flow_1d) }">{{ yi(g.flow_1d) }}</div>
+              <div class="text-xs">近 20 日 <span :style="{ color: changeColor(g.flow_20d) }">{{ yi(g.flow_20d) }}</span></div>
+              <div class="text-muted-foreground text-xs">近一年异常日</div>
+              <div class="text-xs">申 {{ g.abnormal_in_250d }} · 赎 {{ g.abnormal_out_250d }} · 其中强 {{ g.strong_250d }}</div>
+            </Card>
+          </Tooltip>
         </Col>
       </Row>
 
@@ -224,10 +233,12 @@ onMounted(async () => {
           <EchartsUI ref="chartRef" height="600px" />
         </Spin>
         <div class="text-muted-foreground mt-2 text-xs leading-5">
-          净申购 = 当日份额变化 × 当日 ETF 收盘价，按基金加总；只算跟踪该指数的普通 ETF（增强型不计），份额按两个交易所每日公布的数据。
+          净申购 = 当日份额变化 × 当日 ETF 收盘价，按基金加总，是所有投资者一级市场申购减赎回的净额；二级市场买卖不改变份额，不在其中。
+          只算跟踪该指数的普通 ETF（增强型不计），份额按两个交易所每日公布的数据。
           份额折算（拆分、合并）、数据间断和基金首日不计入。
           异常日：当日净申购相对过去 {{ overview.rules.baseline }} 个交易日的稳健 z 值（中位数、四分位距）超过 ±{{ overview.rules.z }}，
-          且金额超过前一日规模的 {{ pct(overview.rules.min_share, 1) }}。深交所晚一天公布，最新一天只含上交所的基金（浅色柱）。
+          且金额超过前一日规模的 {{ pct(overview.rules.min_share, 1) }}；z 值超过 ±{{ overview.rules.strong_z }} 且超过规模 {{ pct(overview.rules.strong_min_share, 0) }} 的为强异常。
+          深交所晚一天公布，最新一天只含上交所的基金（浅色柱）。
           这是按公开份额的估算，不能区分申购方是谁。点击图上某一天，下方显示各基金当天的情况。
         </div>
       </Card>
@@ -241,7 +252,8 @@ onMounted(async () => {
                    :row-class-name="(row: any) => (row.trade_date === selectedDay ? 'etf-row-selected' : '')">
               <template #bodyCell="{ column, record }">
                 <template v-if="column.key === 'direction'">
-                  <Tag :color="record.abnormal === 'in' ? 'red' : 'green'">{{ record.abnormal === 'in' ? '净申购' : '净赎回' }}</Tag>
+                  <Tag :color="record.abnormal === 'in' ? 'red' : 'green'" :bordered="!record.strong"
+                       :style="record.strong ? 'font-weight: 600' : ''">{{ record.strong ? '强' : '' }}{{ record.abnormal === 'in' ? '净申购' : '净赎回' }}</Tag>
                 </template>
                 <template v-else-if="column.key === 'flow'">{{ yi(record.flow) }}</template>
                 <template v-else-if="column.key === 'share'">{{ pct(record.flow_pct, 2, true) }}</template>

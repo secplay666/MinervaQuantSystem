@@ -150,7 +150,7 @@ export interface ChartMarks {
   suspensions: { reason: null | string; suspend_end: null | string; suspend_start: string }[];
   etf?: EtfMark[]; // index charts: abnormal broad-ETF subscription days
 }
-export interface EtfMark { abnormal: 'in' | 'out'; flow: number; flow_pct: number; group: string; trade_date: string; z: number }
+export interface EtfMark { abnormal: 'in' | 'out'; flow: number; flow_pct: number; group: string; strong: boolean; trade_date: string; z: number }
 
 export interface SavedOverlay {
   extendData?: unknown;
@@ -359,7 +359,7 @@ export const auditApi = (params: { action?: string; actor?: string; before_id?: 
   requestClient.get<Record<string, any>[]>('/audit', { params });
 
 // -- ETF 资金（宽基 ETF 份额变化估算的净申购，app/etf.py） -------------------------------------
-export interface EtfAbnormal { abnormal: 'in' | 'out'; flow: number; flow_pct: number; trade_date: string; z: number }
+export interface EtfAbnormal { abnormal: 'in' | 'out'; flow: number; flow_pct: number; strong: boolean; trade_date: string; z: number }
 export interface EtfGroupSummary {
   abnormal_in_250d: number;
   abnormal_out_250d: number;
@@ -374,12 +374,13 @@ export interface EtfGroupSummary {
   id: string;
   last_abnormal: EtfAbnormal | null;
   name: string;
+  strong_250d: number;
 }
 export interface EtfOverview {
   as_of: string; // last day both exchanges have published
   groups: EtfGroupSummary[];
   latest: string;
-  rules: { baseline: number; min_share: number; z: number };
+  rules: { baseline: number; min_share: number; strong_min_share: number; strong_z: number; z: number };
 }
 export interface EtfDay {
   abnormal: 'in' | 'out' | null;
@@ -390,6 +391,7 @@ export interface EtfDay {
   flow_pct: null | number;
   funds: number;
   partial: boolean;
+  strong: boolean;
   trade_date: string;
   z: null | number;
 }

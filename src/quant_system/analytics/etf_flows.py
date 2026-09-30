@@ -34,10 +34,13 @@ BASELINE_SESSIONS = 250
 BASELINE_MIN_SESSIONS = 60
 ABNORMAL_Z = 4.0
 ABNORMAL_MIN_SHARE = 0.005  # and at least 0.5% of the group's size the day before
+STRONG_Z = 8.0  # an abnormal day this far out and this large is marked strong
+STRONG_MIN_SHARE = 0.02
 SPREAD_FLOOR_SHARE = 0.0001  # the usual range is taken as at least 0.01% of the group's size
 
 FUND_COLUMNS = ["trade_date", "symbol", "shares", "close", "aum", "share_change", "flow", "event"]
-GROUP_COLUMNS = ["trade_date", "aum", "flow", "flow_pct", "funds", "priced_funds", "events", "z", "abnormal"]
+GROUP_COLUMNS = ["trade_date", "aum", "flow", "flow_pct", "funds", "priced_funds", "events", "z", "abnormal",
+                 "strong"]
 
 
 def fund_flows(shares: pd.DataFrame, closes: pd.DataFrame, sessions: list[date]) -> pd.DataFrame:
@@ -102,6 +105,8 @@ def group_flows(funds: pd.DataFrame) -> pd.DataFrame:
     outflow = (daily["z"] <= -ABNORMAL_Z) & (daily["flow_pct"] <= -ABNORMAL_MIN_SHARE)
     daily["abnormal"] = np.select([inflow, outflow], ["in", "out"], default=None)
     daily["abnormal"] = daily["abnormal"].where(daily["abnormal"].notna(), None)
+    daily["strong"] = (daily["abnormal"].notna() & (daily["z"].abs() >= STRONG_Z)
+                       & (daily["flow_pct"].abs() >= STRONG_MIN_SHARE))
     return daily[GROUP_COLUMNS]
 
 
