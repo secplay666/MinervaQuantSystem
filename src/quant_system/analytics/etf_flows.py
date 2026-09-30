@@ -34,6 +34,7 @@ BASELINE_SESSIONS = 250
 BASELINE_MIN_SESSIONS = 60
 ABNORMAL_Z = 4.0
 ABNORMAL_MIN_SHARE = 0.005  # and at least 0.5% of the group's size the day before
+SPREAD_FLOOR_SHARE = 0.0001  # the usual range is taken as at least 0.01% of the group's size
 
 FUND_COLUMNS = ["trade_date", "symbol", "shares", "close", "aum", "share_change", "flow", "event"]
 GROUP_COLUMNS = ["trade_date", "aum", "flow", "flow_pct", "funds", "priced_funds", "events", "z", "abnormal"]
@@ -50,6 +51,8 @@ def fund_flows(shares: pd.DataFrame, closes: pd.DataFrame, sessions: list[date])
     frame = shares[["trade_date", "symbol", "shares"]].merge(
         closes[["trade_date", "symbol", "close"]], on=["trade_date", "symbol"], how="left")
     frame = frame.sort_values(["symbol", "trade_date"], ignore_index=True)
+    frame["shares"] = frame["shares"].astype("float64")
+    frame["close"] = pd.to_numeric(frame["close"], errors="coerce").astype("float64")
     grouped = frame.groupby("symbol", sort=False)
     # A missing close (a day without trading) falls back to the fund's last known close.
     frame["close"] = grouped["close"].ffill()
@@ -91,7 +94,9 @@ def group_flows(funds: pd.DataFrame) -> pd.DataFrame:
     history = daily["flow"].shift()
     window = history.rolling(BASELINE_SESSIONS, min_periods=BASELINE_MIN_SESSIONS)
     median = window.median()
-    spread = (window.quantile(0.75) - window.quantile(0.25)) / 1.349
+    # A quiet group (flows nearly the same every day) would divide by almost nothing.
+    spread = np.maximum((window.quantile(0.75) - window.quantile(0.25)) / 1.349,
+                        SPREAD_FLOOR_SHARE * daily["aum"].shift())
     daily["z"] = ((daily["flow"] - median) / spread.where(spread > 0)).round(2)
     inflow = (daily["z"] >= ABNORMAL_Z) & (daily["flow_pct"] >= ABNORMAL_MIN_SHARE)
     outflow = (daily["z"] <= -ABNORMAL_Z) & (daily["flow_pct"] <= -ABNORMAL_MIN_SHARE)

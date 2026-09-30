@@ -1,9 +1,12 @@
-import { BarChart, LineChart, PieChart, RadarChart } from 'echarts/charts';
+import { BarChart, CandlestickChart, LineChart, PieChart, RadarChart } from 'echarts/charts';
 import {
+  AxisPointerComponent,
   DatasetComponent,
+  DataZoomComponent,
   GraphicComponent,
   GridComponent,
   LegendComponent,
+  MarkPointComponent,
   TitleComponent,
   ToolboxComponent,
   TooltipComponent,
@@ -34,6 +37,11 @@ echarts.use([
   LegendComponent,
   ToolboxComponent,
   GraphicComponent,
+  // Minerva: the ETF flow page (index candles, zoom, abnormal-day pins).
+  CandlestickChart,
+  DataZoomComponent,
+  MarkPointComponent,
+  AxisPointerComponent,
 ]);
 export type { ECOption } from './types';
 

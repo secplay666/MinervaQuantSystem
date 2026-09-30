@@ -48,6 +48,12 @@ const routes: RouteRecordRaw[] = [
     meta: { activePath: '/market', authority: ['market:view'], hideInMenu: true, title: '个股' },
   },
   {
+    name: 'EtfFlows',
+    path: '/etf',
+    component: () => import('#/views/market/etf.vue'),
+    meta: { authority: ['market:view'], icon: 'lucide:landmark', order: 3.5, title: 'ETF 资金' },
+  },
+  {
     name: 'Events',
     path: '/events',
     component: () => import('#/views/events/index.vue'),

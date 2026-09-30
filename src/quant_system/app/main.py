@@ -17,8 +17,9 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import accounts, auth, decisions, events, invitations, market, system, users
+from .api import accounts, auth, decisions, etf, events, invitations, market, system, users
 from .db.base import open_database
+from .etf import EtfQueries
 from .market import MarketQueries
 from .rbac import sync_roles
 from .settings import AppSettings
@@ -42,6 +43,7 @@ def create_app(settings: AppSettings) -> FastAPI:
     app.state.engine = engine
     app.state.sessions = sessions
     app.state.market = MarketQueries(settings.market_db, settings.root / "configs" / "market_rules" / "cn_a_share.json")
+    app.state.etf = EtfQueries(settings.market_db, settings.root / "configs" / "etf" / "broad_groups.json")
     app.state.jobs = {}
     app.add_middleware(GZipMiddleware, minimum_size=1024)
     if settings.cors_origins:
@@ -64,7 +66,7 @@ def create_app(settings: AppSettings) -> FastAPI:
     async def value_error(_request: Request, exc: ValueError) -> JSONResponse:
         return JSONResponse(status_code=400, content={"detail": {"code": "invalid", "message": str(exc)}})
 
-    for module in (system, auth, users, invitations, events, market, accounts, decisions):
+    for module in (system, auth, users, invitations, events, market, etf, accounts, decisions):
         app.include_router(module.router, prefix=API_PREFIX)
     if settings.mobile_dir is not None and (settings.mobile_dir / "index.html").is_file():
         # Mounted before the PC catch-all; relative asset paths and hash routes need nothing else.

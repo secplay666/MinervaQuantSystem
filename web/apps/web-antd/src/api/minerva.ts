@@ -148,7 +148,9 @@ export interface ChartMarks {
   reports: { notice_date: string; report_date: string }[];
   risk: { end_date: null | string; start_date: string; start_title: null | string; status: string }[];
   suspensions: { reason: null | string; suspend_end: null | string; suspend_start: string }[];
+  etf?: EtfMark[]; // index charts: abnormal broad-ETF subscription days
 }
+export interface EtfMark { abnormal: 'in' | 'out'; flow: number; flow_pct: number; group: string; trade_date: string; z: number }
 
 export interface SavedOverlay {
   extendData?: unknown;
@@ -355,3 +357,59 @@ export const sessionsApi = () => requestClient.get<Record<string, any>[]>('/sess
 export const revokeSessionApi = (id: number) => requestClient.delete(`/sessions/${id}`);
 export const auditApi = (params: { action?: string; actor?: string; before_id?: number; limit?: number }) =>
   requestClient.get<Record<string, any>[]>('/audit', { params });
+
+// -- ETF 资金（宽基 ETF 份额变化估算的净申购，app/etf.py） -------------------------------------
+export interface EtfAbnormal { abnormal: 'in' | 'out'; flow: number; flow_pct: number; trade_date: string; z: number }
+export interface EtfGroupSummary {
+  abnormal_in_250d: number;
+  abnormal_out_250d: number;
+  aum: null | number; // CNY
+  chart_symbol: string;
+  flow_1d: null | number;
+  flow_5d: null | number;
+  flow_20d: null | number;
+  flow_60d: null | number;
+  flow_250d: null | number;
+  funds: number;
+  id: string;
+  last_abnormal: EtfAbnormal | null;
+  name: string;
+}
+export interface EtfOverview {
+  as_of: string; // last day both exchanges have published
+  groups: EtfGroupSummary[];
+  latest: string;
+  rules: { baseline: number; min_share: number; z: number };
+}
+export interface EtfDay {
+  abnormal: 'in' | 'out' | null;
+  aum: null | number;
+  cumulative: number;
+  events: number;
+  flow: null | number;
+  flow_pct: null | number;
+  funds: number;
+  partial: boolean;
+  trade_date: string;
+  z: null | number;
+}
+export interface EtfFund {
+  aum: null | number;
+  close: null | number;
+  event: null | string;
+  exchange: string;
+  flow: null | number;
+  flow_5d: null | number;
+  flow_20d: null | number;
+  flow_60d: null | number;
+  name: string;
+  recent_events: { event: string; share_change: number; trade_date: string }[];
+  shares: null | number;
+  symbol: string;
+}
+export const etfMarksApi = (symbol: string) => requestClient.get<EtfMark[]>(`/etf/marks/${symbol}`);
+export const etfOverviewApi = () => requestClient.get<EtfOverview>('/etf/overview');
+export const etfSeriesApi = (group: string) =>
+  requestClient.get<{ as_of: string; group: { chart_symbol: string; id: string; name: string }; rows: EtfDay[] }>(`/etf/groups/${group}/series`);
+export const etfFundsApi = (group: string, day?: string) =>
+  requestClient.get<{ date: string; rows: EtfFund[] }>(`/etf/groups/${group}/funds`, { params: { day } });

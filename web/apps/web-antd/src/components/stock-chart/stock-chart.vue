@@ -22,7 +22,7 @@ import {
 } from 'ant-design-vue';
 import { dispose, init } from 'klinecharts';
 
-import { barsApi, chartAnalysisApi, drawingsApi, indexBarsApi, isIndexSymbol, marksApi, saveDrawingsApi } from '#/api';
+import { barsApi, chartAnalysisApi, drawingsApi, etfMarksApi, indexBarsApi, isIndexSymbol, marksApi, saveDrawingsApi } from '#/api';
 import { bigYuan, DOWN_COLOR, UP_COLOR } from '#/utils/format';
 
 import { rangeStats, registerChartExtensions } from './extensions';
@@ -30,7 +30,7 @@ import { rangeStats, registerChartExtensions } from './extensions';
 const props = withDefaults(defineProps<{ height?: number | string; name?: string; symbol: string }>(), { height: 640 });
 
 // -- settings (kept in the browser) -------------------------------------------------------------
-type MarkKind = 'dividends' | 'fills' | 'reports' | 'risk' | 'suspensions';
+type MarkKind = 'dividends' | 'etf' | 'fills' | 'reports' | 'risk' | 'suspensions';
 type AutoKind = 'candles' | 'fib' | 'levels' | 'patterns' | 'pivots' | 'trends';
 interface ChartSettings {
   adjust: 'hfq' | 'none' | 'qfq';
@@ -51,7 +51,7 @@ const DEFAULTS: ChartSettings = {
   adjust: 'qfq', axis: 'normal', compare: undefined, magnet: 'weak_magnet', main: ['MA'], panel: true, period: 'day',
   sensitivity: 'medium', subs: ['VOL', 'MACD'],
   auto: { candles: true, fib: false, levels: true, patterns: true, pivots: false, trends: true },
-  marks: { dividends: true, fills: true, reports: true, risk: true, suspensions: true },
+  marks: { dividends: true, etf: true, fills: true, reports: true, risk: true, suspensions: true },
   params: { MA: [5, 10, 20, 60] },
 };
 function loadSettings(): ChartSettings {
@@ -84,7 +84,7 @@ const STATUS_LABEL: Record<string, string> = { confirmed: '已确认', failed: '
 const DIRECTION_COLOR: Record<string, string> = { bearish: DOWN_COLOR, bullish: UP_COLOR, neutral: '#eab308' };
 const LEVEL_COLOR = { resistance: '#f97316', support: '#0ea5e9' };
 const MARK_LABEL: Record<MarkKind, string> = {
-  dividends: '除权除息', fills: '买卖点', reports: '财报', risk: '风险警示', suspensions: '停牌',
+  dividends: '除权除息', etf: 'ETF 异常申赎（指数）', fills: '买卖点', reports: '财报', risk: '风险警示', suspensions: '停牌',
 };
 const DRAW_TOOLS = [
   { label: '线段', name: 'segment', tip: '趋势线：两点确定' },
@@ -222,7 +222,10 @@ async function afterInit(token: number) {
   range.value = null;
   const symbol = props.symbol;
   const [m, saved] = await Promise.all([
-    isIndexSymbol(symbol) ? undefined : marksApi(symbol).catch(() => undefined),
+    isIndexSymbol(symbol)
+      ? etfMarksApi(symbol).then((etf) => ({ dividends: [], etf, fills: [], reports: [], risk: [], suspensions: [] }))
+          .catch(() => undefined)
+      : marksApi(symbol).catch(() => undefined),
     drawingsApi(symbol).catch(() => undefined),
   ]);
   if (token !== loadToken || !chart) return;
@@ -289,6 +292,11 @@ function renderMarks() {
     add('risk', r.start_date, { below: false, color: '#a855f7', text: r.status.replace('DELISTING', '退') },
         `实施风险警示 ${r.status}${r.start_title ? `：${r.start_title}` : ''}`);
     if (r.end_date) add('risk', r.end_date, { below: false, color: '#a855f7', text: '摘' }, `撤销风险警示 ${r.status}`);
+  }
+  for (const e of m.etf ?? []) {
+    const inflow = e.abnormal === 'in';
+    add('etf', e.trade_date, { below: inflow, color: inflow ? UP_COLOR : DOWN_COLOR, text: inflow ? '申' : '赎' },
+        `${e.group} ETF 异常净${inflow ? '申购' : '赎回'} ${(e.flow / 1e8).toFixed(1)} 亿（占规模 ${(e.flow_pct * 100).toFixed(2)}%，z ${e.z}）`);
   }
   for (const s of m.suspensions) {
     add('suspensions', s.suspend_start, { below: false, color: '#6b7280', text: '停' },
