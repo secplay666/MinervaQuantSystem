@@ -300,7 +300,7 @@ function renderMarks() {
   }
   for (const s of m.suspensions) {
     add('suspensions', s.suspend_start, { below: false, color: '#6b7280', text: '停' },
-        `停牌${s.suspend_end ? ` 至 ${s.suspend_end}` : ''}${s.reason ? `：${s.reason}` : ''}`);
+        `停牌${s.suspend_end ? ` 至 ${s.suspend_end}${s.end_inferred ? '（按复牌日推断）' : ''}` : ''}${s.reason ? `：${s.reason}` : ''}`);
   }
   barEvents.value = events;
   const overlays: OverlayCreate[] = [];

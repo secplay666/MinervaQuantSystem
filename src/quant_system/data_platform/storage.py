@@ -34,6 +34,7 @@ SINGLE_FILE_DATASETS = (
     "fin_cashflow",
     "etf_shares",
     "etf_master",
+    "etf_top_holders",
 )
 DATE_COLUMNS = {
     "daily_bars": "trade_date",
@@ -53,11 +54,40 @@ DATE_COLUMNS = {
     "fin_cashflow": "report_date",
     "etf_shares": "trade_date",
     "etf_bars": "trade_date",
+    "etf_top_holders": "report_date",
 }
 
 
 class CatalogError(RuntimeError):
     pass
+
+
+# Most vendor suspension records (the Baidu calendar) carry no end date.  The
+# catalog derives it from the bars: the suspension ends on the last session
+# before the first bar after its start.  Derived at every build, so an event
+# gets its end once the stock trades again; the canonical records stay as
+# delivered.  ``end_date`` is the vendor's end when there is one.
+SUSPENSION_SPANS_SQL = """
+CREATE TABLE suspension_spans AS
+WITH events AS (
+    SELECT symbol, suspend_start, suspend_end, expected_resume, suspension_type, reason, source
+    FROM suspension_events WHERE suspend_start IS NOT NULL
+),
+resumed AS (
+    SELECT e.symbol, e.suspend_start, min(b.trade_date) AS resume_date
+    FROM events e JOIN daily_bars b ON b.symbol = e.symbol AND b.trade_date > e.suspend_start
+    GROUP BY 1, 2
+)
+SELECT e.*, r.resume_date,
+       CASE WHEN e.suspend_end IS NOT NULL THEN CAST(e.suspend_end AS DATE)
+            WHEN r.resume_date IS NULL THEN NULL
+            ELSE greatest(CAST(e.suspend_start AS DATE),
+                          (SELECT max(c.trade_date) FROM trading_calendar c WHERE c.trade_date < r.resume_date))
+       END AS end_date,
+       e.suspend_end IS NULL AND r.resume_date IS NOT NULL AS end_inferred
+FROM events e LEFT JOIN resumed r USING (symbol, suspend_start)
+ORDER BY symbol, suspend_start
+"""
 
 
 def write_parquet_atomic(
@@ -327,6 +357,8 @@ def build_duckdb_catalog(root: Path) -> Path:
                 con.execute(ADJUSTED_VIEW_SQL.format(
                     factor_as_of="factor_as_of" if "factor_as_of" in factor_columns else "CAST(NULL AS DATE)"
                 ))
+            if {"suspension_events", "daily_bars", "trading_calendar"} <= tables:
+                con.execute(SUSPENSION_SPANS_SQL)
             runs = pd.DataFrame(
                 _manifest_rows(root),
                 columns=[

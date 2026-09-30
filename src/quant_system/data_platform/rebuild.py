@@ -36,6 +36,7 @@ from .etf import (
     normalize_etf_sse,
     normalize_etf_szse,
 )
+from .etf_holders import holder_rows, merge_holders, reports_to_fetch
 from .financials import STATEMENTS, merge_financial_versions, normalize_financials
 from .corporate import (
     load_sw2014_mapping,
@@ -165,6 +166,7 @@ class CanonicalRebuilder:
         self._rebuild_etf_shares()
         self._rebuild_etf_master()
         self._rebuild_etf_bars(calendar_end)
+        self._rebuild_etf_holders()
         self._carry_forward("daily_bars_history_log")
         audit = run_audit(self.staging, calendar_end, self.start_date,
                           self.config.min_latest_coverage, f"rebuild_{self.rebuild_id}")
@@ -509,6 +511,28 @@ class CanonicalRebuilder:
             if merged is not None and not merged.empty:
                 write_canonical_frame(self.staging, "etf_bars", merged, partition=f"symbol={symbol}")
                 self.counters["etf_bar_partitions"] += 1
+
+    def _rebuild_etf_holders(self) -> None:
+        """Re-parse the stored report texts in run order; the fetch log from the raw lists and reports."""
+        merged, log_rows = None, []
+        for run_id, directory in _raw_runs(self.raw_root, "etf_reports"):
+            for path in sorted(directory.glob("*.parquet")):
+                row = pd.read_parquet(path).iloc[0].to_dict()
+                part = holder_rows(str(row["symbol"]), row, str(row["text"]), run_id, run_id_to_iso(run_id))
+                merged = merge_holders(merged, part)
+                log_rows.append({"dataset": "report", "window": path.stem, "rows": len(part), "run_id": run_id})
+        # A list is logged once all its reports were in: those runs' lists whose reports are all stored.
+        stored = {row["window"] for row in log_rows}
+        for run_id, directory in _raw_runs(self.raw_root, "etf_report_lists"):
+            for path in sorted(directory.glob("*.parquet")):
+                listing = pd.read_parquet(path)
+                if all(r["art_code"] in stored for r in reports_to_fetch(listing, None)):
+                    log_rows.append({"dataset": "report_list", "window": path.stem, "rows": len(listing),
+                                     "run_id": run_id})
+        if merged is not None and not merged.empty:
+            write_canonical_frame(self.staging, "etf_top_holders", merged)
+        if log_rows:
+            write_canonical_frame(self.staging, "etf_holders_fetch_log", merge_fetch_log(None, log_rows))
 
     def _rebuild_etf_shares(self) -> None:
         """Replay ETF share responses run by run through the ingestion merge,

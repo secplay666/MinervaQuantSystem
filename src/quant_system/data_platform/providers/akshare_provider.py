@@ -427,6 +427,12 @@ class AkShareProvider(MarketDataProvider):
         time.sleep(SSE_BULLETIN_PAUSE_SECONDS)
         return {"sse": self._call("sse_fund_list", _sse_fund_list), "szse": self._call("szse_etf_list", _szse_etf_list)}
 
+    def fetch_fund_reports(self, symbol: str) -> pd.DataFrame:
+        return self._call(f"fund_reports:{symbol}", _fund_reports, symbol=symbol)
+
+    def fetch_report_text(self, art_code: str) -> str:
+        return self._call(f"fund_report_text:{art_code}", _report_text, art_code=art_code)
+
     def fetch_etf_shares_szse(self, start: str, end: str) -> pd.DataFrame:
         return self._call(f"fund_scale_daily_szse:{start}", ak.fund_scale_daily_szse,
                           start_date=start, end_date=end, symbol="ETF")
@@ -509,6 +515,43 @@ def _szse_etf_list() -> pd.DataFrame:
     if missing:
         raise ValueError(f"SZSE ETF list lacks {sorted(missing)}")
     return frame
+
+
+def _fund_reports(symbol: str) -> pd.DataFrame:
+    """Eastmoney fund F10, 定期报告 (type 3), 100 per page."""
+    rows: list[dict] = []
+    page, total = 1, None
+    while total is None or len(rows) < total:
+        response = requests.get(
+            "http://api.fund.eastmoney.com/f10/JJGG",
+            params={"fundcode": symbol, "pageIndex": str(page), "pageSize": "100", "type": "3",
+                    "_": str(int(time.time() * 1000))},
+            headers={"Referer": f"http://fundf10.eastmoney.com/jjgg_{symbol}_3.html", "User-Agent": _BROWSER_UA},
+        )
+        response.raise_for_status()
+        payload = response.json()
+        data = payload.get("Data") or []
+        total = int(payload.get("TotalCount") or 0)
+        if not data:
+            break
+        rows.extend(data)
+        page += 1
+    if total and len(rows) < total:
+        raise PaginationMismatch(f"fund reports {symbol}: {len(rows)} of {total}")
+    return pd.DataFrame(rows, columns=["FUNDCODE", "TITLE", "PUBLISHDATEDesc", "ID"]).astype("string")
+
+
+def _report_text(art_code: str) -> str:
+    response = requests.get(
+        "https://np-cnotice-fund.eastmoney.com/api/content/ann",
+        params={"client_source": "web_fund", "show_all": "1", "art_code": art_code},
+        headers={"Referer": "https://fund.eastmoney.com/", "User-Agent": _BROWSER_UA},
+    )
+    response.raise_for_status()
+    text = ((response.json() or {}).get("data") or {}).get("notice_content")
+    if not text:
+        raise ValueError(f"announcement {art_code} has no text")
+    return str(text)
 
 
 def _bse_announcement_page(keyword: str, start: str, end: str, page: int) -> tuple[list[dict], int]:

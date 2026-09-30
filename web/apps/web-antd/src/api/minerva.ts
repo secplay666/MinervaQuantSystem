@@ -147,7 +147,7 @@ export interface ChartMarks {
            trade_date: string }[];
   reports: { notice_date: string; report_date: string }[];
   risk: { end_date: null | string; start_date: string; start_title: null | string; status: string }[];
-  suspensions: { reason: null | string; suspend_end: null | string; suspend_start: string }[];
+  suspensions: { end_inferred?: boolean; reason: null | string; suspend_end: null | string; suspend_start: string }[];
   etf?: EtfMark[]; // index charts: abnormal broad-ETF subscription days
 }
 export interface EtfMark { abnormal: 'in' | 'out'; flow: number; flow_pct: number; group: string; strong: boolean; trade_date: string; z: number }
@@ -265,6 +265,23 @@ export const holdingsPreviewApi = (id: string, body: Record<string, any>) =>
     `/accounts/${id}/holdings/preview`, body);
 export const holdingsCommitApi = (id: string, batchId: string, reason: string) =>
   requestClient.post(`/accounts/${id}/holdings/commit`, { batch_id: batchId, reason });
+/** A manual account's ex-rights / ex-dividend adjustment not recorded yet, with the suggested result. */
+export interface CorporateAction {
+  bonus_per_10: number;
+  cash_fen: number; // suggested cash dividend, before tax
+  cash_per_10: number;
+  event_id: string;
+  ex_date: string;
+  name: null | string;
+  new_quantity: number;
+  old_quantity: number;
+  plan: null | string;
+  symbol: string;
+  transfer_per_10: number;
+}
+export const corporateActionsApi = (id: string) => requestClient.get<{ rows: CorporateAction[] }>(`/accounts/${id}/corporate-actions`);
+export const applyCorporateActionApi = (id: string, body: { cash: string; event_id: string; new_quantity: number; reason: string }) =>
+  requestClient.post(`/accounts/${id}/corporate-actions`, body);
 export const reverseEventApi = (eventId: string, reason: string) =>
   requestClient.post(`/position-events/${eventId}/reverse`, { reason });
 
@@ -409,6 +426,25 @@ export interface EtfFund {
   shares: null | number;
   symbol: string;
 }
+/** National-team holdings from the funds' annual and interim reports (top-10 holder tables). */
+export interface EtfHolders {
+  classes: { id: string; name: string }[];
+  funds: {
+    by_class: Record<string, number>;
+    exchange: string;
+    holders: { holder: string; holder_class: null | string; pct: number; rank: number; shares: number }[];
+    name: string;
+    national_pct: number;
+    national_value: number;
+    notice_date: string;
+    report_date: string;
+    symbol: string;
+  }[];
+  latest_period: null | string;
+  periods: { aum: null | number; by_class: Record<string, number>; funds: number; national_share: null | number;
+             national_value: number; report_date: string }[];
+}
+export const etfHoldersApi = (group: string) => requestClient.get<EtfHolders>(`/etf/groups/${group}/holders`);
 export const etfMarksApi = (symbol: string) => requestClient.get<EtfMark[]>(`/etf/marks/${symbol}`);
 export const etfOverviewApi = () => requestClient.get<EtfOverview>('/etf/overview');
 export const etfSeriesApi = (group: string) =>

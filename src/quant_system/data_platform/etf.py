@@ -275,6 +275,13 @@ def group_members(master: pd.DataFrame | None, config: dict) -> pd.DataFrame:
     pattern = config.get("exclude_name_pattern")
     if pattern:
         frame = frame[~frame["name"].fillna("").str.contains(pattern, regex=True)]
+    # Hand corrections: {"include": {code: group_id}, "exclude": [code]}.
+    overrides = config.get("overrides") or {}
+    frame = frame[~frame["symbol"].isin(set(overrides.get("exclude") or []))]
+    extra = overrides.get("include") or {}
+    if extra:
+        added = master[master["symbol"].isin(set(extra)) & ~master["symbol"].isin(set(frame["symbol"]))]
+        frame = pd.concat([frame, added.assign(group_id=added["symbol"].map(extra))], ignore_index=True)
     return frame[["exchange", "symbol", "name", "group_id", "list_date", "listed_run_id"]].reset_index(drop=True)
 
 

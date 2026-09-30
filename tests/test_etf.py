@@ -166,3 +166,55 @@ def test_fund_lists_pick_the_broad_index_funds_whose_bars_are_kept(tmp_path, mon
     for symbol in ("510300", "510050", "159919"):
         pd.testing.assert_frame_equal(read_canonical(tmp_path, "etf_bars", f"symbol={symbol}"),
                                       read_canonical(staged, "etf_bars", f"symbol={symbol}"), check_dtype=False)
+
+
+def test_hand_overrides_add_and_remove_funds() -> None:
+    from quant_system.data_platform.etf import group_members
+
+    master = pd.DataFrame([
+        {"exchange": "SSE", "symbol": "510300", "name": "300ETF", "index_code": "000300", "list_date": None,
+         "listed_run_id": "r"},
+        {"exchange": "SSE", "symbol": "561990", "name": "300增强", "index_code": "000300", "list_date": None,
+         "listed_run_id": "r"},
+        {"exchange": "SSE", "symbol": "510330", "name": "华夏300", "index_code": "000300", "list_date": None,
+         "listed_run_id": "r"},
+    ])
+    config = {"groups": [{"id": "csi300", "name": "沪深300", "index_codes": ["000300"], "chart_symbol": "sh000300"}],
+              "exclude_name_pattern": "增强", "overrides": {"include": {"561990": "csi300"}, "exclude": ["510330"]}}
+    members = group_members(master, config)
+    assert sorted(members["symbol"]) == ["510300", "561990"] and set(members["group_id"]) == {"csi300"}
+
+
+def test_top_holders_come_from_the_periodic_reports(tmp_path, monkeypatch) -> None:
+    provider = FakeProvider(today=date(2026, 9, 24))
+    manifest = _run(tmp_path, provider, monkeypatch)
+    assert manifest["status"] == "complete"
+    texts = [s for kind, s in provider.calls if kind == "report_text"]
+    assert texts == ["AN2026H1", "AN2025Y"]  # no summary, nothing before 2015; newest period first
+    holders = read_canonical(tmp_path, "etf_top_holders")
+    assert holders["holder"].tolist() == ["中央汇金资产管理有限责任公司", "中央汇金投资有限责任公司",
+                                          "北京诚旸投资有限公司－诚旸灵活配置私募证券投资基金", "滕伟"]
+    assert holders["pct"].tolist() == [42.62, 40.14, 0.20, 0.13]
+    assert set(holders["report_date"]) == {date(2025, 12, 31)} and set(holders["notice_date"]) == {date(2026, 3, 31)}
+    counters = manifest["counters"]["etf_holders"]
+    assert counters["reports"] == 2 and counters["reports_without_table"] == 1
+
+    provider.calls.clear()
+    _run(tmp_path, provider, monkeypatch)  # lists are refreshed weekly
+    assert not [c for c in provider.calls if c[0] in ("fund_reports", "report_text")]
+
+    report = rebuild_canonical(tmp_path, make_config())
+    staged = tmp_path / report["staging"]
+    for dataset in ("etf_top_holders", "etf_holders_fetch_log"):
+        pd.testing.assert_frame_equal(read_canonical(tmp_path, dataset), read_canonical(staged, dataset),
+                                      check_dtype=False)
+
+
+def test_a_capped_run_leaves_the_rest_of_a_fund_for_the_next_one(tmp_path, monkeypatch) -> None:
+    provider = FakeProvider(today=date(2026, 9, 24))
+    _run(tmp_path, provider, monkeypatch, etf_holder_reports_per_run=1)
+    assert [s for kind, s in provider.calls if kind == "report_text"] == ["AN2026H1"]
+    provider.calls.clear()
+    _run(tmp_path, provider, monkeypatch, etf_holder_reports_per_run=1)
+    assert ("fund_reports", "510300") in provider.calls  # its list was not complete, so it is listed again
+    assert [s for kind, s in provider.calls if kind == "report_text"] == ["AN2025Y"]

@@ -46,6 +46,12 @@ def marks(symbol: str, request: Request, _: Principal = Depends(view)) -> list:
         return []
 
 
+@router.get("/etf/groups/{group_id}/holders")
+def holders(group_id: str, request: Request, _: Principal = Depends(view)) -> dict:
+    """National-team holdings from the funds' annual and interim reports."""
+    return _call(request, "holders", group_id)
+
+
 @router.get("/etf/groups/{group_id}/funds")
 def funds(group_id: str, request: Request, day: date | None = None, _: Principal = Depends(view)) -> dict:
     return _call(request, "funds", group_id, day)

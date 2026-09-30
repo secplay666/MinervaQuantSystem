@@ -19,7 +19,7 @@
 | `adjustment_factors` | 后复权因子事件及派生的前复权因子（[ADR-004](docs/adr/ADR-004-adjustment-and-point-in-time.md)） |
 | `index_bars` | 主要指数日线 |
 | `market_snapshot` | 收盘后的全市场快照 |
-| `suspension_events` | 停复牌事件（东方财富数据中心 + 百度日历，2023 年起） |
+| `suspension_events` | 停复牌事件（东方财富数据中心 + 百度日历，2023 年起）。多数记录没有结束日；DuckDB 目录另有 `suspension_spans`，按复牌后的第一根日线推断结束日 |
 | `security_name_changes` / `risk_warning_intervals` | 风险警示（ST/\*ST/退市整理）区间，三个交易所都带生效日期：深市来自简称变更，沪市、北交所由交易所公告推导，并用名称和价格证据校正（[ADR-004](docs/adr/ADR-004-adjustment-and-point-in-time.md)） |
 | `risk_warning_bulletins` / `risk_warning_adjustments` | 上交所、北交所风险警示相关公告，以及推导 ST 区间时每一处修正的记录 |
 | `bar_gaps` | 对照交易日历检测出的日线缺口，并标注是否能被停牌事件解释 |
@@ -31,6 +31,7 @@
 | `etf_shares` | 沪深交易所公布的 ETF 每日份额（单位：份）：上交所 2015 年起，含 ETF 类型；深交所 2016 年 10 月起 |
 | `etf_master` | 两个交易所的 ETF 列表：每只基金的跟踪指数（标的指数、拟合指数）、管理人、上市日期；已不在列表中的基金保留最后一次记录 |
 | `etf_bars` | 宽基指数 ETF 的日线（腾讯），用来把份额变化换算成金额；哪些基金算宽基见 `configs/etf/broad_groups.json` |
+| `etf_top_holders` | 宽基 ETF 年报、半年报中的"期末上市基金前十名持有人"（报告期 2015 年起）：持有人、份额、占比、公告日；2026 年起中报不再披露这张表 |
 | `daily_bars_history_log` | 历史回补的结果：每只证券回补了哪一段、状态（完成 / 数据源无数据 / 未采用）、最早日期 |
 
 - 指数日线另含中证全收益指数 H00300、H00905、H00852。
@@ -77,7 +78,8 @@ uv pip install --python .venv/bin/python --no-deps -e .
 9. ETF（`etf`）：
    - 两个交易所的 ETF 列表；
    - 份额：上交所一次请求一天，从最近往前补，每次运行最多 30 天（`etf_sse_max_dates_per_run`）；深交所一次请求一个月，当月和刚结束的月份每次重抓（深交所数据晚一天公布）；
-   - 宽基指数 ETF 的日线。
+   - 宽基指数 ETF 的日线；
+   - 宽基 ETF 的年报、半年报：每只基金的报告列表每周刷新一次，新报告从最新的报告期往前抓，每次最多 200 份（`etf_holder_reports_per_run`）。
    这一步的问题只报警告，不影响运行状态；
 10. 全量审计；
 11. 生成质量报告、数据版本和 DuckDB 目录。

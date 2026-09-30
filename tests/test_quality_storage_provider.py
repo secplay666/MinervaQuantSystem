@@ -188,3 +188,33 @@ def test_volume_unit_rule_checks_each_ingestion_run() -> None:
     appended = _bars(run_id="r2", volume_shares=1_000)  # one new row, in lots
     issues = validate_volume_units(pd.concat([history, appended], ignore_index=True), "000001")
     assert issues and "r2" in issues[0].message
+
+
+def test_catalog_infers_suspension_ends_from_the_bars(tmp_path) -> None:
+    import datetime as dt
+
+    import duckdb
+
+    from quant_system.data_platform.storage import build_duckdb_catalog, write_canonical_frame
+
+    days = [dt.date(2026, 9, d) for d in (21, 22, 23, 24, 28)]
+    write_canonical_frame(tmp_path, "trading_calendar", pd.DataFrame({"trade_date": days}))
+    bars = {"600001": [days[0], days[3], days[4]], "600002": [days[0]]}  # 600001 resumes on 09-24
+    for symbol, dates in bars.items():
+        write_canonical_frame(tmp_path, "daily_bars", pd.DataFrame({"symbol": symbol, "trade_date": dates}),
+                              partition=f"symbol={symbol}")
+    write_canonical_frame(tmp_path, "suspension_events", pd.DataFrame({
+        "symbol": ["600001", "600002", "600001"],
+        "suspend_start": [days[1], days[1], days[4]],
+        "suspend_end": [None, None, days[4]],
+        "expected_resume": [None, None, None],
+        "suspension_type": ["unknown", "unknown", "intraday"],
+        "reason": ["重大事项", "重大事项", "盘中"],
+        "source": ["baidu", "baidu", "baidu"],
+    }))
+    with duckdb.connect(str(build_duckdb_catalog(tmp_path)), read_only=True) as con:
+        rows = con.execute("SELECT symbol, suspend_start, end_date, end_inferred FROM suspension_spans "
+                           "ORDER BY symbol, suspend_start").fetchall()
+    assert rows == [("600001", days[1], days[2], True),  # last session before the first bar after the start
+                    ("600001", days[4], days[4], False),  # the vendor's end is kept
+                    ("600002", days[1], None, False)]  # not traded since: still open

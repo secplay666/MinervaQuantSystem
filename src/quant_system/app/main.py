@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import duckdb
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -65,6 +66,12 @@ def create_app(settings: AppSettings) -> FastAPI:
     @app.exception_handler(ValueError)
     async def value_error(_request: Request, exc: ValueError) -> JSONResponse:
         return JSONResponse(status_code=400, content={"detail": {"code": "invalid", "message": str(exc)}})
+
+    @app.exception_handler(duckdb.CatalogException)
+    async def incomplete_market(_request: Request, exc: duckdb.CatalogException) -> JSONResponse:
+        # A catalog built without some dataset (a partial rebuild, a fresh install): say so instead of a 500.
+        return JSONResponse(status_code=503, content={"detail": {"code": "incomplete_market_data",
+                                                                 "message": f"行情库缺少所需的数据：{exc}"}})
 
     for module in (system, auth, users, invitations, events, market, etf, accounts, decisions):
         app.include_router(module.router, prefix=API_PREFIX)

@@ -93,9 +93,18 @@ def _catalog(path: Path) -> Path:
                            "shares": 1e9 + 1e6 * i + (2e8 if (symbol == "510300" and i >= 110) else 0)})
     bars = [{"trade_date": day, "symbol": s, "close": 4.0} for s in ("510300", "159919", "510050", "561990")
             for day in days]
+    holders = pd.DataFrame([
+        {"symbol": "510300", "report_date": date(2025, 6, 30), "report_type": "interim", "notice_date": date(2025, 8, 30),
+         "rank": 1, "holder": "中央汇金投资有限责任公司", "shares": 5e8, "pct": 45.0, "feeder": False},
+        {"symbol": "510300", "report_date": date(2025, 6, 30), "report_type": "interim", "notice_date": date(2025, 8, 30),
+         "rank": 2, "holder": "中国人寿保险股份有限公司", "shares": 1e7, "pct": 0.9, "feeder": False},
+        {"symbol": "510300", "report_date": date(2025, 6, 30), "report_type": "interim", "notice_date": date(2025, 8, 30),
+         "rank": 11, "holder": "某银行－华泰柏瑞沪深300ETF联接基金", "shares": 9e7, "pct": 8.0, "feeder": True},
+    ])
     with duckdb.connect(str(database)) as con:
         for name, frame in (("etf_master", master), ("etf_shares", pd.DataFrame(shares)),
-                            ("etf_bars", pd.DataFrame(bars)), ("trading_calendar", pd.DataFrame({"trade_date": days}))):
+                            ("etf_bars", pd.DataFrame(bars)), ("trading_calendar", pd.DataFrame({"trade_date": days})),
+                            ("etf_top_holders", holders)):
             con.register("frame", frame)
             con.execute(f"CREATE TABLE {name} AS SELECT * FROM frame")
             con.unregister("frame")
@@ -145,6 +154,9 @@ def test_api_serves_the_dashboard_to_market_viewers(env, tmp_path) -> None:
     assert client.get("/api/v1/etf/groups/nope/series", headers=headers).status_code == 404
     client.app.state.etf = EtfQueries(tmp_path / "missing.duckdb", groups)
     assert client.get("/api/v1/etf/overview", headers=headers).status_code == 503
+    # The tiny test catalog has no adjusted bars: the market overview says so instead of failing.
+    overview = client.get("/api/v1/market/overview", headers=headers)
+    assert overview.status_code == 503 and overview.json()["detail"]["code"] == "incomplete_market_data"
 
 
 def test_index_charts_get_the_abnormal_days_of_their_groups(tmp_path) -> None:
@@ -152,3 +164,17 @@ def test_index_charts_get_the_abnormal_days_of_their_groups(tmp_path) -> None:
     marks = queries.marks("sh000300")
     assert [(m["trade_date"], m["abnormal"], m["group"]) for m in marks] == [(SESSIONS[110].isoformat(), "in", "沪深300")]
     assert queries.marks("sh000016") == [] and queries.marks("sz399001") == []
+
+
+def test_holdings_of_the_national_team_per_report_period(tmp_path) -> None:
+    queries = EtfQueries(_catalog(tmp_path), REPO / "configs" / "etf" / "broad_groups.json")
+    result = queries.holders("csi300")
+    assert [c["id"] for c in result["classes"]][:2] == ["huijin_investment", "huijin_asset"]
+    (period,) = result["periods"]
+    assert period["report_date"] == date(2025, 6, 30) and period["funds"] == 1
+    assert period["by_class"]["huijin_investment"] == pytest.approx(5e8 * 4.0)  # valued at the last close
+    assert period["national_share"] == pytest.approx(5e8 * 4.0 / period["aum"])
+    (fund,) = result["funds"]
+    assert fund["symbol"] == "510300" and fund["national_pct"] == 45.0
+    assert [h["holder"] for h in fund["holders"]] == ["中央汇金投资有限责任公司", "中国人寿保险股份有限公司"]  # no feeder
+    assert queries.holders("sse50")["periods"] == []

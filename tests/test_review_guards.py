@@ -282,3 +282,36 @@ def test_space_separated_holdings_keep_thousands_separators() -> None:
     assert not errors
     assert [(r["symbol"], r["qty"], r["cost_price"]) for r in rows] == [
         ("600000", 1000, 10.5), ("600036", 200, 40.0), ("000001", 300, None)]
+
+
+def test_industry_limits_are_recorded_and_rechecked_on_modify(tmp_path: Path, loaded, golden) -> None:
+    from quant_system.decision.intents import IndustryLimits, industry_check
+
+    limits = IndustryLimits({"600000": "银行"}, {"银行": 0.10}, 0.05)
+    assert industry_check("银行", 0.16, limits) is None  # within 1.25x of the deviation
+    assert industry_check("银行", 0.17, limits).decision == "warn"
+    assert industry_check("银行", 0.21, limits).decision == "reject"
+
+    root, factory, run_id = _decided(tmp_path, loaded, golden)
+    with factory() as session:
+        run = session.get(DecisionRun, run_id)
+        industry = run.summary["limits"]["industry"]
+        assert sum(industry["bench"].values()) == pytest.approx(1.0) and industry["delta"] >= 0.05
+        # The target respects the construction's bounds, so a normal decision has no industry reject.
+        assert not any("行业" in (c.message or "") and c.decision == "reject"
+                       for c in session.scalars(select(RiskCheck).where(RiskCheck.run_id == run_id)))
+        buy = session.scalars(select(OrderIntent).where(OrderIntent.run_id == run_id, OrderIntent.side == "buy")
+                              .order_by(OrderIntent.seq)).first()
+        label = industry["of"][buy.symbol]
+        # Tighten the recorded bounds so this industry is already far over its limit.
+        tight = {**industry, "bench": {**industry["bench"], label: 0.0}, "delta": 0.001}
+        run.summary = {**run.summary, "limits": {**run.summary["limits"], "industry": tight}}
+        session.commit()
+        with pytest.raises(review.ReviewError) as refused:
+            _modify(session, root, buy, buy.qty + 100)
+        assert refused.value.code == "risk_reject" and "行业" in str(refused.value)
+        session.rollback()
+        smaller = _modify(session, root, buy, 100)  # a reduction is never refused; the check stays as a warning
+        session.commit()
+        messages = list(session.scalars(select(RiskCheck.message).where(RiskCheck.intent_id == buy.intent_id)))
+        assert smaller.status == "modified" and any("行业" in m and "仅提示" in m for m in messages)

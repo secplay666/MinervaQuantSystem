@@ -35,6 +35,7 @@ from .etf import (
     szse_etf_months,
     szse_window,
 )
+from .etf_holders import SOURCE_FUND_REPORT, holder_rows, lists_to_refresh, merge_holders, reports_to_fetch
 from .financials import (
     SOURCE_FINANCIALS,
     STATEMENTS,
@@ -272,9 +273,20 @@ class IngestionPipeline:
     # ------------------------------------------------------------ helpers
 
     def _raw(self, ctx: RunContext, dataset: str, name: str, frame: pd.DataFrame,
-             source: str | None = None) -> None:
+             source: str | None = None) -> Path:
         path = write_raw_frame(self.root, self.config.provider, dataset, ctx.run_id, name, frame, source)
         ctx.raw_files.append(path.relative_to(self.root).as_posix())
+        return path
+
+    def _reject_raw(self, ctx: RunContext, path: Path) -> None:
+        """Move this run's raw copy of a rejected response to ``<dataset>_rejected``
+        so a rebuild does not replay what ingestion refused."""
+        run_dir = path.parent
+        target = run_dir.parent.parent / f"{run_dir.parent.name}_rejected" / run_dir.name / path.name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(path, target)
+        old, new = path.relative_to(self.root).as_posix(), target.relative_to(self.root).as_posix()
+        ctx.raw_files = [new if item == old else item for item in ctx.raw_files]
 
     def _quarantine(self, ctx: RunContext, dataset: str, partition: str, frame: pd.DataFrame) -> None:
         if frame.empty:
@@ -578,7 +590,7 @@ class IngestionPipeline:
     ) -> str:
         step = "daily_bars"
         symbol = item.symbol
-        self._raw(ctx, step, symbol, result.frame, result.source)
+        raw_path = self._raw(ctx, step, symbol, result.frame, result.source)
         incoming = normalize_daily_bars(result.frame, symbol, ctx.run_id, ctx.ingested_at, result.source)
         incoming, dropped = drop_invalid_price_rows(incoming)
         if dropped:
@@ -611,6 +623,7 @@ class IngestionPipeline:
         ctx.issues.extend(issues)
         if has_blocking(issues):
             self._quarantine(ctx, step, f"symbol={symbol}", merged)
+            self._reject_raw(ctx, raw_path)
             ctx.count(step, "quarantined")
             return "quarantined"
         write_canonical_frame(self.root, step, merged, partition=f"symbol={symbol}")
@@ -849,7 +862,7 @@ class IngestionPipeline:
                 fetch = (self.provider.fetch_csindex_daily if item.source == "csindex"
                          else self.provider.fetch_index_daily)
                 result = fetch(item.symbol, self._date_str(fetch_start), self._date_str(ctx.expected_latest))
-                self._raw(ctx, step, item.symbol, result.frame, result.source)
+                raw_path = self._raw(ctx, step, item.symbol, result.frame, result.source)
                 incoming = normalize_index_bars(
                     result.frame, item.symbol, item.name, index_start, ctx.expected_latest,
                     ctx.run_id, ctx.ingested_at, source=result.source,
@@ -872,6 +885,7 @@ class IngestionPipeline:
                 ctx.issues.extend(issues)
                 if has_blocking(issues):
                     self._quarantine(ctx, step, f"symbol={item.symbol}", incoming)
+                    self._reject_raw(ctx, raw_path)
                     ctx.count(step, "quarantined")
                     continue
                 write_canonical_frame(self.root, step, merged, partition=f"symbol={item.symbol}")
@@ -1129,6 +1143,7 @@ class IngestionPipeline:
         master = self._ingest_etf_master(ctx)
         self._ingest_etf_shares(ctx)
         self._ingest_etf_bars(ctx, master)
+        self._ingest_etf_holders(ctx, master)
 
     def _ingest_etf_master(self, ctx: RunContext) -> pd.DataFrame | None:
         step = "etf_master"
@@ -1194,6 +1209,74 @@ class IngestionPipeline:
         if failed:
             ctx.issues.append(QualityIssue(step, "fetch", "warning",
                                            f"{failed}/{len(jobs)} 只 ETF 日线下载失败，下次运行重试", failed))
+
+    def _ingest_etf_holders(self, ctx: RunContext, master: pd.DataFrame | None) -> None:
+        """Top holders from the broad-index funds' annual and interim reports.
+
+        Report lists are refreshed once a week per fund.  New reports (from
+        2015) of all funds are fetched newest period first, up to
+        ``etf_holder_reports_per_run`` per run, so the latest period of every
+        fund comes in first and history follows on later runs.  A fund's list
+        counts as refreshed only once all its reports are in.
+        """
+        step = "etf_holders"
+        budget = self.config.etf_holder_reports_per_run
+        if budget <= 0:
+            return
+        members = group_members(master, load_etf_groups(self.root / self.config.etf_groups_path))
+        log = read_canonical(self.root, "etf_holders_fetch_log")
+        holders = read_canonical(self.root, "etf_top_holders")
+        log_rows: list[dict[str, Any]] = []
+        failures = 0
+        listed: dict[str, int] = {}
+        pending: list[tuple[str, dict]] = []
+        for symbol in lists_to_refresh(sorted(set(members["symbol"])), log, self.clock().date()):
+            if failures >= CORPORATE_MAX_CONSECUTIVE_FAILURES:
+                ctx.count(step, "deferred_lists")
+                continue
+            try:
+                listing = self.provider.fetch_fund_reports(symbol)
+            except Exception as exc:
+                ctx.error(step, symbol, exc)
+                ctx.count(step, "failed_lists")
+                failures += 1
+                continue
+            failures = 0
+            self._raw(ctx, "etf_report_lists", symbol, listing, SOURCE_FUND_REPORT)
+            listed[symbol] = len(listing)
+            pending += [(symbol, report) for report in reports_to_fetch(listing, log)]
+        pending.sort(key=lambda item: (item[1]["report_date"], item[1]["notice_date"], item[0]), reverse=True)
+        unfinished = {symbol for symbol, _ in pending[budget:]}
+        for symbol, report in pending[:budget]:
+            try:
+                text = self.provider.fetch_report_text(report["art_code"])
+            except Exception as exc:
+                ctx.error(step, report["art_code"], exc)
+                ctx.count(step, "failed_reports")
+                unfinished.add(symbol)
+                continue
+            raw = pd.DataFrame([{"symbol": symbol, **{k: str(v) for k, v in report.items()}, "text": text}])
+            self._raw(ctx, "etf_reports", report["art_code"], raw, SOURCE_FUND_REPORT)
+            part = holder_rows(symbol, report, text, ctx.run_id, ctx.ingested_at)
+            holders = merge_holders(holders, part)
+            ctx.count(step, "reports")
+            if part.empty:
+                ctx.count(step, "reports_without_table")  # 2026 interim reports dropped the table
+            log_rows.append({"dataset": "report", "window": report["art_code"], "rows": len(part),
+                             "run_id": ctx.run_id})
+        if len(pending) > budget:
+            ctx.count(step, "deferred_reports", len(pending) - budget)
+        log_rows += [{"dataset": "report_list", "window": symbol, "rows": rows, "run_id": ctx.run_id}
+                     for symbol, rows in listed.items() if symbol not in unfinished]
+        if holders is not None and not holders.empty:
+            write_canonical_frame(self.root, "etf_top_holders", holders)
+        if log_rows:
+            write_canonical_frame(self.root, "etf_holders_fetch_log", merge_fetch_log(log, log_rows))
+        counters = ctx.counters.get(step, {})
+        failed = counters.get("failed_lists", 0) + counters.get("failed_reports", 0)
+        if failed:
+            ctx.issues.append(QualityIssue(step, "fetch", "warning",
+                                           f"ETF 定期报告：{failed} 个请求失败，下次运行重试", failed))
 
     def _store_etf_bars(self, ctx: RunContext, symbol: str, start: date, result: FetchResult) -> None:
         assert ctx.expected_latest is not None

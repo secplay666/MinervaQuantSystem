@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from bisect import bisect_right
 from collections.abc import Sequence
@@ -38,7 +39,7 @@ from ..domain.fees import FeeSchedule
 from ..domain.rules import LotRule
 from ..ledger import LedgerInvariantError
 from .accounts import account_events, replay, replay_rows, reverse_event
-from .intents import SEVERITY, Check, cash_check, quantity_checks
+from .intents import SEVERITY, Check, IndustryLimits, cash_check, industry_check, quantity_checks
 from .paper import approved_at, cutoff
 
 REVIEWABLE = ("pending_approval",)
@@ -231,11 +232,35 @@ def _recheck(session: Session, intent: OrderIntent, qty: int, notional: int, est
         # A smaller sell leaves the buys short: say so, but the sell itself is fine.
         checks.append(cash if intent.side == "buy" else replace(cash, decision="warn",
                                                                 message="减少卖出后，本次买入金额加费用超过可用资金"))
+    industry = limits.get("industry")
+    if industry and intent.side == "buy":
+        checks += _industry_recheck(session, run, intent, qty, industry)
     rejected = [c for c in checks if c.decision == "reject"]
     if rejected and qty > intent.qty:
         raise ReviewError("risk_reject", "修改后不通过风控：" + "；".join(f"{c.rule_id} {c.message}" for c in rejected))
     return [replace(c, decision="warn", message=f"{c.message}（减少数量后仍未通过，仅提示）")
             if c.decision == "reject" else c for c in checks]
+
+
+def _industry_recheck(session: Session, run: DecisionRun, intent: OrderIntent, qty: int,
+                      industry: dict) -> list[Check]:
+    """R5 industry weight after the run's open intents, with this one at ``qty``."""
+    of = industry.get("of") or {}
+    label = of.get(intent.symbol, "未分类")
+    held = replay(session, intent.account_id, through=intent.trade_date)
+    value = int((industry.get("base_fen") or {}).get(label, 0))
+    for other in session.scalars(select(OrderIntent).where(OrderIntent.run_id == intent.run_id)):
+        if of.get(other.symbol, "未分类") != label:
+            continue
+        after = held.quantity(other.symbol)
+        if other.status in OPEN_FOR_CASH or other.intent_id == intent.intent_id:
+            n = qty if other.intent_id == intent.intent_id else other.qty
+            after += n if other.side == "buy" else -n
+        value += max(after, 0) * other.ref_price_fen
+    limits = IndustryLimits(of, {k: float(v) for k, v in (industry.get("bench") or {}).items()},
+                            float(industry["delta"]))
+    check = industry_check(label, value / (run.nav_fen or 1), limits)
+    return [check] if check is not None else []
 
 
 def override(session: Session, intent_id: str, op: Operator, now: datetime, reason: str) -> OrderIntent:
@@ -385,6 +410,70 @@ def reverse(session: Session, account: Account, event_id: str, op: Operator, rea
             if fill.intent_id:
                 refresh_intent_fill(session, fill.intent_id)
     return reversal
+
+
+# -- corporate actions on manual accounts ----------------------------------------------------
+
+def corporate_action_id(account_id: str, symbol: str, ex_date: date) -> str:
+    return f"{account_id}-ca-{ex_date:%Y%m%d}-{symbol}"  # the paper broker's id for the same action
+
+
+def pending_corporate_actions(session: Session, account: Account, plans: list[dict], today: date) -> list[dict]:
+    """Implemented dividend and bonus-share plans a manual account has not
+    recorded: ex-date after the confirmed holdings and not after today, on a
+    symbol held the day before, and no holdings re-entry of that symbol since.
+
+    The suggestion is what a broker does: bonus and transfer shares per 10
+    (fractions dropped), cash per 10 before tax (the dividend tax is charged
+    when the shares are sold).  ``plans``: symbol, ex_date, cash_per_10,
+    bonus_per_10, transfer_per_10, plan_profile.
+    """
+    if account.mode != "manual":
+        return []
+    events = list(account_events(session, account.account_id))
+    recorded = {e.event_id for e in events}
+    confirmed = account.holdings_confirmed_date
+    out = []
+    for plan in sorted(plans, key=lambda p: (p["ex_date"], p["symbol"])):
+        symbol, ex = str(plan["symbol"]), plan["ex_date"]
+        if ex > today or (confirmed is not None and ex <= confirmed):
+            continue
+        event_id = corporate_action_id(account.account_id, symbol, ex)
+        if event_id in recorded or any(e.kind == "adjustment" and e.symbol == symbol and e.trade_date >= ex
+                                       for e in events):
+            continue
+        held = replay_rows(account.account_id, [e for e in events if e.trade_date < ex]).quantity(symbol)
+        if held <= 0:
+            continue
+        per10 = {k: float(plan.get(k) or 0) for k in ("cash_per_10", "bonus_per_10", "transfer_per_10")}
+        new_quantity = int(math.floor(held * (1 + (per10["bonus_per_10"] + per10["transfer_per_10"]) / 10) + 1e-9))
+        cash_fen = int(round(held * per10["cash_per_10"] / 10 * 100))
+        out.append({"event_id": event_id, "symbol": symbol, "ex_date": ex, "plan": plan.get("plan_profile"),
+                    **per10, "old_quantity": held, "new_quantity": new_quantity, "cash_fen": cash_fen})
+    return out
+
+
+def apply_corporate_action(session: Session, account: Account, pending: dict, new_quantity: int, cash_fen: int,
+                           op: Operator, reason: str, now: datetime | None = None) -> PositionEvent:
+    """Record a confirmed (possibly edited) suggestion as a corporate-action event."""
+    if new_quantity < 0 or cash_fen < 0:
+        raise ReviewError("invalid_action", "数量和现金不能为负")
+    ex = pending["ex_date"]
+    _check_entry_date(account, ex, now or utc_now(), "除权")
+    old = int(pending["old_quantity"])
+    payload = {"old_quantity": old, "new_quantity": int(new_quantity), "cash_in_lieu_fen": int(cash_fen),
+               "step": (new_quantity / old) if old else 1.0,
+               "suggested": {"new_quantity": pending["new_quantity"], "cash_fen": pending["cash_fen"]}}
+    event = PositionEvent(event_id=pending["event_id"], account_id=account.account_id, trade_date=ex,
+                          kind="corporate_action", symbol=pending["symbol"], payload=payload,
+                          reason=reason or "除权除息", created_by=op.actor)
+    _validate(session, account.account_id, [event])
+    session.add(event)
+    session.flush()
+    audit(session, op.actor, "corporate_action.apply", "account", account.account_id,
+          after={"symbol": pending["symbol"], "ex_date": ex.isoformat(), **payload}, reason=reason,
+          **op.audit_kwargs())
+    return event
 
 
 # -- holdings entry ---------------------------------------------------------------------------

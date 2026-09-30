@@ -174,6 +174,14 @@ def test_blocking_bar_issues_quarantine_instead_of_overwriting(tmp_path: Path) -
     pd.testing.assert_frame_equal(bars(tmp_path, "600001"), before)
     quarantined = tmp_path / "data" / "quarantine" / f"run_id={manifest['run_id']}" / "daily_bars" / "symbol=600001"
     assert (quarantined / "data.parquet").exists()
+    # The refused response is kept aside, so a rebuild reproduces the live bars.
+    raw = tmp_path / "data" / "raw" / "akshare"
+    assert (raw / "daily_bars_rejected" / f"run_id={manifest['run_id']}" / "600001.parquet").exists()
+    assert not (raw / "daily_bars" / f"run_id={manifest['run_id']}" / "600001.parquet").exists()
+    from quant_system.data_platform.rebuild import rebuild_canonical
+
+    report = rebuild_canonical(tmp_path, make_config())
+    assert set(report["diff"]["daily_bars_detail"].values()) == {0}
 
 
 def test_missing_latest_bar_needs_a_suspension_record(tmp_path: Path) -> None:

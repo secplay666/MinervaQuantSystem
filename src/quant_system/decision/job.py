@@ -64,7 +64,7 @@ from .inputs import (
     latest_ingest,
     next_session,
 )
-from .intents import IntentPlan, plan_intents, turnover
+from .intents import IndustryLimits, IntentPlan, plan_intents, turnover
 from .monitor import Alert, monitor_holdings
 from .paper import run_paper
 from .reference import FrameReference, load_reference
@@ -112,6 +112,29 @@ class RunOutcome:
     message: str
     intents: int = 0
     report_dir: str | None = None
+
+
+def industry_limits(strategy, market) -> IndustryLimits | None:
+    """The industry bounds the strategy built its target with (rules
+    construction; None for strategies without industry data)."""
+    research = getattr(strategy, "research", None)
+    records = getattr(strategy, "records", None)
+    construction = getattr(getattr(strategy, "params", None), "construction", None)
+    if research is None or not records or construction is None:
+        return None
+    record = records[-1]
+    delta = (record.get("diagnostics") or {}).get("industry_delta", getattr(construction, "industry_deviation", None))
+    if delta is None:
+        return None
+    codes = research.industry[record["t"]]
+    names = [research.industry_names[c] if c >= 0 else "未分类" for c in codes]
+    universe = np.flatnonzero(record["universe"])
+    counts: dict[str, int] = {}
+    for j in universe:
+        counts[names[j]] = counts.get(names[j], 0) + 1
+    total = max(len(universe), 1)
+    return IndustryLimits({str(s): names[j] for j, s in enumerate(market.symbols)},
+                          {label: n / total for label, n in sorted(counts.items())}, float(delta))
 
 
 def load_strategy_config(root: Path, relative: str, session: date) -> tuple[BacktestConfig, str]:
@@ -425,7 +448,8 @@ def _run_account(factory: sessionmaker[Session], shared: _Shared, account_id: st
             construction = getattr(getattr(strategy, "params", None), "construction", None)
             fees = FeeSchedule(rules, config.commission_rate, config.commission_min_fen)
             plan = plan_intents(target, marked, market, rules, config.sizing, fees, config.max_participation,
-                                getattr(construction, "max_weight", None), i, next_day, shared.reference)
+                                getattr(construction, "max_weight", None), i, next_day, shared.reference,
+                                industry_limits(strategy, market))
         valid_until = datetime.combine(next_day, REVIEW_CLOSE, SHANGHAI_TZ)
         summary = _summary(marked, target, plan, alerts)
         if paper is not None:

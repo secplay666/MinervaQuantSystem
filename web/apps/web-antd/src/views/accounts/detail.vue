@@ -3,7 +3,7 @@ import type { Dayjs } from 'dayjs';
 
 import type { EchartsUIType } from '@vben/plugins/echarts';
 
-import type { AccountDetail, Exposure } from '#/api';
+import type { AccountDetail, CorporateAction, Exposure } from '#/api';
 
 import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -19,8 +19,8 @@ import {
 } from 'ant-design-vue';
 
 import {
-  accountApi, accountEventsApi, accountExposureApi, accountFillsApi, accountNavApi, addFillApi, holdingsCommitApi,
-  holdingsPreviewApi, reverseEventApi,
+  accountApi, accountEventsApi, accountExposureApi, accountFillsApi, accountNavApi, addFillApi, applyCorporateActionApi,
+  corporateActionsApi, holdingsCommitApi, holdingsPreviewApi, reverseEventApi,
 } from '#/api';
 import { changeColor, dateTime, DOWN_COLOR, EVENT_KIND, pct, price, UP_COLOR, yuan } from '#/utils/format';
 
@@ -44,8 +44,32 @@ const fill = reactive<{ commission?: number; open: boolean; price?: number; qty?
 const entry = reactive<{ as_of: Dayjs; cash: string; preview?: Awaited<ReturnType<typeof holdingsPreviewApi>>; reason: string;
                          text: string }>({ as_of: dayjs(), cash: '', reason: '', text: '' });
 
+type ActionRow = CorporateAction & { cash: string; qty: number };
+const actions = ref<ActionRow[]>([]);
+const actionColumns = [
+  { key: 'symbol', title: '股票' },
+  { dataIndex: 'ex_date', title: '除权日' },
+  { key: 'plan', title: '方案' },
+  { dataIndex: 'old_quantity', title: '除权前', align: 'right' },
+  { key: 'qty', title: '调整后数量', align: 'right' },
+  { key: 'cash', title: '现金分红（元，税前）', align: 'right' },
+  { key: 'action', title: '' },
+];
+async function loadActions() {
+  actions.value = account.value?.mode === 'manual'
+    ? (await corporateActionsApi(accountId.value)).rows.map((r) => ({ ...r, cash: (r.cash_fen / 100).toFixed(2), qty: r.new_quantity }))
+    : [];
+}
+async function applyAction(row: ActionRow) {
+  await applyCorporateActionApi(accountId.value, { cash: row.cash, event_id: row.event_id, new_quantity: row.qty,
+                                                   reason: row.plan ? `除权除息：${row.plan}` : '除权除息' });
+  message.success(`${row.symbol} 已按除权调整`);
+  await load();
+}
+
 async function load() {
   account.value = await accountApi(accountId.value);
+  void loadActions();
   const [nav, ev, fl] = await Promise.all([accountNavApi(accountId.value), accountEventsApi(accountId.value),
                                            accountFillsApi(accountId.value)]);
   events.value = ev;
@@ -233,6 +257,29 @@ onMounted(load);
       </Row>
       <Alert v-if="account.mode === 'manual' && !account.holdings_confirmed_date" type="warning" show-icon class="mb-4"
              message="手工账户还没有确认过持仓；在决策前先到“持仓录入”页录入当前持仓和现金。" />
+      <Card v-if="actions.length" size="small" class="mb-4" :title="`待确认的除权除息（${actions.length}）`">
+        <Table :columns="actionColumns as any" :data-source="actions" row-key="event_id" size="small" :pagination="false">
+          <template #bodyCell="{ column, record }">
+            <template v-if="column.key === 'symbol'">{{ record.symbol }} <span class="text-muted-foreground">{{ record.name }}</span></template>
+            <template v-else-if="column.key === 'plan'">{{ record.plan ?? '—' }}</template>
+            <template v-else-if="column.key === 'qty'">
+              <InputNumber v-if="canEdit" v-model:value="record.qty" :min="0" :precision="0" size="small" style="width: 110px" />
+              <span v-else>{{ record.qty }}</span>
+            </template>
+            <template v-else-if="column.key === 'cash'">
+              <Input v-if="canEdit" v-model:value="record.cash" size="small" style="width: 110px" />
+              <span v-else>{{ record.cash }}</span>
+            </template>
+            <template v-else-if="column.key === 'action'">
+              <Button v-if="canEdit" size="small" type="primary" @click="applyAction(record as ActionRow)">确认调整</Button>
+            </template>
+          </template>
+        </Table>
+        <div class="text-muted-foreground mt-2 text-xs">
+          调整后数量按每 10 股送股、转增的股数计算（不足 1 股的部分舍去）；现金分红是税前金额，红利税在卖出时由券商扣除。
+          请以券商实际到账为准，可以先修改再确认。已在除权日之后重新录入过持仓的股票不会出现在这里。
+        </div>
+      </Card>
       <Card size="small">
         <Tabs :active-key="tab" @change="onTab">
           <Tabs.TabPane key="holdings" :tab="`持仓（${account.holdings.length}）`">

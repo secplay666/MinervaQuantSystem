@@ -22,6 +22,7 @@
   "etf_sse_start": "20150101",
   "etf_szse_start": "20160101",
   "etf_sse_max_dates_per_run": 30,
+  "etf_holder_reports_per_run": 200,
   "manual_delistings": [
     {
       "symbol": "920680",

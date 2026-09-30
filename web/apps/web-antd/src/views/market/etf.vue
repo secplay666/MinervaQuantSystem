@@ -1,17 +1,18 @@
 <script lang="ts" setup>
 import type { EchartsUIType } from '@vben/plugins/echarts';
 
-import type { Bar, EtfDay, EtfFund, EtfGroupSummary, EtfOverview } from '#/api';
+import type { Bar, EtfDay, EtfFund, EtfGroupSummary, EtfHolders, EtfOverview } from '#/api';
 
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
 import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
+import { usePreferences } from '@vben/preferences';
 
 import { Alert, Button, Card, Col, Empty, Row, Space, Spin, Table, Tag, Tooltip } from 'ant-design-vue';
 
-import { etfFundsApi, etfOverviewApi, etfSeriesApi, indexBarsApi, indicesApi } from '#/api';
+import { etfFundsApi, etfHoldersApi, etfOverviewApi, etfSeriesApi, indexBarsApi, indicesApi } from '#/api';
 import { changeColor, DOWN_COLOR, pct, UP_COLOR } from '#/utils/format';
 
 const router = useRouter();
@@ -29,6 +30,54 @@ const chartRef = ref<EchartsUIType>();
 const { renderEcharts } = useEcharts(chartRef);
 
 const group = computed(() => overview.value?.groups.find((g) => g.id === groupId.value));
+const holders = ref<EtfHolders>();
+const holdersChartRef = ref<EchartsUIType>();
+const { renderEcharts: renderHolders } = useEcharts(holdersChartRef);
+const { isDark } = usePreferences();
+// Categorical slots 1-5 in fixed order (validated for both surfaces); the class keeps its colour.
+const CLASS_COLORS = { dark: ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181'],
+                       light: ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4'] };
+const latestPeriod = computed(() => holders.value?.periods.at(-1));
+const classColor = (id: null | string) => {
+  const k = holders.value?.classes.findIndex((c) => c.id === id) ?? -1;
+  return k < 0 ? undefined : CLASS_COLORS[isDark.value ? 'dark' : 'light'][k];
+};
+const className = (id: null | string) => holders.value?.classes.find((c) => c.id === id)?.name;
+const holderColumns = [
+  { key: 'fund', title: '基金' },
+  { dataIndex: 'report_date', title: '报告期' },
+  { key: 'national', title: '国家队合计', align: 'right' },
+  { key: 'value', title: '持有市值', align: 'right' },
+];
+function drawHolders() {
+  const h = holders.value;
+  if (!h || !h.periods.length) return;
+  const colors = CLASS_COLORS[isDark.value ? 'dark' : 'light'];
+  const surface = isDark.value ? '#151517' : '#ffffff';
+  void renderHolders({
+    color: colors,
+    grid: { bottom: 28, left: 56, right: 16, top: 36 },
+    legend: { data: h.classes.map((c) => c.name), top: 0 },
+    series: h.classes.map((c) => ({
+      barMaxWidth: 26, data: h.periods.map((p) => +((p.by_class[c.id] ?? 0) / 1e8).toFixed(1)),
+      emphasis: { focus: 'series' }, itemStyle: { borderColor: surface, borderWidth: 1 }, name: c.name, stack: 'national', type: 'bar',
+    })),
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params: any) => {
+        const list = params as any[];
+        const p = h.periods[list[0]?.dataIndex ?? 0];
+        if (!p) return '';
+        const lines = [`<b>${p.report_date}</b>（${p.funds} 只基金披露）`];
+        for (const item of list) if (item.value) lines.push(`${item.marker}${item.seriesName} ${item.value} 亿元`);
+        lines.push(`合计 ${yi(p.national_value, false)}，占该组规模 ${pct(p.national_share, 1)}`);
+        return lines.join('<br/>');
+      },
+    },
+    xAxis: { data: h.periods.map((p) => p.report_date.slice(0, 7)), type: 'category' },
+    yAxis: { name: '亿元', splitLine: { lineStyle: { opacity: 0.3 } }, type: 'value' },
+  } as any);
+}
 const TILE_TIP = '当日净申购：该组各 ETF 当天的份额变化 × 收盘价之和，即所有投资者在一级市场申购减去赎回的净额（估算，单位元）；'
   + '负数为净赎回。二级市场买卖不改变份额，不计在内；也无法区分是谁申购。近 20 日：最近 20 个交易日的累计。规模：份额 × 收盘价。'
   + '近一年异常日：最近 250 个交易日里异常净申购、异常净赎回的天数，以及其中强异常的天数。';
@@ -58,10 +107,12 @@ async function loadGroup() {
   try {
     const series = await etfSeriesApi(groupId.value);
     days.value = series.rows;
+    holders.value = await etfHoldersApi(groupId.value).catch(() => undefined);
     bars.value = await indexBarsApi(series.group.chart_symbol, 6000);
     selectedDay.value = undefined;
     await loadFunds();
     await draw();
+    drawHolders();
   } finally {
     loading.value = false;
   }
@@ -241,6 +292,45 @@ onMounted(async () => {
           深交所晚一天公布，最新一天只含上交所的基金（浅色柱）。
           这是按公开份额的估算，不能区分申购方是谁。点击图上某一天，下方显示各基金当天的情况。
         </div>
+      </Card>
+
+      <Card v-if="holders" size="small" class="mb-4" :title="`机构持有：${group?.name}（年报、半年报披露的前十名持有人）`">
+        <template v-if="holders.periods.length && latestPeriod">
+          <div class="mb-2">
+            最新一期（{{ latestPeriod.report_date }}）：国家队合计持有 <b>{{ yi(latestPeriod.national_value, false) }}</b>，
+            占该组规模 <b>{{ pct(latestPeriod.national_share, 1) }}</b>；{{ latestPeriod.funds }} 只基金有披露。
+          </div>
+          <Row :gutter="[16, 16]">
+            <Col :xs="24" :xl="12"><EchartsUI ref="holdersChartRef" height="320px" /></Col>
+            <Col :xs="24" :xl="12">
+              <Table :columns="holderColumns as any" :data-source="holders.funds" row-key="symbol" size="small"
+                     :pagination="{ pageSize: 8, size: 'small' }">
+                <template #bodyCell="{ column, record }">
+                  <template v-if="column.key === 'fund'">{{ record.symbol }} {{ record.name }}</template>
+                  <template v-else-if="column.key === 'national'">
+                    {{ record.national_pct ? `${record.national_pct.toFixed(2)}%` : '—' }}
+                  </template>
+                  <template v-else-if="column.key === 'value'">{{ record.national_value ? yi(record.national_value, false) : '—' }}</template>
+                </template>
+                <template #expandedRowRender="{ record }">
+                  <div v-for="h in record.holders" :key="h.rank + h.holder" class="flex justify-between text-xs leading-6">
+                    <span>
+                      {{ h.rank }}. {{ h.holder }}
+                      <Tag v-if="h.holder_class" :color="classColor(h.holder_class)" class="ml-1">{{ className(h.holder_class) }}</Tag>
+                    </span>
+                    <span>{{ (h.shares / 1e8).toFixed(2) }} 亿份 · {{ h.pct.toFixed(2) }}%</span>
+                  </div>
+                </template>
+              </Table>
+            </Col>
+          </Row>
+          <div class="text-muted-foreground mt-2 text-xs leading-5">
+            持有市值 = 报告期末的持有份额 × 当日 ETF 收盘价，按基金加总。只统计前十名持有人（不含本基金的联接基金），前十名以外的持有不在其中。
+            报告期末的数据在年报（约 3 月底）、中报（约 8 月底）公布后才能看到；2026 年起中报不再披露前十名持有人，此后只有年报数据。
+            国家队名单：{{ holders.classes.map((c) => c.name).join('、') }}（可在配置中调整）。
+          </div>
+        </template>
+        <Empty v-else description="还没有采集到这组基金的定期报告" />
       </Card>
 
       <Row :gutter="[16, 16]">

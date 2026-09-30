@@ -1,6 +1,18 @@
 {
   "description": "宽基指数与跟踪它的 ETF。ETF 按两个交易所 ETF 列表中的标的指数（拟合指数）代码归类；同一指数在深交所可能用 399 开头的代码。名称符合 exclude_name_pattern 的指数增强型 ETF 不计入。",
   "exclude_name_pattern": "增强|指增|增指|增ETF|ETF增|增$",
+  "overrides": {
+    "note": "手工纠正：include 把基金代码归入某个分组（名称被误判为增强型、或交易所列表里的标的指数有误时），exclude 把基金排除在外。",
+    "include": {},
+    "exclude": []
+  },
+  "holder_classes": [
+    {"id": "huijin_investment", "name": "中央汇金投资", "patterns": ["中央汇金投资"]},
+    {"id": "huijin_asset", "name": "中央汇金资管", "patterns": ["中央汇金资产管理"]},
+    {"id": "csf", "name": "中国证金", "patterns": ["中国证券金融"]},
+    {"id": "wutongshu", "name": "梧桐树", "patterns": ["梧桐树投资平台"]},
+    {"id": "social_security", "name": "社保与养老金", "patterns": ["社保基金", "社会保障基金", "养老保险基金"]}
+  ],
   "groups": [
     {"id": "sse50", "name": "上证50", "index_codes": ["000016"], "chart_symbol": "sh000016"},
     {"id": "csi300", "name": "沪深300", "index_codes": ["000300", "399300"], "chart_symbol": "sh000300"},

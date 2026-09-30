@@ -12,6 +12,9 @@ Checks (pass | warn | reject):
   R3  ex-rights or ex-dividend tomorrow (quantity may need adjusting)          warn
   R4  quantity above the participation cap of the 20-day average volume       warn
   R5  post-trade weight above the single-name limit              1.25x warn / 2x reject
+      post-trade industry weight above the benchmark + deviation limit (buys in that industry)
+                                                                  1.25x warn / 2x reject
+      an industry underweight by more than 1.25x the limit (run level)       warn
   R6  buys plus fees above cash plus sell proceeds (run level)        reject all buys
   R7  buying a risk-warning or delisting-period security (or one turning so)   reject
 """
@@ -65,6 +68,36 @@ class IntentDraft:
     @property
     def risk(self) -> str:
         return max((c.decision for c in self.checks), key=SEVERITY.__getitem__, default="pass")
+
+
+@dataclass(frozen=True)
+class IndustryLimits:
+    """The construction's industry bounds: benchmark weights (name shares of
+    the eligible universe, Shenwan L1) and the deviation it allowed."""
+    of: dict[str, str]  # symbol -> industry name
+    bench: dict[str, float]
+    delta: float
+
+
+def industry_check(label: str, weight: float, limits: IndustryLimits) -> Check | None:
+    """R5 on one industry's post-trade weight, for the buys in it."""
+    bench = limits.bench.get(label, 0.0)
+    active = weight - bench
+    ceiling = f"{bench + limits.delta:.4f}"
+    if active > limits.delta * R5_REJECT:
+        return Check("R5", "reject", f"买入后{label}行业权重远超基准加偏离上限", f"{weight:.4f}", ceiling)
+    if active > limits.delta * R5_WARN:
+        return Check("R5", "warn", f"买入后{label}行业权重超过基准加偏离上限", f"{weight:.4f}", ceiling)
+    return None
+
+
+def industry_values(quantities: dict[str, int], prices_fen: dict[str, int], of: dict[str, str]) -> dict[str, int]:
+    values: dict[str, int] = {}
+    for symbol, qty in quantities.items():
+        if qty > 0:
+            label = of.get(symbol, "未分类")
+            values[label] = values.get(label, 0) + qty * int(prices_fen.get(symbol) or 0)
+    return values
 
 
 @dataclass
@@ -147,7 +180,8 @@ def average_volume(market: MarketData, i: int, j: int, window: int = ADV_WINDOW)
 
 def plan_intents(target: TargetPortfolio, marked: MarkedAccount, market: MarketData, rules: MarketRules,
                  sizing: SizingPolicy, fees: FeeSchedule, max_participation: float, max_weight: float | None,
-                 i: int, next_day: date, reference: FrameReference) -> IntentPlan:
+                 i: int, next_day: date, reference: FrameReference,
+                 industry: IndustryLimits | None = None) -> IntentPlan:
     columns = {}
     for symbol in sorted(set(target.weights) | set(marked.quantities)):
         columns[symbol] = market.symbol_index(symbol)
@@ -192,6 +226,11 @@ def plan_intents(target: TargetPortfolio, marked: MarkedAccount, market: MarketD
                                       risk_next.get(order.symbol) or _risk_name(market, i, j)))
         drafts.append(draft)
 
+    run_checks: list[Check] = []
+    industry_limits = None
+    if industry is not None and marked.nav_fen > 0:
+        run_checks, industry_limits = _industry_checks(drafts, marked, prices, industry)
+
     buys = sum(d.est_notional_fen + d.est_fees_fen for d in drafts if d.side == "buy")
     proceeds = sum(d.est_notional_fen - d.est_fees_fen for d in drafts if d.side == "sell")
     available = marked.cash_fen + proceeds
@@ -201,7 +240,37 @@ def plan_intents(target: TargetPortfolio, marked: MarkedAccount, market: MarketD
             if draft.side == "buy":
                 draft.checks.append(check)
     limits = {"max_participation": max_participation, "max_weight": max_weight, "volume_cap": volume_caps}
-    return IntentPlan(drafts, [check], target_qty, sized.skipped, sized.within_band, limits)
+    if industry_limits is not None:
+        limits["industry"] = industry_limits
+    return IntentPlan(drafts, [check, *run_checks], target_qty, sized.skipped, sized.within_band, limits)
+
+
+def _industry_checks(drafts: list[IntentDraft], marked: MarkedAccount, prices: dict[str, int | None],
+                     industry: IndustryLimits) -> tuple[list[Check], dict]:
+    """R5 industry checks on the holdings after every intent not already
+    rejected, and what a modify needs to re-check them (``base_fen``: the
+    value of holdings without an intent, per industry)."""
+    after = dict(marked.quantities)
+    for d in drafts:
+        if d.risk != "reject":
+            after[d.symbol] = after.get(d.symbol, 0) + (d.qty if d.side == "buy" else -d.qty)
+    price_fen = {s: int(p or 0) for s, p in prices.items()}
+    weights = {label: value / marked.nav_fen for label, value in industry_values(after, price_fen, industry.of).items()}
+    for d in drafts:
+        if d.side == "buy":
+            label = industry.of.get(d.symbol, "未分类")
+            check = industry_check(label, weights.get(label, 0.0), industry)
+            if check is not None:
+                d.checks.append(check)
+    under = sorted(label for label, bench in industry.bench.items()
+                   if bench - weights.get(label, 0.0) > industry.delta * R5_WARN)
+    run_checks = [Check("R5", "warn", f"行业低配超过偏离上限：{'、'.join(under)}", str(len(under)),
+                        f"{industry.delta:.4f}")] if under else []
+    traded = {d.symbol for d in drafts}
+    base = industry_values({s: q for s, q in marked.quantities.items() if s not in traded}, price_fen, industry.of)
+    symbols = traded | set(marked.quantities)
+    return run_checks, {"delta": industry.delta, "bench": industry.bench, "base_fen": base,
+                        "of": {s: industry.of.get(s, "未分类") for s in sorted(symbols)}}
 
 
 def worst(checks: list[Check]) -> str:

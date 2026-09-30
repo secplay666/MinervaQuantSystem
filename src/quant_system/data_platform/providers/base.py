@@ -116,6 +116,17 @@ class MarketDataProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def fetch_fund_reports(self, symbol: str) -> pd.DataFrame:
+        """A fund's periodic-report announcements (every page): FUNDCODE,
+        TITLE, PUBLISHDATEDesc (YYYY-MM-DD), ID (the announcement code)."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def fetch_report_text(self, art_code: str) -> str:
+        """The text rendering of one announcement."""
+        raise NotImplementedError
+
+    @abstractmethod
     def fetch_etf_shares_szse(self, start: str, end: str) -> pd.DataFrame:
         """SZSE ETF shares outstanding per day in [start, end] (YYYYMMDD, at
         most six months): 日期, 基金代码, 基金简称, 基金份额 (shares)."""

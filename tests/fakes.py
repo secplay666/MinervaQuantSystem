@@ -344,6 +344,49 @@ class FakeProvider(MarketDataProvider):
         {"证券代码": "159920", "证券简称": "恒生ETF华夏", "拟合指数": "HSI", "基金管理人": "华夏基金"},
     ])
 
+    # Periodic reports: 510300's 2025 annual report lists 中央汇金 twice; its 2026 interim has no table.
+    fund_reports: dict[str, list[dict[str, str]]] = field(default_factory=lambda: {
+        "510300": [
+            {"FUNDCODE": "510300", "TITLE": "某沪深300ETF2026年中期报告", "PUBLISHDATEDesc": "2026-08-29",
+             "ID": "AN2026H1"},
+            {"FUNDCODE": "510300", "TITLE": "某沪深300ETF2025年年度报告摘要", "PUBLISHDATEDesc": "2026-03-31",
+             "ID": "AN2025Y-S"},
+            {"FUNDCODE": "510300", "TITLE": "某沪深300ETF2025年年度报告", "PUBLISHDATEDesc": "2026-03-31",
+             "ID": "AN2025Y"},
+            {"FUNDCODE": "510300", "TITLE": "某沪深300ETF2014年年度报告", "PUBLISHDATEDesc": "2015-03-31",
+             "ID": "AN2014Y"},
+        ],
+    })
+    report_texts: dict[str, str] = field(default_factory=lambda: {
+        "AN2026H1": "§8 基金份额持有人信息\n8.1 期末基金份额持有人户数及持有人结构\n",
+        "AN2025Y": (
+            "9.2 期末上市基金前十名持有人 ...... 75\n\n正文\n9.2 期末上市基金前十名持有人\n\n"
+            "    序号          持有人名称      持有份额（份）      占上市总份额比例（%）\n\n"
+            "      1        中央汇金资产管理有  37,858,474,974.00                        42.62\n"
+            "                  限责任公司\n\n"
+            "      2        中央汇金投资有限责  35,654,598,859.00                        40.14\n"
+            "                    任公司\n\n"
+            "              北京诚旸投资有限公\n\n"
+            "      3        司－诚旸灵活配置私    179,399,890.00                        0.20\n"
+            "                募证券投资基金\n\n"
+            "      4        滕伟                  119,018,700.00                        0.13%\n\n"
+            "注：前十名持有人为除本基金的联接基金之外的前十名持有人。\n"
+            "9.3 期末基金管理人的从业人员持有本基金的情况\n"
+        ),
+    })
+    reports_failing: set[str] = field(default_factory=set)
+
+    def fetch_fund_reports(self, symbol: str) -> pd.DataFrame:
+        self.calls.append(("fund_reports", symbol))
+        if symbol in self.reports_failing:
+            raise RuntimeError("report list unavailable")
+        return pd.DataFrame(self.fund_reports.get(symbol, []),
+                            columns=["FUNDCODE", "TITLE", "PUBLISHDATEDesc", "ID"]).astype("string")
+
+    def fetch_report_text(self, art_code: str) -> str:
+        self.calls.append(("report_text", art_code))
+        return self.report_texts[art_code]
+
     def fetch_etf_lists(self) -> dict[str, pd.DataFrame]:
         self.calls.append(("etf_lists", ""))
         if self.etf_lists_failing:

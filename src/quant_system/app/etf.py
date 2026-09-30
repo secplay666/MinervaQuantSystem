@@ -26,6 +26,7 @@ from ..analytics.etf_flows import (
     group_flows,
 )
 from ..data_platform.etf import group_members, load_etf_groups
+from ..data_platform.etf_holders import classify_holder
 from .market import records
 
 ALL_GROUP = {"id": "all", "name": "全部宽基", "chart_symbol": "sh000300", "index_codes": []}
@@ -73,6 +74,13 @@ class EtfQueries:
                 closes = con.execute("SELECT trade_date, symbol, close FROM etf_bars "
                                      "WHERE list_contains(?, symbol)", [symbols]).fetchdf()
                 sessions = con.execute("SELECT trade_date FROM trading_calendar ORDER BY 1").fetchdf()
+                try:
+                    holders = con.execute("SELECT symbol, report_date, report_type, notice_date, rank, holder, "
+                                          "shares, pct, feeder FROM etf_top_holders "
+                                          "WHERE list_contains(?, symbol)", [symbols]).fetchdf()
+                except duckdb.CatalogException:  # periodic reports not collected yet
+                    holders = pd.DataFrame(columns=["symbol", "report_date", "report_type", "notice_date", "rank",
+                                                    "holder", "shares", "pct", "feeder"])
         except duckdb.CatalogException as exc:  # a catalog built before the ETF step existed
             raise EtfDataMissing(str(exc)) from exc
         for frame in (shares, closes):
@@ -95,8 +103,8 @@ class EtfQueries:
             series.loc[partial, "strong"] = False
             daily[group["id"]] = series
         names = members.drop_duplicates("symbol").set_index("symbol")
-        return {"groups": groups, "daily": daily, "funds": funds, "names": names,
-                "complete_until": complete_until, "latest": latest.max()}
+        return {"groups": groups, "daily": daily, "funds": funds, "names": names, "config": config,
+                "holders": _classified(holders, config), "complete_until": complete_until, "latest": latest.max()}
 
     def _group(self, state: dict[str, Any], group_id: str) -> dict[str, Any]:
         for group in state["groups"]:
@@ -159,6 +167,50 @@ class EtfQueries:
                      for row in records(frame[["trade_date", "abnormal", "flow", "flow_pct", "z", "strong"]])]
         return sorted(rows, key=lambda row: row["trade_date"])
 
+    def holders(self, group_id: str) -> dict[str, Any]:
+        """National-team holdings of a group's funds per report period (the
+        top-holder tables of annual and interim reports), valued at the fund's
+        close on the period end; and each fund's latest table."""
+        state = self._load()
+        self._group(state, group_id)
+        classes = [{"id": c["id"], "name": c["name"]} for c in state["config"].get("holder_classes", [])]
+        funds = state["funds"] if group_id == "all" else state["funds"][state["funds"]["group_id"] == group_id]
+        table = state["holders"]
+        table = table[table["symbol"].isin(set(funds["symbol"])) & ~table["feeder"]]
+        if table.empty:
+            return {"classes": classes, "periods": [], "funds": [], "latest_period": None}
+        closes = funds[["trade_date", "symbol", "close"]].dropna()
+        closes = closes.assign(at=pd.to_datetime(closes["trade_date"])).sort_values("at")[["at", "symbol", "close"]]
+        left = table.assign(at=pd.to_datetime(table["report_date"])).sort_values("at")
+        valued = pd.merge_asof(left, closes, on="at", by="symbol", direction="backward").drop(columns="at")
+        valued["value"] = valued["shares"] * valued["close"]
+        daily = state["daily"][group_id].sort_values("trade_date")
+        periods = []
+        for report_date, rows in valued.groupby("report_date"):
+            by_class = {c["id"]: _num(rows.loc[rows["holder_class"] == c["id"], "value"].sum()) for c in classes}
+            aum_rows = daily[daily["trade_date"] <= report_date]
+            aum = _num(aum_rows["aum"].iloc[-1]) if len(aum_rows) else None
+            national = float(rows.loc[rows["holder_class"].notna(), "value"].sum())
+            periods.append({"report_date": report_date, "funds": int(rows["symbol"].nunique()), "by_class": by_class,
+                            "national_value": national, "aum": aum,
+                            "national_share": national / aum if aum else None})
+        latest = valued.sort_values("report_date").groupby("symbol").tail(100)
+        latest = latest[latest["report_date"] == latest.groupby("symbol")["report_date"].transform("max")]
+        rows = []
+        for symbol, part in latest.groupby("symbol"):
+            part = part.sort_values("rank")
+            national = part[part["holder_class"].notna()]
+            info = state["names"].loc[symbol]
+            rows.append({"symbol": symbol, "name": info["name"], "exchange": info["exchange"],
+                         "report_date": part["report_date"].iloc[0], "notice_date": part["notice_date"].iloc[0],
+                         "national_pct": float(national["pct"].sum()), "national_value": float(national["value"].sum()),
+                         "by_class": {c["id"]: float(national.loc[national["holder_class"] == c["id"], "pct"].sum())
+                                      for c in classes},
+                         "holders": records(part[["rank", "holder", "shares", "pct", "holder_class"]])})
+        rows.sort(key=lambda r: -r["national_value"])
+        return {"classes": classes, "periods": periods, "funds": rows,
+                "latest_period": max(p["report_date"] for p in periods)}
+
     def funds(self, group_id: str, day: date | None = None) -> dict[str, Any]:
         """Each fund of a group on ``day`` (default: the last complete day):
         size, that day's flow and flows over the 5/20/60 sessions ending then."""
@@ -186,6 +238,17 @@ class EtfQueries:
             })
         rows.sort(key=lambda row: -(row["aum"] or 0))
         return {"date": dates[-1], "rows": rows}
+
+
+def _classified(holders: pd.DataFrame, config: dict) -> pd.DataFrame:
+    """Holder classes (configs/etf/broad_groups.json holder_classes) assigned at query time."""
+    classes = {c["id"]: c["patterns"] for c in config.get("holder_classes", [])}
+    frame = holders.copy()
+    for column in ("report_date", "notice_date"):
+        frame[column] = pd.to_datetime(frame[column]).dt.date
+    frame["feeder"] = frame["feeder"].fillna(False).astype(bool)
+    frame["holder_class"] = [classify_holder(str(name), classes) for name in frame["holder"]]
+    return frame
 
 
 def _num(value: Any) -> float | None:

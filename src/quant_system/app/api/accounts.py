@@ -16,8 +16,10 @@ from ...decision.accounts import create_account, replay
 from ...decision.review import (
     Operator,
     ReviewError,
+    apply_corporate_action,
     commit_holdings,
     parse_holdings_text,
+    pending_corporate_actions,
     preview_holdings,
     record_fill,
     reverse as reverse_entry,
@@ -334,6 +336,50 @@ def holdings_commit(account_id: str, body: HoldingsCommitIn, principal: Principa
         batch = _review(session, lambda: commit_holdings(session, account, body.batch_id, _operator(principal),
                                                          body.reason))
     return {"batch_id": batch.batch_id, "status": batch.status}
+
+
+class CorporateActionIn(BaseModel):
+    event_id: str = Field(min_length=1, max_length=96)
+    new_quantity: int = Field(ge=0)
+    cash: str = Field(default="0", max_length=24)  # CNY
+    reason: str = Field(default="除权除息", max_length=200)
+
+
+def _corporate_actions(request: Request, session: Session, account: Account) -> list[dict]:
+    market = request.app.state.market
+    if account.mode != "manual" or not market.available():
+        return []
+    symbols = sorted(replay(session, account.account_id).positions)
+    events = session.scalars(select(PositionEvent.symbol).where(PositionEvent.account_id == account.account_id,
+                                                                PositionEvent.symbol.is_not(None)))
+    symbols = sorted(set(symbols) | set(events))  # also names sold since the ex-date
+    since = account.holdings_confirmed_date or account.start_date
+    return pending_corporate_actions(session, account, market.corporate_plans(symbols, since), date.today())
+
+
+@router.get("/accounts/{account_id}/corporate-actions")
+def corporate_actions(account_id: str, request: Request, _: Principal = Depends(view),
+                      session: Session = Depends(get_session)) -> dict:
+    """Ex-rights and ex-dividend adjustments a manual account has not recorded, with the suggested quantities."""
+    account = _account(session, account_id)
+    rows = _corporate_actions(request, session, account)
+    names = request.app.state.market.names(sorted({r["symbol"] for r in rows})) if rows else {}
+    return {"rows": [{**r, "ex_date": r["ex_date"].isoformat(), "name": names.get(r["symbol"])} for r in rows]}
+
+
+@router.post("/accounts/{account_id}/corporate-actions", status_code=201)
+def apply_corporate_action_route(account_id: str, body: CorporateActionIn, request: Request,
+                                 principal: Principal = Depends(edit), session: Session = Depends(get_session)) -> dict:
+    account = _account(session, account_id)
+    with LEDGER_WRITES:
+        pending = next((r for r in _corporate_actions(request, session, account) if r["event_id"] == body.event_id),
+                       None)
+        if pending is None:
+            raise api_error(409, "stale", "这项除权调整已经处理过，或已不适用")
+        event = _review(session, lambda: apply_corporate_action(
+            session, account, pending, body.new_quantity, _fen(body.cash, "现金") or 0, _operator(principal),
+            body.reason, utc_now()))
+    return {"event_id": event.event_id}
 
 
 @router.post("/position-events/{event_id}/reverse")

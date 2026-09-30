@@ -213,9 +213,26 @@ class MarketQueries:
                              "AND notice_date IS NOT NULL GROUP BY report_date ORDER BY notice_date"),
             "risk": query("SELECT status, start_date, end_date, start_title FROM risk_warning_intervals "
                           "WHERE symbol = ? ORDER BY start_date"),
-            "suspensions": query("SELECT suspend_start, suspend_end, reason FROM suspension_events WHERE symbol = ? "
-                                 "AND suspend_start IS NOT NULL ORDER BY suspend_start"),
+            "suspensions": query("SELECT suspend_start, end_date AS suspend_end, end_inferred, reason "
+                                 "FROM suspension_spans WHERE symbol = ? ORDER BY suspend_start")
+            or query("SELECT suspend_start, suspend_end, reason FROM suspension_events WHERE symbol = ? "
+                     "AND suspend_start IS NOT NULL ORDER BY suspend_start"),
         }
+
+    def corporate_plans(self, symbols: list[str], since: date) -> list[dict[str, Any]]:
+        """Implemented dividend and bonus-share plans of ``symbols`` going ex on or after ``since``."""
+        if not symbols:
+            return []
+        try:
+            frame = self._query(
+                "SELECT symbol, ex_date, any_value(cash_per_10) AS cash_per_10, any_value(bonus_per_10) AS bonus_per_10, "
+                "any_value(transfer_per_10) AS transfer_per_10, any_value(plan_profile) AS plan_profile "
+                f"FROM dividends WHERE ex_date IS NOT NULL AND ex_date >= ? AND symbol IN ({', '.join('?' for _ in symbols)}) "
+                "GROUP BY symbol, ex_date ORDER BY ex_date, symbol", [since, *symbols])
+        except duckdb.CatalogException:  # a database without dividends
+            return []
+        frame["ex_date"] = pd.to_datetime(frame["ex_date"]).dt.date
+        return [{k: _clean(v) if k != "ex_date" else v for k, v in row.items()} for row in frame.to_dict("records")]
 
     def fundamentals(self, symbol: str, periods: int = 8) -> list[dict[str, Any]]:
         frame = self._query(

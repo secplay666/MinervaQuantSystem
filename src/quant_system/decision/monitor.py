@@ -62,7 +62,7 @@ def monitor_holdings(marked: MarkedAccount, market: MarketData, rules: MarketRul
             alerts.append(Alert("M4", "warning", f"{symbol} 次日停牌", f"已公告 {next_day} 停牌", symbol))
         if symbol in ex_next:
             alerts.append(Alert("M5", "info", f"{symbol} 次日除权除息", f"除权日 {next_day}", symbol,
-                                "除权后请核对持仓数量" if manual else None))
+                                "除权后在账户页确认送转和分红（系统已算好建议数量）" if manual else None))
         if market.has_bar[i, j]:
             if closed_at_limit(market, rules, i, j) == "down":
                 alerts.append(Alert("M6", "warning", f"{symbol} 今日跌停", f"{day} 收盘跌停", symbol))
