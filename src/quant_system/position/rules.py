@@ -351,3 +351,24 @@ def base_prompts(dates: list[date], closes: np.ndarray, opens: np.ndarray, volum
                 events.append(Event(day, rule, 4, f"疑似筑底完成（{text}），请复核后再转右侧", round(close, 4), 0.0,
                                     None, f"{rule}:{dates[period_start]}"))
     return events
+
+
+def phases(dates: list[date], closes: np.ndarray, structure: Structure, p: RuleParams) -> dict[date, tuple[str, float]]:
+    """(phase, completion) of a structure on each session from its effective date:
+    the main index's position for the entry gate and the final reduction."""
+    phase, peak = PENDING, None
+    out: dict[date, tuple[str, float]] = {}
+    for day, close in zip(dates, closes):
+        if day < structure.effective or not np.isfinite(close):
+            continue
+        close = float(close)
+        if phase == PENDING and close > structure.neckline:
+            phase, peak = ACTIVE, close
+        elif phase in (ACTIVE, REALIZED):
+            peak = max(peak, close)
+            if phase == ACTIVE and structure.completion(peak) >= p.realized:
+                phase = REALIZED
+            elif phase == REALIZED and close <= peak * (1 - p.exhausted):
+                phase = EXHAUSTED
+        out[day] = (phase, structure.completion(close))
+    return out

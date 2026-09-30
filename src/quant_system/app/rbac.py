@@ -22,12 +22,15 @@ PERMISSIONS: dict[str, tuple[str, str]] = {
     "user:manage": ("管理用户与角色", "系统"),
     "audit:view": ("查看审计日志", "系统"),
     "notify:manage": ("查看通知渠道与发送测试消息", "系统"),
+    "position:use": ("使用仓位管家（自己的标的库、标签和结构）", "仓位管家"),
 }
 VIEW = {code for code in PERMISSIONS if code.endswith(":view") and code != "audit:view"}
 ROLES: dict[str, tuple[str, str, set[str]]] = {
     "admin": ("管理员", "全部权限", set(PERMISSIONS)),
-    "reviewer": ("审核员", "查看、审核交易意图、回填成交与持仓", VIEW | {"decision:approve", "account:edit"}),
-    "viewer": ("只读", "只能查看", set(VIEW)),
+    "reviewer": ("审核员", "查看、审核交易意图、回填成交与持仓", VIEW | {"decision:approve", "account:edit",
+                                                                    "position:use"}),
+    # Everyone keeps their own library in the position manager.
+    "viewer": ("只读", "只能查看；可以使用自己的仓位管家", VIEW | {"position:use"}),
 }
 
 

@@ -392,3 +392,106 @@ class EventPush(Base):
     attempted_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
     sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     error: Mapped[str | None] = mapped_column(Text)
+
+
+# -- position manager (仓位管家, docs/design/position-manager.md §8) -------------------------------------
+
+
+class PmItem(Base):
+    """A security or index in a user's library, with the user's direction label."""
+
+    __tablename__ = "pm_items"
+    __table_args__ = (UniqueConstraint("user_id", "symbol", name="uq_pm_items_user_symbol"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    symbol: Mapped[str] = mapped_column(String(16))
+    kind: Mapped[str] = mapped_column(String(8))  # stock | index | etf
+    name: Mapped[str | None] = mapped_column(String(64))
+    groups: Mapped[list[str]] = mapped_column(JSON, default=list)
+    star: Mapped[int] = mapped_column(Integer, default=0)
+    label: Mapped[str] = mapped_column(String(12), default="undecided")  # right | top | base | left | undecided
+    label_source: Mapped[str | None] = mapped_column(String(8))  # manual | system (adopted the stage view)
+    primary_index: Mapped[str | None] = mapped_column(String(16))  # None: the default for the security
+    note: Mapped[str | None] = mapped_column(Text)
+    archived_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
+
+
+class PmLabelChange(Base):
+    """A label in force from ``effective_date`` (the rules replay labels over time)."""
+
+    __tablename__ = "pm_label_changes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("pm_items.id", ondelete="CASCADE"), index=True)
+    label: Mapped[str] = mapped_column(String(12))
+    source: Mapped[str] = mapped_column(String(8))  # manual | system
+    effective_date: Mapped[date] = mapped_column(Date)
+    stage_reason: Mapped[str | None] = mapped_column(Text)  # the stage view adopted, if any
+    created_by: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
+
+
+class PmLevel(Base):
+    """A confirmed price level of a structure round, versioned (a change adds a
+    version and supersedes the previous one).  ``price``/``lower`` are hfq
+    prices; ``entered_*`` what the user saw, in ``basis`` with ``factor``."""
+
+    __tablename__ = "pm_levels"
+    __table_args__ = (Index("ix_pm_levels_item_kind", "item_id", "kind", "status"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("pm_items.id", ondelete="CASCADE"))
+    round_no: Mapped[int] = mapped_column(Integer, default=1)
+    kind: Mapped[str] = mapped_column(String(16))  # neckline | target | top_neckline | base_zone | reference
+    price: Mapped[float] = mapped_column(Float)
+    lower: Mapped[float | None] = mapped_column(Float)
+    entered_price: Mapped[float] = mapped_column(Float)
+    entered_lower: Mapped[float | None] = mapped_column(Float)
+    basis: Mapped[str] = mapped_column(String(8))  # qfq | none | hfq | index
+    factor: Mapped[float] = mapped_column(Float, default=1.0)  # hfq factor the entered price was converted with
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(12), default="active")  # active | superseded
+    source: Mapped[str] = mapped_column(String(12))  # manual | drawing | pattern
+    effective_date: Mapped[date] = mapped_column(Date)
+    top_mode: Mapped[str | None] = mapped_column(String(12))  # top_neckline: observe | confirmed
+    note: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[str] = mapped_column(String(64))
+    confirmed_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
+
+
+class PmSignal(Base):
+    """A rule event on a session, kept once per item and dedupe key."""
+
+    __tablename__ = "pm_signals"
+    __table_args__ = (UniqueConstraint("item_id", "dedupe_key", name="uq_pm_signals_item_key"),
+                      Index("ix_pm_signals_user_date", "user_id", "trade_date"))
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    item_id: Mapped[int] = mapped_column(ForeignKey("pm_items.id", ondelete="CASCADE"))
+    trade_date: Mapped[date] = mapped_column(Date)
+    rule: Mapped[str] = mapped_column(String(24))
+    priority: Mapped[int] = mapped_column(Integer)
+    message: Mapped[str] = mapped_column(Text)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    dedupe_key: Mapped[str] = mapped_column(String(96))
+    read_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
+
+
+class PmSettings(Base):
+    """A user's stage parameters, rule parameters and label mode."""
+
+    __tablename__ = "pm_settings"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    stage_preset: Mapped[str] = mapped_column(String(16), default="steady")
+    stage_params: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # changes to the preset
+    rule_params: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    label_mode: Mapped[str] = mapped_column(String(8), default="suggest")  # suggest | manual
+    push_daily: Mapped[bool] = mapped_column(Boolean, default=False)
+    evaluated_through: Mapped[date | None] = mapped_column(Date)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
