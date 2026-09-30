@@ -1,4 +1,4 @@
-import { initPreferences } from '@vben/preferences';
+import { initPreferences, updatePreferences } from '@vben/preferences';
 import { unmountGlobalLoading } from '@vben/utils';
 
 import { overridesPreferences, preferencesExtension } from './preferences';
@@ -19,6 +19,13 @@ async function initApplication() {
     namespace,
     overrides: overridesPreferences,
   });
+
+  // A browser's saved preferences win over new defaults; apply Minerva's changes to them once.
+  const MIGRATION_KEY = `${namespace}-minerva-preferences`;
+  if (localStorage.getItem(MIGRATION_KEY) !== '1') {
+    updatePreferences({ tabbar: { enable: false } });
+    localStorage.setItem(MIGRATION_KEY, '1');
+  }
 
   // 启动应用并挂载
   // vue应用主要逻辑及视图

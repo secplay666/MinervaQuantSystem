@@ -212,6 +212,12 @@ def register(body: RegisterIn, request: Request, session: Session = Depends(get_
     return {"username": user.username, "roles": roles}
 
 
+# Two browser tabs of one user may refresh with the same token moments apart: the
+# later one presents a token the earlier one has just rotated.  Within this window
+# that is refused without being treated as a theft.
+ROTATION_GRACE = timedelta(seconds=30)
+
+
 @router.post("/refresh")
 def refresh(body: RefreshIn, request: Request, session: Session = Depends(get_session)) -> dict:
     now = utc_now()
@@ -219,8 +225,10 @@ def refresh(body: RefreshIn, request: Request, session: Session = Depends(get_se
     if row is None:
         raise api_error(401, "invalid_token", "请重新登录")
     user = session.get(User, row.user_id)
+    if row.revoked_at is not None and now - row.revoked_at <= ROTATION_GRACE:
+        raise api_error(401, "token_rotated", "登录凭证已在其他标签页更新，请重试")
     if row.revoked_at is not None:
-        # A rotated-away token came back: assume it was stolen and end every session.
+        # A rotated-away token came back later: assume it was stolen and end every session.
         session.execute(update(RefreshToken).where(RefreshToken.user_id == row.user_id,
                                                    RefreshToken.revoked_at.is_(None)).values(revoked_at=now))
         audit(session, user.username if user else "?", "auth.refresh_reuse", "user", str(row.user_id),
@@ -232,9 +240,9 @@ def refresh(body: RefreshIn, request: Request, session: Session = Depends(get_se
     # Conditional, so of two simultaneous uses of one token only one rotates it.
     rotated = session.execute(update(RefreshToken).where(RefreshToken.id == row.id,
                                                          RefreshToken.revoked_at.is_(None)).values(revoked_at=now))
-    if rotated.rowcount != 1:
+    if rotated.rowcount != 1:  # the other of two simultaneous uses won
         session.rollback()
-        raise api_error(401, "token_reused", "登录凭证已失效，请重新登录")
+        raise api_error(401, "token_rotated", "登录凭证已在其他标签页更新，请重试")
     tokens = issue_tokens(request, session, user)
     session.commit()
     return tokens

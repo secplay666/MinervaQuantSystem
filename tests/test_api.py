@@ -123,9 +123,24 @@ def test_refresh_tokens_rotate_and_reuse_ends_all_sessions(env) -> None:
     first = login(client, "carol")
     second = client.post("/api/v1/auth/refresh", json={"refresh_token": first["refresh_token"]}).json()
     assert second["refresh_token"] != first["refresh_token"]
+    # Right away (another browser tab racing): refused, but nothing else is revoked.
+    raced = client.post("/api/v1/auth/refresh", json={"refresh_token": first["refresh_token"]})
+    assert raced.status_code == 401 and raced.json()["detail"]["code"] == "token_rotated"
+    third = client.post("/api/v1/auth/refresh", json={"refresh_token": second["refresh_token"]})
+    assert third.status_code == 200
+    # Later: a theft, so every session ends.
+    from datetime import timedelta
+
+    from quant_system.app.db.models import RefreshToken
+    from quant_system.app.security import token_hash
+
+    with sessions() as session:
+        row = session.scalar(select(RefreshToken).where(RefreshToken.token_hash == token_hash(first["refresh_token"])))
+        row.revoked_at = row.revoked_at - timedelta(minutes=5)
+        session.commit()
     reused = client.post("/api/v1/auth/refresh", json={"refresh_token": first["refresh_token"]})
     assert reused.status_code == 401 and reused.json()["detail"]["code"] == "token_reused"
-    assert client.post("/api/v1/auth/refresh", json={"refresh_token": second["refresh_token"]}).status_code == 401
+    assert client.post("/api/v1/auth/refresh", json={"refresh_token": third.json()["refresh_token"]}).status_code == 401
 
 
 def test_permissions_by_role(env) -> None:

@@ -46,14 +46,28 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
     }
   }
 
+  /**
+   * Browser tabs share the stored tokens but each keeps its own copy in memory.
+   * One tab refreshes at a time (Web Locks); a tab that waited, or whose copy is
+   * older than the stored one, takes the tokens another tab has just stored
+   * instead of presenting a rotated refresh token.
+   */
   async function doRefreshToken() {
     const accessStore = useAccessStore();
-    const refresh = accessStore.refreshToken;
-    if (!refresh) throw new Error('no refresh token');
-    const tokens = await refreshTokenApi(refresh);
-    accessStore.setAccessToken(tokens.access_token);
-    accessStore.setRefreshToken(tokens.refresh_token);
-    return tokens.access_token;
+    const refresh = async () => {
+      const mine = accessStore.refreshToken;
+      (accessStore as unknown as { $hydrate?: () => void }).$hydrate?.();
+      if (accessStore.refreshToken && accessStore.refreshToken !== mine && accessStore.accessToken) {
+        return accessStore.accessToken;
+      }
+      const current = accessStore.refreshToken;
+      if (!current) throw new Error('no refresh token');
+      const tokens = await refreshTokenApi(current);
+      accessStore.setAccessToken(tokens.access_token);
+      accessStore.setRefreshToken(tokens.refresh_token);
+      return tokens.access_token;
+    };
+    return navigator.locks ? navigator.locks.request('minerva-token-refresh', refresh) : refresh();
   }
 
   function formatToken(token: null | string) {

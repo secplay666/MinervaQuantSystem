@@ -34,6 +34,10 @@ export const overridesPreferences = defineOverridesPreferences({
     enable: true,
     source: '/favicon.ico',
   },
+  // Pages open in the one window or, from the chart, in real browser tabs: no in-app tab bar.
+  tabbar: {
+    enable: false,
+  },
   widget: {
     globalSearch: false,
     languageToggle: false,

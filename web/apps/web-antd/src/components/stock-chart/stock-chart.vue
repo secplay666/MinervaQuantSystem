@@ -835,7 +835,9 @@ const PERIOD_LABEL: Record<BarPeriod, string> = { day: '日', month: '月', week
        tabindex="0" @keydown="onKeydown">
     <!-- top toolbar -->
     <div class="flex flex-wrap items-center gap-2 border-b px-2 py-1.5">
-      <b v-if="name" class="mr-1">{{ name }}</b>
+      <slot name="header">
+        <b v-if="name" class="mr-1">{{ name }}</b>
+      </slot>
       <Segmented v-model:value="settings.period" size="small"
                  :options="[{ label: '日K', value: 'day' }, { label: '周K', value: 'week' }, { label: '月K', value: 'month' }]" />
       <Segmented v-if="!isIndex" v-model:value="settings.adjust" size="small"
