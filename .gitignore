@@ -15,6 +15,7 @@ data/staging/
 data/quarantine/
 data/archive/
 data/features/
+data/app/
 data/*.duckdb
 data/*.duckdb.wal
 data/*.duckdb.building*

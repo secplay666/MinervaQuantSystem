@@ -1,0 +1,19 @@
+[Unit]
+Description=MinervaQuantSystem development API on its own copy of the data (HTTP on 127.0.0.1)
+Documentation=file://@REPO@/README.md
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@
+Environment=MINERVA_WEB_DIR=@REPO@/web/apps/web-antd/dist
+Environment=MINERVA_MOBILE_DIR=@REPO@/web/apps/mobile/dist
+# Its own settings (secret, MINERVA_ENV=development) and its own business database under @REPO@/data/app.
+ExecStart=@REPO@/.venv/bin/quant-app --root @REPO@ --env-file @ENV_FILE@ serve --host 127.0.0.1 --port @PORT@ --no-tls
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+Nice=10
+
+[Install]
+WantedBy=default.target
