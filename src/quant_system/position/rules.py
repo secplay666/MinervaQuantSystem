@@ -315,6 +315,8 @@ def _waiting(phase, weight, entry_weight, completion, rungs_done, s: Structure, 
         return "筑底：等形态和筑底判据", s.neckline, "站上颈线"
     if (phase == EXHAUSTED or not can_enter) and weight <= 0:
         return ("本轮结构已衰竭，等待下一轮" if phase == EXHAUSTED else "本轮已离场，等待下一轮结构"), None, None
+    if label == TOP and weight <= 0:
+        return "顶部：不再入场（改为右侧才会入场）", None, None
     if weight <= 0:
         if close is not None and close > s.neckline:
             return ("已突破，等主指数右侧" if waited else "已突破，等入场条件"), s.neckline, "颈线"

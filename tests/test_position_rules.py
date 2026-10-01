@@ -136,3 +136,8 @@ def test_rule_parameters_validate() -> None:
         RuleParams.from_dict({"ladder": [[0.8, 0.5], [0.7, 0.7]]})  # not increasing
     assert RuleParams.from_dict(RuleParams().to_dict()) == RuleParams()
     assert REALIZED == "realized"
+
+
+def test_a_top_label_without_a_position_says_no_entry() -> None:
+    out = run([10.5, 11.0], labels=[(D0, TOP)])
+    assert out.weight == 0 and out.waiting_for.startswith("顶部：不再入场") and out.next_price is None
