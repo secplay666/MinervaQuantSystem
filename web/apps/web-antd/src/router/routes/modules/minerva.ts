@@ -60,10 +60,61 @@ const routes: RouteRecordRaw[] = [
     meta: { authority: ['event:view'], icon: 'lucide:bell', order: 4, title: '通知中心' },
   },
   {
-    name: 'Chart',
-    path: '/chart', // ?symbol=600000 or sh000001; one tab for all symbols (fullPathKey: false)
-    component: () => import('#/views/market/chart.vue'),
-    meta: { authority: ['market:view'], fullPathKey: false, icon: 'lucide:chart-candlestick', order: 4, title: '看盘' },
+    name: 'ChartGroup',
+    path: '/watch',
+    meta: { authority: ['market:view', 'position:use'], icon: 'lucide:chart-candlestick', order: 4, title: '看盘与仓位' },
+    children: [
+      {
+        name: 'Chart',
+        path: '/chart', // ?symbol=600000 or sh000001; one tab for all symbols (fullPathKey: false)
+        component: () => import('#/views/market/chart.vue'),
+        meta: { authority: ['market:view'], fullPathKey: false, icon: 'lucide:chart-candlestick', title: '看盘' },
+      },
+      {
+        name: 'PmBoard',
+        path: '/position/board',
+        component: () => import('#/views/position/board.vue'),
+        meta: { authority: ['position:use'], icon: 'lucide:gauge', title: '仓位看板' },
+      },
+      {
+        name: 'PmLibrary',
+        path: '/position/library',
+        component: () => import('#/views/position/library.vue'),
+        meta: { authority: ['position:use'], icon: 'lucide:library', title: '标的库' },
+      },
+      {
+        name: 'PmBreakouts',
+        path: '/position/breakouts',
+        component: () => import('#/views/position/lists.vue'),
+        props: { kind: 'breakouts' },
+        meta: { authority: ['position:use'], icon: 'lucide:trending-up', title: '突破确立' },
+      },
+      {
+        name: 'PmTops',
+        path: '/position/tops',
+        component: () => import('#/views/position/lists.vue'),
+        props: { kind: 'tops' },
+        meta: { authority: ['position:use'], icon: 'lucide:mountain', title: '头部确立' },
+      },
+      {
+        name: 'PmBacktest',
+        path: '/position/backtest',
+        component: () => import('#/views/position/backtest.vue'),
+        meta: { authority: ['position:use'], icon: 'lucide:flask-conical', title: '阶段回测' },
+      },
+      {
+        name: 'PmSettings',
+        path: '/position/settings',
+        component: () => import('#/views/position/settings.vue'),
+        meta: { authority: ['position:use'], icon: 'lucide:sliders-horizontal', title: '规则设置' },
+      },
+      {
+        name: 'PmItem',
+        path: '/position/items/:id',
+        component: () => import('#/views/position/item.vue'),
+        meta: { activePath: '/position/library', authority: ['position:use'], hideInMenu: true, title: '标的结构' },
+      },
+    ],
   },
   {
     name: 'DataHealth',

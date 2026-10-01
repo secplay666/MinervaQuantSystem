@@ -16,7 +16,7 @@ const items = ref<EventItem[]>([]);
 const unread = ref(0);
 const loading = ref(false);
 const filter = reactive<{ category?: string; level?: string; unread: boolean }>({ unread: false });
-const CATEGORY: Record<string, string> = { account: '账户', data: '数据', decision: '决策', risk: '风险', system: '系统' };
+const CATEGORY: Record<string, string> = { account: '账户', data: '数据', decision: '决策', position: '仓位管家', risk: '风险', system: '系统' };
 
 async function load() {
   loading.value = true;

@@ -1,22 +1,29 @@
 <script lang="ts" setup>
-import { computed, ref, watch } from 'vue';
+import type { PmChart, PmLevelKind } from '#/api';
+
+import { computed, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
+import { useAccess } from '@vben/access';
 import { Page } from '@vben/common-ui';
 
-import { AutoComplete, Button, Tag, Tooltip } from 'ant-design-vue';
+import { AutoComplete, Button, Checkbox, Form, Input, InputNumber, message, Modal, Radio, Tag, Tooltip } from 'ant-design-vue';
 
-import { indicesApi, instrumentApi, isIndexSymbol, searchApi } from '#/api';
+import { indicesApi, instrumentApi, isIndexSymbol, LEVEL_NAMES, PM_LABEL, pmAddItemsApi, pmChartApi, pmLabelApi, pmLevelApi,
+         searchApi } from '#/api';
 import StockChart from '#/components/stock-chart/stock-chart.vue';
 
 const LAST_KEY = 'minerva.chart.last';
 const route = useRoute();
 const router = useRouter();
+const { hasAccessByCodes } = useAccess();
 const symbol = computed(() => String(route.query.symbol || localStorage.getItem(LAST_KEY) || '600000'));
 const info = ref<Record<string, any>>();
 const isIndex = computed(() => isIndexSymbol(symbol.value));
 const query = ref('');
 const options = ref<{ label: string; value: string }[]>([]);
+const canPm = computed(() => hasAccessByCodes(['position:use']));
+const pm = ref<null | PmChart>(null);
 
 const BOARD: Record<string, string> = { BSE: '北交所', CHINEXT: '创业板', SSE_MAIN: '沪市主板', STAR: '科创板', SZSE_MAIN: '深市主板' };
 
@@ -49,8 +56,76 @@ function onKeydown(event: KeyboardEvent) {
   if (code) open(code, true);
 }
 
+// -- 仓位管家: the stage view, the label and the structure of this code ---------------------------
+async function loadPm(code = symbol.value) {
+  pm.value = canPm.value ? await pmChartApi(code).catch(() => null) : null;
+}
+
+async function ensureItem(): Promise<null | number> {
+  if (pm.value?.item_id) return pm.value.item_id;
+  const out = await pmAddItemsApi(symbol.value);
+  if (out.errors.length) {
+    message.error(out.errors.join('；'));
+    return null;
+  }
+  await loadPm();
+  return pm.value?.item_id ?? null;
+}
+
+async function addToLibrary() {
+  if (await ensureItem()) message.success('已加入标的库');
+}
+
+async function adoptView() {
+  const id = await ensureItem();
+  if (!id) return;
+  const detail = await pmLabelApi(id, { use_view: true });
+  message.success(`标签改为 ${detail.item.label_name}（采纳系统观点）`);
+  await loadPm();
+}
+
+const confirm = reactive<{ basis: string; kind: PmLevelKind; lower?: number; new_round: boolean; note: string; open: boolean;
+                           pattern: string; price?: number; saving: boolean; target?: number; top_mode: 'confirmed' | 'observe' }>({
+  basis: 'qfq', kind: 'neckline', new_round: false, note: '', open: false, pattern: '', saving: false, top_mode: 'observe',
+});
+
+function onSetLevel(value: { basis: string; kind: PmLevelKind; lower?: number; price: number }) {
+  Object.assign(confirm, { ...value, new_round: false, note: '', open: true, pattern: '', target: undefined, top_mode: 'observe' });
+}
+
+function onAdoptPattern(value: { basis: string; name: string; neckline: number; target: number }) {
+  Object.assign(confirm, { basis: value.basis, kind: 'neckline', lower: undefined, new_round: false, note: `采纳自动形态：${value.name}`,
+                           open: true, pattern: value.name, price: value.neckline, target: value.target });
+}
+
+async function saveLevels() {
+  if (!confirm.price || (confirm.pattern && !confirm.target)) return;
+  confirm.saving = true;
+  try {
+    const id = await ensureItem();
+    if (!id) return;
+    const basis = confirm.basis as 'hfq' | 'none' | 'qfq';
+    const note = confirm.note || undefined;
+    if (confirm.pattern) {
+      await pmLevelApi(id, { basis, kind: 'neckline', new_round: confirm.new_round, note, price: confirm.price, source: 'pattern' });
+      await pmLevelApi(id, { basis, kind: 'target', note, price: confirm.target!, source: 'pattern' });
+    } else {
+      await pmLevelApi(id, { basis, kind: confirm.kind, lower: confirm.kind === 'base_zone' ? confirm.lower : undefined,
+                             new_round: confirm.new_round, note, price: confirm.price, source: 'drawing',
+                             top_mode: confirm.kind === 'top_neckline' ? confirm.top_mode : undefined });
+    }
+    message.success(confirm.pattern ? '已采纳为结构（颈线和目标）' : `已确认${LEVEL_NAMES[confirm.kind]}`);
+    confirm.open = false;
+    await loadPm();
+  } finally {
+    confirm.saving = false;
+  }
+}
+
 watch(symbol, async (code) => {
   localStorage.setItem(LAST_KEY, code);
+  pm.value = null;
+  void loadPm(code);
   info.value = isIndexSymbol(code)
     ? (await indicesApi().catch(() => [])).find((i) => i.symbol === code)
     : await instrumentApi(code).catch(() => undefined);
@@ -61,15 +136,29 @@ watch(symbol, async (code) => {
 <template>
   <!-- No page header: the stock's name, tags and the search sit in the chart's first toolbar row. -->
   <Page auto-content-height content-class="p-2">
-    <StockChart :key="'chart'" :symbol="symbol" height="100%">
+    <StockChart :key="'chart'" :symbol="symbol" :structure="pm" height="100%" @adopt-pattern="onAdoptPattern" @set-level="onSetLevel">
       <template #header>
         <b class="text-base">{{ info?.name ?? symbol }}</b>
         <span class="text-muted-foreground">{{ symbol }}</span>
         <Tag v-if="info && isIndex" color="blue" class="mr-0">指数</Tag>
         <template v-else-if="info">
           <Tag class="mr-0">{{ BOARD[info.board] ?? info.board }}</Tag>
-          <Tag v-if="info.industry" class="mr-0">{{ info.industry.l1_name }} / {{ info.industry.l2_name }}</Tag>
+          <Tooltip v-if="info.industry" :title="`${info.industry.l1_name} / ${info.industry.l2_name}`">
+            <Tag class="mr-0">{{ info.industry.l1_name }}</Tag>
+          </Tooltip>
           <Tag v-if="info.risk_status !== 'normal'" color="error" class="mr-0">{{ info.risk_status }}</Tag>
+        </template>
+        <template v-if="pm">
+          <!-- One tag: the user's label (click: the item's structure page) and the system's view (hover: why). -->
+          <Tooltip :title="pm.stage ? `系统观点：${pm.stage.name}。${pm.stage.reason}` : '手工模式，不显示系统观点'">
+            <Tag :color="PM_LABEL[pm.label ?? pm.stage?.label ?? 'undecided']?.color" class="mr-0"
+                 :class="pm.item_id ? 'cursor-pointer' : ''" @click="pm.item_id && router.push(`/position/items/${pm.item_id}`)">
+              {{ pm.item_id && pm.label ? PM_LABEL[pm.label]?.name : '未入库' }}{{ pm.stage ? ` · 观点${pm.stage.name}` : '' }}
+            </Tag>
+          </Tooltip>
+          <Button v-if="pm.stage && pm.stage.stage !== 'unknown' && pm.stage.label !== pm.label" size="small" type="link"
+                  class="!px-0" @click="adoptView">采纳</Button>
+          <Button v-if="!pm.item_id" size="small" type="link" class="!px-0" @click="addToLibrary">入库</Button>
         </template>
         <!-- Capture phase: the select handles Enter itself before a bubbling listener would see it. -->
         <Tooltip title="回车在本页打开，Ctrl+回车在新的浏览器标签打开">
@@ -85,5 +174,33 @@ watch(symbol, async (code) => {
         <span class="mx-1 h-4 border-l" />
       </template>
     </StockChart>
+
+    <Modal v-model:open="confirm.open" :confirm-loading="confirm.saving" :title="confirm.pattern ? `采纳为结构：${confirm.pattern}` : `确认${LEVEL_NAMES[confirm.kind]}`"
+           ok-text="确认" @ok="saveLevels">
+      <Form :label-col="{ style: { width: '90px' } }">
+        <template v-if="confirm.pattern">
+          <Form.Item label="颈线"><InputNumber v-model:value="confirm.price" :min="0" :step="0.01" class="!w-40" /></Form.Item>
+          <Form.Item label="量度目标"><InputNumber v-model:value="confirm.target" :min="0" :step="0.01" class="!w-40" /></Form.Item>
+        </template>
+        <template v-else>
+          <Form.Item v-if="confirm.kind === 'base_zone'" label="下沿"><InputNumber v-model:value="confirm.lower" :min="0" :step="0.01" class="!w-40" /></Form.Item>
+          <Form.Item :label="confirm.kind === 'base_zone' ? '上沿' : '价格'">
+            <InputNumber v-model:value="confirm.price" :min="0" :step="0.01" class="!w-40" />
+          </Form.Item>
+          <Form.Item v-if="confirm.kind === 'top_neckline'" label="方式">
+            <Radio.Group v-model:value="confirm.top_mode">
+              <Radio value="observe">先观察（跌破再清仓）</Radio>
+              <Radio value="confirmed">立即确认（清仓）</Radio>
+            </Radio.Group>
+          </Form.Item>
+        </template>
+        <Form.Item label="新一轮"><Checkbox v-model:checked="confirm.new_round">上一轮结构已结束，这是新的一轮</Checkbox></Form.Item>
+        <Form.Item label="备注"><Input v-model:value="confirm.note" :maxlength="500" /></Form.Item>
+      </Form>
+      <div class="text-xs text-gray-500">
+        价格按当前图上的口径（{{ confirm.basis === 'qfq' ? '前复权' : confirm.basis === 'hfq' ? '后复权' : '不复权' }}）理解，系统换算成后复权保存；
+        从今天（最新交易日）起生效，规则不回看更早的历史。{{ pm?.item_id ? '' : '这只还不在标的库中，确认时会自动加入。' }}
+      </div>
+    </Modal>
   </Page>
 </template>

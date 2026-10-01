@@ -10,7 +10,7 @@ import type { Chart, DataLoader, KLineData, Overlay, OverlayCreate, OverlayMode 
 
 import type { AutoLabel, AutoLineData, MarkData, RangeStats } from './extensions';
 
-import type { BarPeriod, ChartAnalysis, ChartMarks, ChartPoint, SavedOverlay } from '#/api';
+import type { BarPeriod, ChartAnalysis, ChartMarks, ChartPoint, PmChart, PmLevelKind, SavedOverlay } from '#/api';
 
 import { computed, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
@@ -22,15 +22,23 @@ import {
 } from 'ant-design-vue';
 import { dispose, init } from 'klinecharts';
 
-import { barsApi, chartAnalysisApi, drawingsApi, etfMarksApi, indexBarsApi, isIndexSymbol, marksApi, saveDrawingsApi } from '#/api';
+import {
+  barsApi, chartAnalysisApi, drawingsApi, etfMarksApi, indexBarsApi, isIndexSymbol, LEVEL_NAMES, marksApi, saveDrawingsApi,
+} from '#/api';
 import { bigYuan, DOWN_COLOR, UP_COLOR } from '#/utils/format';
 
 import { rangeStats, registerChartExtensions } from './extensions';
 
-const props = withDefaults(defineProps<{ height?: number | string; name?: string; symbol: string }>(), { height: 640 });
+const props = withDefaults(defineProps<{ height?: number | string; name?: string; structure?: null | PmChart; symbol: string }>(),
+                           { height: 640, structure: null });
+/** 仓位管家: a selected drawing or an automatic pattern offered as levels (the page confirms them). */
+const emit = defineEmits<{
+  adoptPattern: [value: { basis: string; name: string; neckline: number; target: number }];
+  setLevel: [value: { basis: string; kind: PmLevelKind; lower?: number; price: number }];
+}>();
 
 // -- settings (kept in the browser) -------------------------------------------------------------
-type MarkKind = 'dividends' | 'etf' | 'fills' | 'reports' | 'risk' | 'suspensions';
+type MarkKind = 'dividends' | 'etf' | 'fills' | 'position' | 'reports' | 'risk' | 'suspensions';
 type AutoKind = 'candles' | 'fib' | 'levels' | 'patterns' | 'pivots' | 'trends';
 interface ChartSettings {
   adjust: 'hfq' | 'none' | 'qfq';
@@ -51,7 +59,7 @@ const DEFAULTS: ChartSettings = {
   adjust: 'qfq', axis: 'normal', compare: undefined, magnet: 'weak_magnet', main: ['MA'], panel: true, period: 'day',
   sensitivity: 'medium', subs: ['VOL', 'MACD'],
   auto: { candles: true, fib: false, levels: true, patterns: true, pivots: false, trends: true },
-  marks: { dividends: true, etf: true, fills: true, reports: true, risk: true, suspensions: true },
+  marks: { dividends: true, etf: true, fills: true, position: true, reports: true, risk: true, suspensions: true },
   params: { MA: [5, 10, 20, 60] },
 };
 function loadSettings(): ChartSettings {
@@ -84,7 +92,8 @@ const STATUS_LABEL: Record<string, string> = { confirmed: '已确认', failed: '
 const DIRECTION_COLOR: Record<string, string> = { bearish: DOWN_COLOR, bullish: UP_COLOR, neutral: '#eab308' };
 const LEVEL_COLOR = { resistance: '#f97316', support: '#0ea5e9' };
 const MARK_LABEL: Record<MarkKind, string> = {
-  dividends: '除权除息', etf: 'ETF 异常申赎（指数）', fills: '买卖点', reports: '财报', risk: '风险警示', suspensions: '停牌',
+  dividends: '除权除息', etf: 'ETF 异常申赎（指数）', fills: '买卖点', position: '仓位管家信号', reports: '财报', risk: '风险警示',
+  suspensions: '停牌',
 };
 const DRAW_TOOLS = [
   { label: '线段', name: 'segment', tip: '趋势线：两点确定' },
@@ -267,8 +276,9 @@ function renderMarks() {
   chart.removeOverlay({ groupId: 'marks' });
   quiet = false;
   const data = chart.getDataList();
-  const m = marks.value;
-  if (!data.length || !m) return;
+  // No marks (an ETF, or the request failed): the position manager's lines and badges still show.
+  const m: ChartMarks = marks.value ?? { dividends: [], etf: [], fills: [], reports: [], risk: [], suspensions: [] };
+  if (!data.length) return;
   const slots = new Map<number, { above: MarkData[]; below: MarkData[] }>();
   const events: Record<number, string[]> = {};
   const add = (kind: MarkKind, date: string, badge: Omit<MarkData, 'stack'>, line: string) => {
@@ -302,6 +312,10 @@ function renderMarks() {
     add('suspensions', s.suspend_start, { below: false, color: '#6b7280', text: '停' },
         `停牌${s.suspend_end ? ` 至 ${s.suspend_end}${s.end_inferred ? '（按复牌日推断）' : ''}` : ''}${s.reason ? `：${s.reason}` : ''}`);
   }
+  for (const e of props.structure?.events ?? []) {
+    add('position', e.trade_date, { below: e.rule === 'entry', color: PM_PRIORITY_COLOR[e.priority] ?? '#6b7280',
+                                    text: PM_BADGE[e.rule] ?? '仓' }, `仓位管家·${e.priority_name}：${e.message}`);
+  }
   barEvents.value = events;
   const overlays: OverlayCreate[] = [];
   markStacks = new Map();
@@ -314,7 +328,76 @@ function renderMarks() {
     }
   }
   if (overlays.length) chart.createOverlay(overlays);
+  renderLevels();
   renderAuto(); // candlestick badges stack after the event badges
+}
+
+// -- 仓位管家: confirmed levels as lines, rule events as badges (docs/design/position-manager.md §9) -----
+const PM_PRIORITY_COLOR: Record<number, string> = { 1: '#dc2626', 2: '#f97316', 3: '#2563eb', 4: '#6b7280' };
+const PM_BADGE: Record<string, string> = {
+  base_neckline: '底', base_retest: '底', base_volume: '底', entry: '入', exhausted: '衰', false_break: '假', ladder: '减',
+  realized: '兑', target: '目', top_break: '顶', top_confirmed: '顶', top_watch: '观', trailing: '止', waiting_index: '待',
+};
+const PM_LINE: Record<PmLevelKind, { color: string; dashed?: boolean }> = {
+  base_zone: { color: '#0ea5e9' }, neckline: { color: '#2563eb' }, reference: { color: '#6b7280', dashed: true },
+  target: { color: '#d97706' }, top_neckline: { color: '#dc2626', dashed: true },
+};
+/** Levels are served forward-adjusted: lines are drawn on qfq charts (and indices or ETFs, never adjusted). */
+const levelsDrawable = computed(() => isIndex.value || props.structure?.kind !== 'stock' || settings.adjust === 'qfq');
+const PM_PHASE: Record<string, string> = { active: '进行中', exhausted: '已衰竭', pending: '待突破', realized: '已兑现' };
+const currentLevels = computed(() => {
+  const levels = props.structure?.levels ?? [];
+  const round = Math.max(0, ...levels.map((l) => l.round_no));
+  return levels.filter((l) => l.round_no === round);
+});
+
+function renderLevels() {
+  if (!chart) return;
+  quiet = true;
+  chart.removeOverlay({ groupId: 'pm' });
+  quiet = false;
+  const s = props.structure;
+  const data = chart.getDataList();
+  if (!s || !data.length || !levelsDrawable.value) return;
+  const last = data.at(-1)!;
+  const overlays: OverlayCreate[] = [];
+  for (const lv of currentLevels.value) {
+    const start = data[Math.max(0, barIndexFor(data, lv.effective_date))]!;
+    const style = PM_LINE[lv.kind];
+    if (lv.kind === 'base_zone' && lv.lower) {
+      overlays.push({ extendData: { color: style.color, label: `起涨区 ${lv.lower.toFixed(2)}–${lv.price.toFixed(2)}` } satisfies AutoLineData,
+                      groupId: 'pm', lock: true, name: 'priceZone',
+                      points: [{ timestamp: start.timestamp, value: lv.lower }, { timestamp: last.timestamp, value: lv.price }] });
+      continue;
+    }
+    const lines = [{ label: `${LEVEL_NAMES[lv.kind]} ${lv.price.toFixed(2)}${lv.top_mode === 'observe' ? '（观察）' : ''}`,
+                     price: lv.price, ...style }];
+    if (lv.kind === 'neckline') lines.push({ color: '#9ca3af', dashed: true, label: `失效线 ${(lv.price * 0.95).toFixed(2)}`, price: lv.price * 0.95 });
+    for (const line of lines) {
+      overlays.push({ extendData: { color: line.color, dashed: line.dashed, extend: true, label: line.label, width: 1.5 } satisfies AutoLineData,
+                      groupId: 'pm', lock: true, name: 'autoLine',
+                      points: [{ timestamp: start.timestamp, value: line.price }, { timestamp: last.timestamp, value: line.price }] });
+    }
+  }
+  if (overlays.length) chart.createOverlay(overlays);
+}
+
+/** The selected drawing's prices: a line's latest end, or a box's two edges. */
+function requestLevel(kind: PmLevelKind) {
+  const overlay = chart?.getOverlays({ id: selectedId.value })[0];
+  const values = (overlay?.points ?? []).map((p) => p.value).filter((v): v is number => typeof v === 'number');
+  if (!values.length) return;
+  const round = (v: number) => Math.round(v * 100) / 100;
+  const zone = kind === 'base_zone' && values.length > 1;
+  emit('setLevel', { basis: isIndex.value ? 'qfq' : settings.adjust, kind, lower: zone ? round(Math.min(...values)) : undefined,
+                     price: round(zone ? Math.max(...values) : values.at(-1)!) });
+}
+
+function adoptPattern(pattern: ChartAnalysis['patterns'][number]) {
+  const neck = pattern.lines[0]?.end.price;
+  if (neck === undefined || pattern.target === null) return;
+  emit('adoptPattern', { basis: isIndex.value ? 'qfq' : settings.adjust, name: pattern.name,
+                         neckline: Math.round(neck * 100) / 100, target: Math.round(pattern.target * 100) / 100 });
 }
 
 // -- automatic lines (analytics/chart_analysis.py on the server) ------------------------------------
@@ -738,6 +821,7 @@ function reload() {
   chart?.removeOverlay({ groupId: 'drawings' });
   chart?.removeOverlay({ groupId: 'range' });
   chart?.removeOverlay({ groupId: 'auto' });
+  chart?.removeOverlay({ groupId: 'pm' });
   quiet = false;
   range.value = null;
   selectedId.value = '';
@@ -796,6 +880,7 @@ watch(() => settings.adjust, () => {
 watch(() => [settings.main.join(), settings.subs.join()], applyIndicators);
 watch(() => settings.compare, () => void applyCompare());
 watch(() => ({ ...settings.marks }), renderMarks);
+watch(() => props.structure, renderMarks);
 watch(isDark, applyTheme);
 watch(() => settings.sensitivity, () => void loadAnalysis());
 watch(() => ({ ...settings.auto }), renderAuto);
@@ -949,6 +1034,29 @@ const PERIOD_LABEL: Record<BarPeriod, string> = { day: '日', month: '月', week
             <div v-for="(line, k) in shownEvents" :key="k" class="mb-0.5">{{ line }}</div>
           </template>
         </template>
+        <template v-if="structure">
+          <Divider class="my-2" />
+          <div class="mb-1 font-semibold">结构（仓位管家）</div>
+          <div v-if="structure.phase" class="mb-1">
+            {{ PM_PHASE[structure.phase] ?? structure.phase }}
+            <span v-if="structure.completion !== null">· 完成度 {{ (structure.completion * 100).toFixed(0) }}%</span>
+          </div>
+          <div v-for="lv in currentLevels" :key="lv.id" class="flex justify-between">
+            <span :style="{ color: PM_LINE[lv.kind].color }">{{ LEVEL_NAMES[lv.kind] }}</span>
+            <span>{{ lv.lower ? `${lv.lower.toFixed(2)}–` : '' }}{{ lv.price.toFixed(2) }}</span>
+          </div>
+          <div v-if="!currentLevels.length" class="text-muted-foreground">{{ structure.item_id ? '还没有确认的价位' : '不在标的库中' }}</div>
+          <div v-if="currentLevels.length && !levelsDrawable" class="text-muted-foreground mt-1">价位按前复权保存，切到前复权可看到价位线</div>
+          <template v-if="selectedId">
+            <div class="mb-1 mt-2">选中的画线设为：</div>
+            <Space wrap :size="4">
+              <Button v-for="kind in (['neckline', 'target', 'top_neckline', 'base_zone'] as const)" :key="kind" size="small"
+                      @click="requestLevel(kind)">{{ LEVEL_NAMES[kind] }}</Button>
+            </Space>
+            <div class="text-muted-foreground mt-1">水平线取它的价格，斜线取右端点，矩形框（起涨区）取上下沿；确认前可以修改。</div>
+          </template>
+          <div v-else class="text-muted-foreground mt-1">单击一条画线选中后，可以把它设为颈线、目标、头部颈线或起涨区。</div>
+        </template>
         <template v-if="analysis && (analysis.patterns.length || analysis.levels.length || analysis.trendlines.length)">
           <Divider class="my-2" />
           <div class="mb-1 font-semibold">自动分析（{{ SENSITIVITY_LABEL[settings.sensitivity] }}）</div>
@@ -958,6 +1066,8 @@ const PERIOD_LABEL: Record<BarPeriod, string> = { day: '日', month: '月', week
             </a>
             <div class="text-muted-foreground">
               {{ pattern.start_date.slice(2) }} ~ {{ pattern.end_date.slice(2) }}{{ pattern.target !== null && pattern.status !== 'failed' ? `，目标 ${pattern.target.toFixed(2)}` : '' }}
+              <a v-if="structure && pattern.direction === 'bullish' && pattern.target !== null && pattern.status !== 'failed' && pattern.lines.length"
+                 class="ml-1" @click="adoptPattern(pattern)">采纳为结构</a>
             </div>
           </div>
           <div v-for="(tl, k) in analysis.trendlines" :key="`t${k}`" class="flex justify-between">
