@@ -391,6 +391,7 @@ class CanonicalRebuilder:
     def _rebuild_status_history(self, master: pd.DataFrame | None) -> None:
         events = None
         log_rows = []
+        last_baidu: dict = {}  # query date -> rows of its latest log entry, as the pipeline sees it
         for dataset, normalizer in (("suspensions_tfp", normalize_tfp_suspensions),
                                     ("suspensions_baidu", normalize_baidu_suspensions)):
             for run_id, directory in _raw_runs(self.raw_root, dataset):
@@ -398,12 +399,19 @@ class CanonicalRebuilder:
                     observed = pd.to_datetime(path.stem).date()
                     raw = pd.read_parquet(path)
                     if len(raw.columns) == 0:
-                        continue  # empty vendor response: not a completed day (see pipeline)
+                        # An empty vendor response is not a completed day (see pipeline), but it is
+                        # logged: unconfirmed (-1), then a day without events (0) when empty again.
+                        if dataset == "suspensions_baidu":
+                            rows = 0 if last_baidu.get(observed) == -1 else -1
+                            log_rows.append({"source": "baidu", "query_date": observed, "rows": rows, "run_id": run_id})
+                            last_baidu[observed] = rows
+                        continue
                     part = normalizer(raw, observed, run_id, run_id_to_iso(run_id))
                     events = merge_suspension_events(events, part)
                     if dataset == "suspensions_baidu":
                         log_rows.append({"source": "baidu", "query_date": observed, "rows": len(part),
                                          "run_id": run_id})
+                        last_baidu[observed] = len(part)
         if events is not None and master is not None:
             events = events[events["symbol"].isin(master["symbol"])]
         if events is not None and not events.empty:

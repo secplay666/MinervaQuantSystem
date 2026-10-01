@@ -102,6 +102,7 @@ class FakeProvider(MarketDataProvider):
     empty_index: bool = False
     tfp_rows: list[dict[str, object]] = field(default_factory=list)
     baidu_rows: dict[date, list[dict[str, object]]] = field(default_factory=dict)
+    baidu_bare: set[date] = field(default_factory=set)  # days answered with a bare DataFrame() (throttling)
     calls: list[tuple[str, str]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -215,6 +216,8 @@ class FakeProvider(MarketDataProvider):
         return pd.DataFrame(self.tfp_rows, columns=columns)
 
     def fetch_suspension_events(self, date: str) -> pd.DataFrame:
+        if pd.to_datetime(date).date() in self.baidu_bare:
+            return pd.DataFrame()
         columns = ["股票代码", "股票简称", "交易所代码", "停牌时间", "复牌时间", "停牌事项说明",
                    "市值", "公告日期", "公告时间", "证券类型", "市场类型", "是否跳过"]
         return pd.DataFrame(self.baidu_rows.get(pd.to_datetime(date).date(), []), columns=columns)

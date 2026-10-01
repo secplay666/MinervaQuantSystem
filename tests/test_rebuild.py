@@ -38,6 +38,23 @@ def test_rebuild_from_raw_reproduces_the_canonical_layer(tmp_path: Path) -> None
         assert report["diff"][dataset]["live"] == report["diff"][dataset]["rebuilt"], dataset
 
 
+def test_rebuild_keeps_the_log_of_empty_suspension_responses(tmp_path: Path) -> None:
+    """A bare empty Baidu response is logged unconfirmed (-1), then as a day without events (0)."""
+    provider = FakeProvider(today=date(2026, 9, 24))
+    provider.baidu_bare = {date(2026, 9, 15), date(2026, 9, 16)}
+    _ingest(tmp_path, provider)
+    provider.baidu_bare = {date(2026, 9, 15)}  # 09-16 answers properly in the second run
+    _ingest(tmp_path, provider)
+    live = pd.read_parquet(canonical_path(tmp_path, "suspension_fetch_log"))
+    rows = dict(zip(live["query_date"], live["rows"]))
+    assert rows[date(2026, 9, 15)] == 0 and rows[date(2026, 9, 16)] == 0
+
+    report = rebuild_canonical(tmp_path, make_config())
+    assert report["diff"]["suspension_fetch_log"]["live"] == report["diff"]["suspension_fetch_log"]["rebuilt"]
+    rebuilt = pd.read_parquet(canonical_path(tmp_path / report["staging"], "suspension_fetch_log"))
+    assert dict(zip(rebuilt["query_date"], rebuilt["rows"])) == rows
+
+
 def test_rebuild_repairs_legacy_raw_units_and_applies(tmp_path: Path) -> None:
     provider = FakeProvider(today=date(2026, 9, 24))
     _ingest(tmp_path, provider)
