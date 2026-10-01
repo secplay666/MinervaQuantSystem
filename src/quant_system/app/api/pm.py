@@ -7,7 +7,9 @@ forward-adjusted (qfq) unless a basis says otherwise; the rules work in hfq
 
 from __future__ import annotations
 
+import math
 import re
+from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
@@ -17,7 +19,7 @@ from sqlalchemy.orm import Session
 from ..db.base import utc_now
 from ..db.models import PmItem
 from ..deps import Principal, api_error, get_session, require
-from ..market import records
+from ..market import _clean
 from ..position import PositionError, evaluate_user, instrument_kind, summary_row
 
 router = APIRouter(tags=["仓位管家"])
@@ -39,11 +41,18 @@ def own_item(session: Session, principal: Principal, item_id: int) -> PmItem:
     return item
 
 
-def clean(rows: list[dict]) -> list[dict]:
-    """JSON-safe values (dates as ISO strings, NaN as null)."""
-    import pandas as pd
+def safe(value: Any) -> Any:
+    """JSON-safe, nested: dates as ISO strings, NaN and infinities as null, numpy scalars as numbers."""
+    if isinstance(value, dict):
+        return {k: safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [safe(v) for v in value]
+    value = _clean(value)
+    return None if isinstance(value, float) and not math.isfinite(value) else value  # numpy float32 NaN
 
-    return records(pd.DataFrame(rows)) if rows else []
+
+def clean(rows: list[dict]) -> list[dict]:
+    return [safe(row) for row in rows]
 
 
 def parse_codes(text: str) -> list[str]:

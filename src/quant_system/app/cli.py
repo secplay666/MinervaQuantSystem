@@ -9,6 +9,7 @@
     quant-app openapi --out web/openapi.json     # schema for the frontend's generated client
     quant-app event add --level critical --category data --title "..."   # record an event (scripts)
     quant-app notify status | test | dispatch    # external notifications (app/notify.py)
+    quant-app pm daily                           # position manager signals after the data update
 """
 
 from __future__ import annotations
@@ -181,6 +182,28 @@ def command_notify_dispatch(args: argparse.Namespace) -> int:
         return _report(settings, dispatch(session, settings.notify, settings.environment_label))
 
 
+def command_pm_daily(args: argparse.Namespace) -> int:
+    """After the data update: every user's position manager signals (and the daily push events)."""
+    from .market import MarketQueries
+    from .position import run_daily
+
+    settings = _settings(args, require_secret=False)
+    market = MarketQueries(settings.market_db, settings.root / "configs" / "market_rules" / "cn_a_share.json")
+    if not market.available():
+        print(f"no market database at {settings.market_db}", file=sys.stderr)
+        return 1
+    _, sessions = open_database(settings.db_path)
+    with sessions() as session:
+        rows = run_daily(session, market)
+    for row in rows:
+        if row["error"]:
+            print(f"user {row['user_id']}: failed ({row['error']})")
+        else:
+            print(f"user {row['user_id']}: {row['items']} items, {row['new_signals']} new signals through "
+                  f"{row['latest']}" + (f", event {row['event']}" if row["event"] else ""))
+    return 1 if any(row["error"] for row in rows) else 0
+
+
 def _report(settings, results) -> int:  # type: ignore[no-untyped-def]
     for problem in settings.notify.problems:
         print(f"config: {problem}", file=sys.stderr)
@@ -239,6 +262,9 @@ def build_parser() -> argparse.ArgumentParser:
         handler=command_notify_status)
     notify.add_parser("test", help="send a test message to every channel").set_defaults(handler=command_notify_test)
     notify.add_parser("dispatch", help="push a digest of new events").set_defaults(handler=command_notify_dispatch)
+    pm = sub.add_parser("pm").add_subparsers(dest="pm_command", required=True)
+    pm.add_parser("daily", help="position manager: evaluate every user's library, store new signals").set_defaults(
+        handler=command_pm_daily)
     return parser
 
 

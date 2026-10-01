@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 
 from ..position.rules import (
     BASE, LABEL_NAMES, LEFT, PHASE_NAMES, RIGHT, TOP, UNDECIDED, IndexDay, RuleParams, Structure, base_prompts,
-    phases, replay,
+    final_remaining, phases, replay,
 )
 from ..position.stages import PRESETS, STAGE_KEYS, StageParams, classify, stage_view
 from .db.models import PmItem, PmLabelChange, PmLevel, PmSettings
@@ -323,7 +323,7 @@ def summary_row(item: PmItem, result: dict[str, Any], settings: PmSettings) -> d
     series: Series = result["series"]
     outcome = result["outcome"]
     structure: Structure | None = result["structure"]
-    view = result["view"] if settings.label_mode == "suggest" else None
+    view = shown_view(result["view"], series) if settings.label_mode == "suggest" else None
     waiting = outcome.waiting_for if outcome else _no_structure(item.label, result)
     gate: IndexDay | None = result["index_today"]
     return {
@@ -332,6 +332,7 @@ def summary_row(item: PmItem, result: dict[str, Any], settings: PmSettings) -> d
         "label_source": item.label_source, "stage": view, "latest": series.latest,
         "close": result["last_close"], "change": result["change"],
         "phase": outcome.phase if outcome else None, "phase_name": PHASE_NAMES.get(outcome.phase) if outcome else None,
+        "activated_on": outcome.activated_on if outcome else None,
         "completion": outcome.completion if outcome else None, "weight": outcome.weight if outcome else 0.0,
         "waiting_for": waiting, "next_price": series.shown(outcome.next_price) if outcome else None,
         "next_step": outcome.next_step if outcome else None,
@@ -358,6 +359,84 @@ def _no_structure(label: str, result: dict[str, Any]) -> str:
     if label == UNDECIDED:
         return "未定：先确认方向标签"
     return "未画结构：在看盘中画颈线和量度目标"
+
+
+# -- what the item page shows (prices in qfq) --------------------------------------------------------
+
+
+def shown_view(view: dict[str, Any] | None, series: Series) -> dict[str, Any] | None:
+    """The stage view with its moving average on the chart's scale, plus the label it suggests."""
+    if view is None:
+        return None
+    return dict(view, ma=series.shown(view.get("ma")), label=STAGE_TO_LABEL.get(view["stage"], UNDECIDED))
+
+
+def event_row(event, series: Series) -> dict[str, Any]:
+    return {"trade_date": event.trade_date, "rule": event.rule, "priority": event.priority,
+            "priority_name": PRIORITY_NAMES.get(event.priority), "message": event.message,
+            "close": series.shown(event.close), "weight": event.weight, "completion": event.completion}
+
+
+def level_row(level: PmLevel, series: Series) -> dict[str, Any]:
+    return {"id": level.id, "round_no": level.round_no, "kind": level.kind, "price": series.shown(level.price),
+            "lower": series.shown(level.lower), "entered_price": level.entered_price,
+            "entered_lower": level.entered_lower, "basis": level.basis, "version": level.version,
+            "source": level.source, "effective_date": level.effective_date, "top_mode": level.top_mode,
+            "note": level.note, "created_by": level.created_by}
+
+
+def ladder_rows(result: dict[str, Any]) -> list[dict[str, Any]]:
+    """The reduction steps of the structure: price, position kept and the session each was reached."""
+    structure: Structure | None = result["structure"]
+    if structure is None:
+        return []
+    series: Series = result["series"]
+    rules: RuleParams = result["rule_params"]
+    events = result["outcome"].events if result["outcome"] else []
+
+    def reached(rules_hit: tuple[str, ...], completion: float) -> date | None:
+        return next((e.trade_date for e in events if e.rule in rules_hit and e.completion is not None
+                     and e.completion >= completion - 1e-6), None)
+
+    # A step passed before a late entry counts as done on the entry session (the entry was sized by it).
+    rows = [{"completion": c, "keep": keep, "price": series.shown(structure.price_at(c)),
+             "done_on": reached(("ladder", "entry"), c)} for c, keep in rules.ladder]
+    rows.append({"completion": 1.0, "keep": final_remaining(result["index_today"], rules),
+                 "price": series.shown(structure.target), "done_on": reached(("target",), 1.0)})
+    return rows
+
+
+def segment_row(segment: dict, series: Series) -> dict[str, Any]:
+    return {"entry_date": segment["entry_date"], "entry_close": series.shown(segment["entry_close"]),
+            "entry_weight": segment["entry_weight"], "exit_date": segment["exit_date"],
+            "exit_close": series.shown(segment["exit_close"]), "return": segment["return"],
+            "steps": [dict(s, close=series.shown(s["close"])) for s in segment["steps"]]}
+
+
+def item_detail(session: Session, item: PmItem, result: dict[str, Any], settings: PmSettings) -> dict[str, Any]:
+    series: Series = result["series"]
+    outcome = result["outcome"]
+    gate: IndexDay | None = result["index_today"]
+    changes = session.scalars(select(PmLabelChange).where(PmLabelChange.item_id == item.id)
+                              .order_by(PmLabelChange.effective_date.desc(), PmLabelChange.id.desc()))
+    return {
+        "item": summary_row(item, result, settings),
+        "label_mode": settings.label_mode,
+        "round_no": current_round(result["levels"]),
+        "levels": [level_row(lv, series) for lv in result["levels"]],
+        "ladder": ladder_rows(result),
+        "events": [event_row(e, series) for e in reversed(outcome.events)] if outcome else [],
+        "prompts": [event_row(e, series) for e in reversed(result["prompts"])],
+        "segments": [segment_row(s, series) for s in outcome.segments] if outcome else [],
+        "activated_on": outcome.activated_on if outcome else None,
+        "peak_close": series.shown(outcome.peak_close) if outcome else None,
+        "index_today": None if gate is None else {"symbol": result["main_index"], "label": gate.label,
+                                                  "label_name": LABEL_NAMES.get(gate.label),
+                                                  "completion": gate.completion, "phase": gate.phase},
+        "label_history": [{"label": c.label, "label_name": LABEL_NAMES.get(c.label, c.label), "source": c.source,
+                           "effective_date": c.effective_date, "reason": c.stage_reason,
+                           "created_by": c.created_by} for c in changes],
+    }
 
 
 # -- signals and the daily report ---------------------------------------------------------------------
@@ -419,3 +498,69 @@ def evaluate_user(session: Session, market: MarketQueries, user_id: int) -> tupl
                                  .order_by(PmItem.id)))
     cache: dict = {}
     return [(item, evaluate(session, market, item, settings, cache)) for item in items], settings
+
+
+def index_band(session: Session, market: MarketQueries, user_id: int, settings: PmSettings) -> list[dict[str, Any]]:
+    """The main indices at the top of the board, as the entry gate sees them:
+    the user's label of an index in the library, else its stage view."""
+    stage = stage_params(settings)
+    rows = []
+    for symbol in MAIN_INDICES:
+        series = load_series(market, symbol, "index")
+        if not series.dates:
+            continue
+        view = stage_view(series.close, stage, is_index=True)
+        item = session.scalar(select(PmItem).where(PmItem.user_id == user_id, PmItem.symbol == symbol,
+                                                   PmItem.archived_at.is_(None)))
+        own = item is not None and item.label != UNDECIDED
+        label = item.label if own else STAGE_TO_LABEL.get(view["stage"], UNDECIDED)
+        close = float(series.close[-1])
+        previous = float(series.close[-2]) if len(series.close) > 1 else None
+        rows.append({"symbol": symbol, "name": INDEX_NAMES.get(symbol, symbol), "latest": series.latest,
+                     "close": close, "change": close / previous - 1 if previous else None,
+                     "label": label, "label_name": LABEL_NAMES.get(label, label),
+                     "label_source": "manual" if own else "system", "item_id": item.id if item else None,
+                     "stage": shown_view(view, series) if settings.label_mode == "suggest" else None})
+    return rows
+
+
+def run_daily(session: Session, market: MarketQueries) -> list[dict[str, Any]]:
+    """The evening job: evaluate every user's library and store the new
+    signals; for a user who asked for the daily push, one event per session
+    with the counts.  Events and pushes are shared by everybody while the
+    library is not, so an event names no security (the board has the
+    details).  Commits per user; one user's failure does not stop the others."""
+    import logging
+
+    from .db.models import Event, PmSignal, User
+
+    log = logging.getLogger(__name__)
+    out: list[dict[str, Any]] = []
+    user_ids = sorted(set(session.scalars(select(PmItem.user_id).where(PmItem.archived_at.is_(None)))))
+    for user_id in user_ids:
+        try:
+            results, settings = evaluate_user(session, market, user_id)
+            new = sync_signals(session, user_id, results, settings)
+            latest, event_id = settings.evaluated_through, None
+            if settings.push_daily and latest is not None:
+                today = list(session.scalars(select(PmSignal).where(PmSignal.user_id == user_id,
+                                                                    PmSignal.trade_date == latest)))
+                if today:
+                    event_id = f"pm-{user_id}-{latest:%Y%m%d}"
+                    if session.get(Event, event_id) is None:
+                        user = session.get(User, user_id)
+                        title, _ = report_lines(today, {})
+                        session.add(Event(event_id=event_id, category="position",
+                                          level="warning" if min(s.priority for s in today) <= 2 else "info",
+                                          title=f"{title}（{user.display_name or user.username}）",
+                                          body="详情只在本人的仓位看板中显示", trade_date=latest,
+                                          action_hint="打开“看盘与仓位 → 仓位看板”"))
+            session.commit()
+            out.append({"user_id": user_id, "items": len(results), "new_signals": len(new), "latest": latest,
+                        "event": event_id, "error": None})
+        except Exception as exc:  # reported per user; the others still run
+            session.rollback()
+            log.exception("position manager: user %s failed", user_id)
+            out.append({"user_id": user_id, "items": None, "new_signals": None, "latest": None, "event": None,
+                        "error": f"{type(exc).__name__}: {exc}"})
+    return out

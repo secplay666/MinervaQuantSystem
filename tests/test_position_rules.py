@@ -105,6 +105,15 @@ def test_pending_structures_say_how_far_the_neckline_is() -> None:
     assert out.phase == PENDING and out.waiting_for.startswith("等突破颈线（距 +8.7%")
 
 
+def test_an_entry_past_ladder_steps_is_sized_by_the_ladder() -> None:
+    out = run([18.2, 18.4, 19.2])  # confirmed late: 82% done on the first session
+    assert rules(out) == [(0, "activated", 0.0), (0, "entry", 0.5), (2, "realized", 0.5), (2, "ladder", 0.25),
+                          (2, "top_watch", 0.25)]
+    assert "完成度已过 80%，按阶梯只建 50%" in out.events[1].message
+    assert out.segments[0]["entry_weight"] == 0.5
+    assert out.round_return == pytest.approx(19.2 / 18.2 - 1)
+
+
 def test_base_prompts_fire_once_per_criterion_while_the_label_is_base() -> None:
     n = 60
     dates = days(n)

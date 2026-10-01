@@ -101,6 +101,11 @@ if [[ -x "$APP" ]]; then
       --title "数据备份失败（退出码 $backup_rc）" --body "日志：logs/daily/$day.log" \
       --hint "检查备份盘；下一次成功的备份会补齐" >> "$LOG" 2>&1
   fi
+  # Position manager: every user's signals of the new session, and the daily
+  # push events of those who asked for it (counts only), before the digest.
+  note "== position manager"
+  "$APP" --root "$REPO" pm daily >> "$LOG" 2>&1
+  note "== position manager exit $?"
   note "== notify"
   "$APP" --root "$REPO" notify dispatch >> "$LOG" 2>&1
   note "== notify exit $?"

@@ -276,11 +276,17 @@ def replay(dates: list[date], closes: np.ndarray, structure: Structure, labels: 
         late = gate is not None and gate.completion is not None and (
             gate.completion >= p.late_index or gate.phase in (REALIZED, EXHAUSTED))
         entry_weight = p.late_weight if late else 1.0
-        weight = entry_weight
+        # A structure confirmed late may already be past ladder steps: enter at what the ladder keeps.
+        passed = [k for k, (threshold, _) in enumerate(p.ladder) if completion >= threshold]
+        weight = entry_weight * (p.ladder[passed[-1]][1] if passed else 1.0)
+        rungs_done = set(passed)
         held_peak, held_max_completion = close, completion
-        segment = {"entry_date": day, "entry_close": close, "entry_weight": entry_weight, "proceeds": 0.0,
+        segment = {"entry_date": day, "entry_close": close, "entry_weight": weight, "proceeds": 0.0,
                    "steps": []}
         note = "指数晚期·半仓" if late else ("指数完成度未知·满仓" if gate is None or gate.completion is None else "满仓")
+        if passed:
+            threshold, kept = p.ladder[passed[-1]]
+            note += f"；完成度已过 {threshold:.0%}，按阶梯只建 {kept:.0%}"
         emit(day, "entry", 3, f"突破颈线且主指数右侧，入场（{note}）", close, completion, f"entry:{day}")
 
     last_close = next((float(c) for c in reversed(closes) if np.isfinite(c)), None)
