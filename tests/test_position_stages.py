@@ -93,3 +93,18 @@ def test_the_backtest_reports_stages_transitions_and_books() -> None:
     assert set(result["overall"]) == {"market", "stage2", "stage2_gated"}
     assert result["stocks"] == 4
     assert [y["year"] for y in result["yearly"]] == [2020, 2021, 2022]  # from the first year a stock is counted
+
+
+def test_one_series_is_classified_exactly_as_in_a_panel() -> None:
+    """The scalar loop for one series (board, chart) follows the panel's rules step for step."""
+    from quant_system.position.stages import PRESETS
+
+    rng = np.random.default_rng(7)
+    prices = 10 * np.exp(np.cumsum(rng.normal(0, 0.02, (1500, 12)), axis=0))
+    prices[rng.random(prices.shape) < 0.03] = np.nan  # suspensions
+    prices[:200, :3] = np.nan                         # later listings
+    for _, params in PRESETS.values():
+        for p in (params, params.for_index()):
+            panel = classify(prices, p)
+            for j in range(prices.shape[1]):
+                assert (classify(prices[:, j], p) == panel[:, j]).all()

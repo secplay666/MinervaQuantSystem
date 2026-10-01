@@ -20,6 +20,7 @@ help the user; the direction label the rules act on is the user's.
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass, fields, replace
 
 import numpy as np
@@ -88,6 +89,8 @@ def classify(price: np.ndarray, p: StageParams) -> np.ndarray:
     slope = np.full_like(ma, np.nan)
     slope[p.slope:] = ma[p.slope:] / ma[:-p.slope] - 1
     low = frame.rolling(p.context, min_periods=20).min().to_numpy()
+    if single:  # one series (the board, the chart): a scalar loop, the per-step numpy overhead dominates
+        return _classify_one(values[:, 0].tolist(), ma[:, 0].tolist(), slope[:, 0].tolist(), low[:, 0].tolist(), p)
     T, N = values.shape
     stage = np.zeros((T, N), dtype=np.int8)
     state = np.zeros(N, dtype=np.int8)
@@ -120,6 +123,45 @@ def classify(price: np.ndarray, p: StageParams) -> np.ndarray:
         state = np.where(switch, cand, state).astype(np.int8)
         stage[t] = state
     return stage[:, 0] if single else stage
+
+
+def _classify_one(close: list[float], ma: list[float], slope: list[float], low: list[float], p: StageParams) -> np.ndarray:
+    """``classify`` for one series, step for step the same rules (tests compare the two)."""
+    stage = np.zeros(len(close), dtype=np.int8)
+    state, pending, count = UNKNOWN, UNKNOWN, 0
+    for t, (c, m, s, lo) in enumerate(zip(close, ma, slope, low)):
+        valid = math.isfinite(s) and math.isfinite(c) and math.isfinite(m)
+        up, down = s > p.flat, s < -p.flat  # False for NaN, as in numpy
+        above_band, below_band = c > m * (1 + p.band), c < m * (1 - p.band)
+        # numpy: x / 0 is inf for x > 0, NaN comparisons are False
+        first_top = False if lo != lo else (c > 0 if lo == 0 else c / lo - 1 > p.rise)
+        flat = not up and not down
+        was_up = state in (ADVANCE, TOP)
+        was_down = state in (DECLINE, BASE)
+        unknown = state == UNKNOWN
+        cand = state
+        if up and not below_band:
+            cand = ADVANCE
+        if down and not above_band:
+            cand = DECLINE
+        if flat and was_up:
+            cand = TOP
+        if flat and was_down:
+            cand = BASE
+        if flat and unknown:
+            cand = TOP if first_top else BASE
+        if up and below_band and was_up:
+            cand = TOP
+        if down and above_band and was_down:
+            cand = BASE
+        if not valid:
+            cand = state
+        count = count + 1 if cand == pending else 1
+        pending = cand
+        if valid and cand != state and (count >= p.confirm or unknown):
+            state = cand
+        stage[t] = state
+    return stage
 
 
 def volume_surge(close: np.ndarray, open_: np.ndarray, volume: np.ndarray, p: StageParams) -> np.ndarray:

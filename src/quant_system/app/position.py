@@ -12,7 +12,11 @@ Indices and ETFs are not adjusted.
 
 from __future__ import annotations
 
+import functools
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
@@ -67,11 +71,45 @@ class Series:
         return None if price is None else price / self.factor
 
 
+_connection: ContextVar[duckdb.DuckDBPyConnection | None] = ContextVar("pm_market_connection", default=None)
+
+
+@contextmanager
+def one_connection(market: MarketQueries) -> Iterator[None]:
+    """One read-only connection for the many small queries of a board, a detail
+    or the daily job (opening the catalog costs more than most queries)."""
+    if _connection.get() is not None or not market.available():
+        yield
+        return
+    with duckdb.connect(str(market.database), read_only=True) as con:
+        token = _connection.set(con)
+        try:
+            yield
+        finally:
+            _connection.reset(token)
+
+
 def _query(market: MarketQueries, sql: str, params: list) -> pd.DataFrame:
+    con = _connection.get()
     try:
-        return market._query(sql, params)
+        return con.execute(sql, params).fetchdf() if con is not None else market._query(sql, params)
     except duckdb.CatalogException:
         return pd.DataFrame()
+
+
+def _shared(fn):
+    """Run ``fn(session, market, ...)`` on one market connection (see one_connection)."""
+    @functools.wraps(fn)
+    def wrapper(session, market, *args, **kwargs):
+        with one_connection(market):
+            return fn(session, market, *args, **kwargs)
+    return wrapper
+
+
+def _security(market: MarketQueries, symbol: str) -> dict[str, Any] | None:
+    """Name and board of a stock (MarketQueries.security, on the shared connection)."""
+    rows = _query(market, "SELECT name, board FROM security_master WHERE symbol = ?", [symbol])
+    return {"name": rows["name"].iloc[0], "board": rows["board"].iloc[0]} if len(rows) else None
 
 
 def instrument_kind(market: MarketQueries, symbol: str) -> tuple[str, str | None]:
@@ -83,7 +121,7 @@ def instrument_kind(market: MarketQueries, symbol: str) -> tuple[str, str | None
         raise PositionError(f"{symbol} 不在指数库中")
     if not re.fullmatch(r"\d{6}", symbol):
         raise PositionError(f"{symbol} 不是股票、指数或 ETF 代码")
-    info = market.security(symbol)
+    info = _security(market, symbol)
     if info is not None:
         return "stock", info["name"]
     rows = _query(market, "SELECT name FROM etf_master WHERE symbol = ? ORDER BY listed_run_id DESC LIMIT 1", [symbol])
@@ -134,7 +172,7 @@ def default_index(market: MarketQueries, item: PmItem) -> str | None:
         return {"000300": "sh000300", "399300": "sh000300", "000905": "sh000905", "399905": "sh000905",
                 "000852": "sh000852", "000016": "sh000016", "399006": "sz399006", "000688": "sh000688",
                 "000510": "sh000510"}.get(code, "sh000300")
-    info = market.security(item.symbol) or {}
+    info = _security(market, item.symbol) or {}
     if info.get("board") == "STAR":
         return "sh000688"
     if info.get("board") == "CHINEXT":
@@ -288,6 +326,7 @@ def index_days(session: Session, market: MarketQueries, user_id: int, symbol: st
     return out
 
 
+@_shared
 def evaluate(session: Session, market: MarketQueries, item: PmItem, settings: PmSettings,
              index_cache: dict | None = None, series: Series | None = None) -> dict[str, Any]:
     """Stage view, rule outcome and base prompts of one item (prices shown in qfq)."""
@@ -491,6 +530,7 @@ def report_lines(signals: list[PmSignal], names: dict[int, str]) -> tuple[str, l
     return title, lines
 
 
+@_shared
 def evaluate_user(session: Session, market: MarketQueries, user_id: int) -> tuple[list[tuple[PmItem, dict]],
                                                                                     PmSettings]:
     settings = user_settings(session, user_id)
@@ -500,6 +540,7 @@ def evaluate_user(session: Session, market: MarketQueries, user_id: int) -> tupl
     return [(item, evaluate(session, market, item, settings, cache)) for item in items], settings
 
 
+@_shared
 def index_band(session: Session, market: MarketQueries, user_id: int, settings: PmSettings) -> list[dict[str, Any]]:
     """The main indices at the top of the board, as the entry gate sees them:
     the user's label of an index in the library, else its stage view."""
@@ -524,6 +565,7 @@ def index_band(session: Session, market: MarketQueries, user_id: int, settings: 
     return rows
 
 
+@_shared
 def run_daily(session: Session, market: MarketQueries) -> list[dict[str, Any]]:
     """The evening job: evaluate every user's library and store the new
     signals; for a user who asked for the daily push, one event per session
