@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -17,8 +17,9 @@ from ..db.base import utc_now
 from ..db.models import PmItem, PmSignal, PmSettings
 from ..deps import Principal, api_error, get_session
 from ..position import (
-    LABELS, PRIORITY_NAMES, PositionError, evaluate_user, index_band, instrument_kind, load_series, rule_params,
-    shown_view, stage_params, summary_row, sync_signals, user_settings,
+    LABELS, POOLS, PRIORITY_NAMES, PositionError, campaign_rows, evaluate_user, index_band, instrument_kind,
+    load_series, report_tiers, rule_params, shown_view, stage_params, summary_row, sync_signals, today_signals,
+    top_facts, user_settings,
 )
 from .pm import market_of, safe, use
 
@@ -50,9 +51,11 @@ def board(request: Request, principal: Principal = Depends(use), session: Sessio
     results, settings = evaluate_user(session, market, user_id)
     new = sync_signals(session, user_id, results, settings)
     rows = [summary_row(item, result, settings) for item, result in results]
-    out = {"label_mode": settings.label_mode,
-           "latest": max((r["latest"] for r in rows if r["latest"]), default=None),
+    latest = max((r["latest"] for r in rows if r["latest"]), default=None)
+    out = {"label_mode": settings.label_mode, "latest": latest,
            "counts": {label: sum(1 for r in rows if r["label"] == label) for label in LABELS},
+           "pools": {pool: sum(1 for r in rows if r["pool"] == pool) for pool in POOLS if pool != "archived"},
+           "tiers": report_tiers(rows, today_signals(session, user_id, latest)),
            "indices": index_band(session, market, user_id, settings), "items": rows,
            "signals": signal_rows(session, user_id, limit=50), "new_signals": len(new),
            "unread": unread_count(session, user_id)}
@@ -85,9 +88,12 @@ def settings_view(settings: PmSettings) -> dict[str, Any]:
     return {"stage_preset": settings.stage_preset, "stage_overrides": settings.stage_params or {},
             "stage_params": stage_params(settings).to_dict(), "rule_overrides": settings.rule_params or {},
             "rule_params": rule_params(settings).to_dict(), "rule_defaults": RuleParams().to_dict(),
-            "label_mode": settings.label_mode, "push_daily": settings.push_daily,
+            "label_mode": settings.label_mode, "push_daily": settings.push_daily, "auto_base": settings.auto_base,
             "evaluated_through": settings.evaluated_through,
             "presets": [{"key": key, "name": name, "params": params.to_dict()} for key, (name, params) in PRESETS.items()]}
+
+
+AUDITED_SETTINGS = ("stage_preset", "stage_overrides", "rule_overrides", "label_mode", "push_daily", "auto_base")
 
 
 class SettingsIn(BaseModel):
@@ -96,6 +102,7 @@ class SettingsIn(BaseModel):
     rule_params: dict[str, Any] | None = None     # changes to the defaults; {} goes back to them
     label_mode: str | None = None                 # suggest | manual
     push_daily: bool | None = None
+    auto_base: bool | None = None                 # a close in the 起涨区 turns 左侧 into 筑底
 
 
 @router.get("/pm/settings")
@@ -128,11 +135,12 @@ def put_settings(body: SettingsIn, principal: Principal = Depends(use), session:
         settings.label_mode = body.label_mode
     if body.push_daily is not None:
         settings.push_daily = body.push_daily
+    if body.auto_base is not None:
+        settings.auto_base = body.auto_base
     settings.updated_at = utc_now()
     after = safe(settings_view(settings))
     audit(session, principal.actor, "pm.settings", "pm_settings", str(principal.user.id),
-          before={k: before[k] for k in ("stage_preset", "stage_overrides", "rule_overrides", "label_mode", "push_daily")},
-          after={k: after[k] for k in ("stage_preset", "stage_overrides", "rule_overrides", "label_mode", "push_daily")},
+          before={k: before[k] for k in AUDITED_SETTINGS}, after={k: after[k] for k in AUDITED_SETTINGS},
           **principal.audit_kwargs())
     session.commit()
     return after
@@ -195,3 +203,64 @@ def get_job(job_id: str, request: Request, principal: Principal = Depends(use)) 
     if job is None:
         raise api_error(404, "not_found", "任务不存在（服务重启后需要重新运行）")
     return safe(job.view())
+
+
+RECENT_DAYS = 7  # 突破确立 keeps what left the list this many days
+
+
+@router.get("/pm/lists/breakouts")
+def breakouts(request: Request, principal: Principal = Depends(use), session: Session = Depends(get_session)) -> dict:
+    """突破确立 (design §11.5): resonant (entered), waiting for the index, and what left lately."""
+    market = market_of(request)
+    results, settings = evaluate_user(session, market, principal.user.id)
+    rows = []
+    for item, result in results:
+        row = summary_row(item, result, settings)
+        row["from_breakout"] = row["close"] / row["breakout_close"] - 1 \
+            if row["close"] and row["breakout_close"] else None
+        rows.append(row)
+    latest = max((r["latest"] for r in rows if r["latest"]), default=None)
+    since = latest - timedelta(days=RECENT_DAYS) if latest else None
+    resonant = [r for r in rows if r["activated_on"] and r["weight"] > 0]
+    waiting = [r for r in rows if r["activated_on"] and not r["entered"] and r["phase"] in ("active", "realized")]
+    removed = [dict(r, removed_on=r["last_exit"]["date"], reason=r["last_exit"]["name"]) for r in rows
+               if r["weight"] <= 0 and r["last_exit"] and since and r["last_exit"]["date"] > since]
+    archived_since = utc_now() - timedelta(days=RECENT_DAYS)
+    for item in session.scalars(select(PmItem).where(PmItem.user_id == principal.user.id,
+                                                     PmItem.archived_at >= archived_since)):
+        removed.append({"id": item.id, "symbol": item.symbol, "name": item.name, "removed_on": item.archived_at.date(),
+                        "reason": "手动归档"})
+    by_date = lambda r: str(r.get("activated_on") or r.get("removed_on") or "")  # noqa: E731
+    session.commit()
+    return safe({"latest": latest, "resonant": sorted(resonant, key=by_date, reverse=True),
+                 "waiting": sorted(waiting, key=by_date, reverse=True),
+                 "removed": sorted(removed, key=by_date, reverse=True)})
+
+
+@router.get("/pm/lists/tops")
+def tops(request: Request, principal: Principal = Depends(use), session: Session = Depends(get_session)) -> dict:
+    """头部确立 (design §11.5): to watch, observing a top neckline, confirmed (with the verdict)."""
+    results, _ = evaluate_user(session, market_of(request), principal.user.id)
+    facts = [f for f in (top_facts(item, result) for item, result in results) if f is not None]
+    confirmed = sorted([f for f in facts if f["state"] == "confirmed"], key=lambda f: str(f["confirmed_on"]),
+                       reverse=True)
+    verdicts = [f["verdict"] for f in confirmed if f["verdict"]]
+    session.commit()
+    return safe({"watching": [f for f in facts if f["state"] == "watching"],
+                 "observing": [f for f in facts if f["state"] == "observing"], "confirmed": confirmed,
+                 "accuracy": {"right": verdicts.count("判对"), "early": verdicts.count("判早"),
+                              "neutral": verdicts.count("中性")}})
+
+
+@router.get("/pm/campaigns")
+def campaigns(request: Request, principal: Principal = Depends(use), session: Session = Depends(get_session)) -> dict:
+    """模拟战役总账: every round's simulated trades; totals over the closed rounds."""
+    rows = campaign_rows(session, market_of(request), principal.user.id)
+    closed = [r for r in rows if not r["open"] and r["round_return"] is not None]
+    returns = [r["round_return"] for r in closed]
+    session.commit()
+    return safe({"rows": rows, "totals": {
+        "rounds": len(rows), "closed": len(closed), "open": len(rows) - len(closed),
+        "wins": sum(1 for x in returns if x > 0),
+        "win_rate": sum(1 for x in returns if x > 0) / len(returns) if returns else None,
+        "average": sum(returns) / len(returns) if returns else None}})

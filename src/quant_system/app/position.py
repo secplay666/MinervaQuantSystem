@@ -522,7 +522,27 @@ def summary_row(item: PmItem, result: dict[str, Any], settings: PmSettings) -> d
         "path": result["path"]["path"] if result["path"] else None,
         "quality": None if result["quality"] is None else {"grade": result["quality"].grade,
                                                            "score": result["quality"].score},
+        **breakout_facts(result),
     }
+
+
+EXIT_RULES = {"false_break": "假突破", "trailing": "移动止盈", "top_break": "头部颈线跌破", "top_confirmed": "头部确认",
+              "exhausted": "结构衰竭", "buyback_stop": "买回止损", "buyback_trailing": "买回后止盈"}
+
+
+def breakout_facts(result: dict[str, Any]) -> dict[str, Any]:
+    """For 突破确立 (design §11.5): the breakout close, whether the round entered
+    (at half size late in the index move), and the latest exit."""
+    outcome, series = result["outcome"], result["series"]
+    events = outcome.events if outcome else []
+    activated = next((e for e in events if e.rule == "activated"), None)
+    entry = next((e for e in reversed(events) if e.rule == "entry"), None)
+    exit_event = next((e for e in reversed(events) if e.rule in EXIT_RULES), None)
+    return {"breakout_close": series.shown(activated.close) if activated else None,
+            "entered": bool(outcome and (outcome.segments or outcome.weight > 0)),
+            "half_entry": bool(entry and outcome and outcome.entry_weight < 1),
+            "last_exit": None if exit_event is None else {"date": exit_event.trade_date, "rule": exit_event.rule,
+                                                          "name": EXIT_RULES[exit_event.rule]}}
 
 
 def _no_structure(label: str, result: dict[str, Any]) -> str:
@@ -559,7 +579,7 @@ def level_row(level: PmLevel, series: Series) -> dict[str, Any]:
             "lower": series.shown(level.lower), "entered_price": level.entered_price,
             "entered_lower": level.entered_lower, "basis": level.basis, "version": level.version,
             "source": level.source, "effective_date": level.effective_date, "top_mode": level.top_mode,
-            "note": level.note, "created_by": level.created_by}
+            "note": level.note, "created_by": level.created_by, "fraction": level.fraction}
 
 
 def ladder_rows(result: dict[str, Any]) -> list[dict[str, Any]]:
@@ -699,6 +719,137 @@ def report_lines(signals: list[PmSignal], names: dict[int, str]) -> tuple[str, l
     return title, lines
 
 
+def today_signals(session: Session, user_id: int, day: date | None) -> dict[int, list[dict[str, Any]]]:
+    """The signals of one session by item (tier 1 of the report)."""
+    from .db.models import PmSignal
+
+    out: dict[int, list[dict[str, Any]]] = {}
+    if day is None:
+        return out
+    for signal in session.scalars(select(PmSignal).where(PmSignal.user_id == user_id, PmSignal.trade_date == day)):
+        out.setdefault(signal.item_id, []).append({"priority": signal.priority, "rule": signal.rule,
+                                                   "message": signal.message})
+    return out
+
+
+TIERS = {1: "今日触发", 2: "临门一脚", 3: "逼近中", 4: "有变化", 5: "其余"}
+NEAR, APPROACHING, CHANGED = 0.03, 0.08, 0.10
+
+
+def report_tiers(rows: list[dict[str, Any]], today: dict[int, list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """The five tiers of the daily report (design §11.4); each item in the first it fits.
+    ``today``: item id -> the signals of the latest session."""
+    tiers: dict[int, list[dict[str, Any]]] = {k: [] for k in TIERS}
+    for row in rows:
+        distances = [abs(d) for d in [row.get("next_distance")] + [
+            s["distance"] for s in row.get("sentinels", []) if s["status"] == "active"] if d is not None]
+        nearest = min(distances) if distances else None
+        entry = {"id": row["id"], "symbol": row["symbol"], "name": row["name"], "label": row["label"],
+                 "star": row["star"], "quality": row["quality"], "distance": nearest,
+                 "waiting_for": row["waiting_for"], "completion": row["completion"],
+                 "completion_change": row.get("completion_change")}
+        if row["id"] in today:
+            signals = sorted(today[row["id"]], key=lambda s: s["priority"])
+            tiers[1].append(dict(entry, priority=signals[0]["priority"], messages=[s["message"] for s in signals]))
+        elif nearest is not None and nearest <= NEAR:
+            tiers[2].append(entry)
+        elif nearest is not None and nearest <= APPROACHING:
+            tiers[3].append(entry)
+        elif row.get("completion_change") is not None and abs(row["completion_change"]) >= CHANGED:
+            tiers[4].append(entry)
+        else:
+            tiers[5].append(entry)
+
+    def order(entry: dict[str, Any]) -> tuple:
+        score = entry["quality"]["score"] if entry["quality"] and entry["quality"]["score"] is not None else -1
+        return (entry.get("priority", 9), -entry["star"], -score, entry["distance"] if entry["distance"] is not None else 9)
+
+    return [{"tier": k, "name": name, "items": sorted(tiers[k], key=order)} for k, name in TIERS.items()]
+
+
+def top_facts(item: PmItem, result: dict[str, Any]) -> dict[str, Any] | None:
+    """For 头部确立 (design §11.5): watching, observing a top neckline, or confirmed,
+    with the change since the confirmation and its verdict (a +-1% neutral band)."""
+    series: Series = result["series"]
+    outcome = result["outcome"]
+    top = next((lv for lv in result["levels"] if lv.kind == "top_neckline"
+                and lv.round_no == current_round(result["levels"])), None)
+    events = outcome.events if outcome else []
+    broken = next((e for e in events if e.rule == "top_break"), None)
+    close = float(series.close[-1]) if len(series.close) else None
+    base = {"id": item.id, "symbol": item.symbol, "name": item.name, "close": series.shown(close),
+            "completion": outcome.completion if outcome else None}
+    if top is not None and (top.top_mode == "confirmed" or broken is not None):
+        day = broken.trade_date if broken is not None else top.effective_date
+        at = broken.close if broken is not None else _close_on(series, day)
+        change = close / at - 1 if close and at else None
+        verdict = None if change is None else ("判对" if change <= -0.01 else "判早" if change >= 0.01 else "中性")
+        return dict(base, state="confirmed", confirmed_on=day, confirmed_close=series.shown(at), change=change,
+                    verdict=verdict, how="跌破头部颈线" if broken is not None else "立即确认")
+    if top is not None:
+        return dict(base, state="observing", top_neckline=series.shown(top.price),
+                    distance=top.price / close - 1 if close else None)
+    if item.label == TOP or (outcome and outcome.completion is not None and outcome.weight > 0
+                             and outcome.completion >= result["rule_params"].top_watch):
+        return dict(base, state="watching", label=item.label)
+    return None
+
+
+def _close_on(series: Series, day: date) -> float | None:
+    for d, c in zip(reversed(series.dates), reversed(series.close)):
+        if d <= day:
+            return float(c)
+    return None
+
+
+def rounds_of(levels: list[PmLevel]) -> list[tuple[int, Structure, date | None]]:
+    """Every round with a neckline and a target, and the session its successor starts."""
+    out = []
+    numbers = sorted({lv.round_no for lv in levels})
+    for k, number in enumerate(numbers):
+        structure = structure_of([lv for lv in levels if lv.round_no == number])
+        if structure is None:
+            continue
+        later = [structure_of([lv for lv in levels if lv.round_no == n]) for n in numbers[k + 1:]]
+        until = next((s.effective for s in later if s is not None), None)
+        out.append((number, structure, until))
+    return out
+
+
+@_shared
+def campaign_rows(session: Session, market: MarketQueries, user_id: int) -> list[dict[str, Any]]:
+    """The simulated campaign ledger (design §11.5): every round of every item replayed
+    up to the next round's start, with its trades and return (prices in qfq)."""
+    settings = user_settings(session, user_id)
+    rules, stage = rule_params(settings), stage_params(settings)
+    items = list(session.scalars(select(PmItem).where(PmItem.user_id == user_id).order_by(PmItem.id)))
+    cache: dict = {}
+    rows = []
+    for item in items:
+        levels = list(session.scalars(select(PmLevel).where(PmLevel.item_id == item.id, PmLevel.status == "active")))
+        rounds = rounds_of(levels)
+        if not rounds:
+            continue
+        series = load_series(market, item.symbol, item.kind)
+        labels = label_history(session, item.id)
+        main = item.primary_index or default_index(market, item)
+        if main is not None and main not in cache:
+            cache[main] = index_days(session, market, user_id, main, stage, rules)
+        for number, structure, until in rounds:
+            cut = len(series.dates) if until is None else sum(1 for d in series.dates if d < until)
+            if cut == 0:
+                continue
+            outcome = replay(series.dates[:cut], series.close[:cut], structure, labels, cache.get(main), rules)
+            if not outcome.segments:
+                continue
+            rows.append({"item_id": item.id, "symbol": item.symbol, "name": item.name, "round_no": number,
+                         "archived": item.archived_at is not None, "until": until,
+                         "segments": [segment_row(seg, series) for seg in outcome.segments],
+                         "open": outcome.segments[-1]["exit_date"] is None,
+                         "round_return": outcome.round_return, "script_return": outcome.script_return})
+    return rows
+
+
 @_shared
 def evaluate_user(session: Session, market: MarketQueries, user_id: int) -> tuple[list[tuple[PmItem, dict]],
                                                                                     PmSettings]:
@@ -743,7 +894,7 @@ def run_daily(session: Session, market: MarketQueries) -> list[dict[str, Any]]:
     details).  Commits per user; one user's failure does not stop the others."""
     import logging
 
-    from .db.models import Event, PmSignal, User
+    from .db.models import Event, User
 
     log = logging.getLogger(__name__)
     out: list[dict[str, Any]] = []
@@ -754,15 +905,17 @@ def run_daily(session: Session, market: MarketQueries) -> list[dict[str, Any]]:
             new = sync_signals(session, user_id, results, settings)
             latest, event_id = settings.evaluated_through, None
             if settings.push_daily and latest is not None:
-                today = list(session.scalars(select(PmSignal).where(PmSignal.user_id == user_id,
-                                                                    PmSignal.trade_date == latest)))
-                if today:
+                today = today_signals(session, user_id, latest)
+                tiers = report_tiers([summary_row(item, result, settings) for item, result in results], today)
+                counts = {t["name"]: len(t["items"]) for t in tiers if t["tier"] <= 3 and t["items"]}
+                if today or counts.get(TIERS[2]):
                     event_id = f"pm-{user_id}-{latest:%Y%m%d}"
                     if session.get(Event, event_id) is None:
                         user = session.get(User, user_id)
-                        title, _ = report_lines(today, {})
+                        urgent = any(s["priority"] <= 2 for signals in today.values() for s in signals)
+                        title = "仓位管家：" + " · ".join(f"{name} {n}" for name, n in counts.items())
                         session.add(Event(event_id=event_id, category="position",
-                                          level="warning" if min(s.priority for s in today) <= 2 else "info",
+                                          level="warning" if urgent else "info",
                                           title=f"{title}（{user.display_name or user.username}）",
                                           body="详情只在本人的仓位看板中显示", trade_date=latest,
                                           action_hint="打开“看盘与仓位 → 仓位看板”"))

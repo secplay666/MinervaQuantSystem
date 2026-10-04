@@ -15,11 +15,12 @@ from sqlalchemy.orm import Session
 
 from ..audit import audit
 from ..db.base import utc_now
-from ..db.models import PmItem
+from ..db.models import PmItem, PmSentinel
 from ..deps import Principal, api_error, get_session
 from ..position import (
-    LABELS, LEVEL_KINDS, PositionError, confirm_level, evaluate, event_row, instrument_kind, item_detail, level_row,
-    load_series, set_label, shown_view, stage_params, user_settings,
+    LABELS, LEVEL_KINDS, PositionError, add_sentinel, confirm_level, evaluate, event_row, instrument_kind,
+    item_detail, level_row, load_series, reset_sentinel, sentinel_row, set_label, shown_view, stage_params,
+    user_settings,
 )
 from ...position.stages import stage_view
 from .pm import clean, market_of, own_item, safe, use
@@ -80,9 +81,10 @@ def put_label(item_id: int, body: LabelChoice, request: Request, principal: Prin
 
 
 class LevelEntry(BaseModel):
-    kind: str                                  # neckline | target | top_neckline | base_zone | reference
+    kind: str                                  # neckline | target | top_neckline | base_zone | buyback_zone | reference
     price: float = Field(gt=0)                 # on the chart's scale, see basis
-    lower: float | None = Field(default=None, gt=0)  # a zone's lower edge (base_zone)
+    lower: float | None = Field(default=None, gt=0)  # a zone's lower edge (base_zone, buyback_zone)
+    fraction: float | None = Field(default=None, gt=0, le=1)  # buyback_zone: the share bought back
     basis: str = "qfq"                         # qfq | none | hfq (indices and ETFs are not adjusted)
     source: str = "manual"                     # manual | drawing | pattern
     new_round: bool = False                    # the first level of a new structure
@@ -101,7 +103,8 @@ def post_level(item_id: int, body: LevelEntry, request: Request, principal: Prin
     try:
         level = confirm_level(session, item, series, body.kind, body.price, body.basis, actor=principal.actor,
                               source=body.source, lower=body.lower, new_round=body.new_round,
-                              top_mode=body.top_mode, effective=body.effective_date, note=body.note)
+                              top_mode=body.top_mode, effective=body.effective_date, note=body.note,
+                              fraction=body.fraction)
     except PositionError as exc:
         raise api_error(400, "invalid", str(exc)) from None
     item.updated_at = utc_now()
@@ -131,7 +134,7 @@ def chart_info(symbol: str, request: Request, principal: Principal = Depends(use
         view = stage_view(series.close, stage_params(settings), is_index=kind == "index") \
             if suggest and series.dates else None
         out = {"item_id": None, "symbol": symbol, "kind": kind, "stage": shown_view(view, series),
-               "label": None, "levels": [], "events": [], "phase": None, "completion": None}
+               "label": None, "levels": [], "events": [], "phase": None, "completion": None, "sentinels": []}
     else:
         result = evaluate(session, market, item, settings)
         series, outcome = result["series"], result["outcome"]
@@ -140,6 +143,78 @@ def chart_info(symbol: str, request: Request, principal: Principal = Depends(use
                "stage": shown_view(result["view"], series) if suggest else None,
                "label": item.label, "levels": [level_row(lv, series) for lv in result["levels"]],
                "events": [event_row(e, series) for e in events if e.rule != "activated"],
-               "phase": outcome.phase if outcome else None, "completion": outcome.completion if outcome else None}
+               "phase": outcome.phase if outcome else None, "completion": outcome.completion if outcome else None,
+               "sentinels": [sentinel_row(r, result) for r in result["sentinels"]]}
     session.commit()
     return safe(out)
+
+
+class SentinelIn(BaseModel):
+    price: float = Field(gt=0)            # on the chart's scale, see basis
+    direction: str | None = None          # up | down; required for a new sentinel
+    basis: str = "qfq"
+    source_ref: str | None = Field(default=None, max_length=24)  # 颈线 / 起涨区上沿 / 前高 / 失效线 / 手工
+    note: str | None = Field(default=None, max_length=500)
+
+
+def own_sentinel(session: Session, principal: Principal, sentinel_id: int) -> tuple[PmSentinel, PmItem]:
+    sentinel = session.get(PmSentinel, sentinel_id)
+    item = session.get(PmItem, sentinel.item_id) if sentinel is not None else None
+    if sentinel is None or sentinel.status == "removed" or item is None or item.user_id != principal.user.id:
+        raise api_error(404, "not_found", "哨兵不存在")
+    return sentinel, item
+
+
+@router.post("/pm/items/{item_id}/sentinels")
+def post_sentinel(item_id: int, body: SentinelIn, request: Request, principal: Principal = Depends(use),
+                  session: Session = Depends(get_session)) -> dict:
+    """A sentinel (design §11.3): reminds when a close goes through it, never changes the label."""
+    item = own_item(session, principal, item_id)
+    series = load_series(market_of(request), item.symbol, item.kind)
+    try:
+        sentinel = add_sentinel(session, item, series, body.price, body.direction or "", body.basis,
+                                actor=principal.actor, source_ref=body.source_ref, note=body.note)
+    except PositionError as exc:
+        raise api_error(400, "invalid", str(exc)) from None
+    audit(session, principal.actor, "pm.sentinel", "pm_item", str(item.id),
+          after={"id": sentinel.id, "price": body.price, "direction": sentinel.direction, "basis": body.basis},
+          **principal.audit_kwargs())
+    out = detail(session, request, item)
+    session.commit()
+    return out
+
+
+@router.patch("/pm/sentinels/{sentinel_id}")
+def patch_sentinel(sentinel_id: int, body: SentinelIn, request: Request, principal: Principal = Depends(use),
+                   session: Session = Depends(get_session)) -> dict:
+    """A new price (dragged on the chart, or set again after a crossing)."""
+    sentinel, item = own_sentinel(session, principal, sentinel_id)
+    series = load_series(market_of(request), item.symbol, item.kind)
+    before = {"price": sentinel.entered_price, "direction": sentinel.direction, "status": sentinel.status}
+    try:
+        reset_sentinel(session, sentinel, series, body.price, body.basis, body.direction)
+    except PositionError as exc:
+        raise api_error(400, "invalid", str(exc)) from None
+    if body.source_ref is not None:
+        sentinel.source_ref = body.source_ref or None
+    if body.note is not None:
+        sentinel.note = body.note or None
+    audit(session, principal.actor, "pm.sentinel", "pm_item", str(item.id), before=before,
+          after={"id": sentinel.id, "price": body.price, "direction": sentinel.direction, "version": sentinel.version},
+          **principal.audit_kwargs())
+    out = detail(session, request, item)
+    session.commit()
+    return out
+
+
+@router.delete("/pm/sentinels/{sentinel_id}")
+def delete_sentinel(sentinel_id: int, request: Request, principal: Principal = Depends(use),
+                    session: Session = Depends(get_session)) -> dict:
+    sentinel, item = own_sentinel(session, principal, sentinel_id)
+    sentinel.status, sentinel.updated_at = "removed", utc_now()
+    audit(session, principal.actor, "pm.sentinel.remove", "pm_item", str(item.id),
+          before={"id": sentinel.id, "price": sentinel.entered_price, "direction": sentinel.direction},
+          **principal.audit_kwargs())
+    out = detail(session, request, item)
+    session.commit()
+    return out
