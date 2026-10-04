@@ -38,6 +38,12 @@ from .etf import (
 )
 from .etf_holders import holder_rows, merge_holders, reports_to_fetch
 from .financials import STATEMENTS, merge_financial_versions, normalize_financials
+from .intraday import BAR_COLUMNS as INTRADAY_BAR_COLUMNS
+from .intraday import SOURCE_BARS, SOURCE_FUTURES
+from .intraday import TRADE_COLUMNS as INTRADAY_TRADE_COLUMNS
+from .intraday import merge_day as merge_intraday_day
+from .intraday import normalize_bars as normalize_intraday_bars
+from .intraday import normalize_trades as normalize_intraday_trades
 from .corporate import (
     load_sw2014_mapping,
     merge_dividends,
@@ -166,6 +172,7 @@ class CanonicalRebuilder:
         self._rebuild_etf_shares()
         self._rebuild_etf_master()
         self._rebuild_etf_bars(calendar_end)
+        self._rebuild_intraday()
         self._rebuild_etf_holders()
         self._carry_forward("daily_bars_history_log")
         audit = run_audit(self.staging, calendar_end, self.start_date,
@@ -499,6 +506,28 @@ class CanonicalRebuilder:
                 merged = merge_etf_master(merged, pd.concat(parts, ignore_index=True))
         if merged is not None and not merged.empty:
             write_canonical_frame(self.staging, "etf_master", merged)
+
+    def _rebuild_intraday(self) -> None:
+        """Bars from every run (complete sessions, later runs win); trades from the accepted raw files,
+        whose names carry their session."""
+        for dataset, columns in (("intraday_bars", INTRADAY_BAR_COLUMNS), ("intraday_trades", INTRADAY_TRADE_COLUMNS)):
+            days: dict[str, pd.DataFrame] = {}
+            for run_id, directory in _raw_runs(self.raw_root, dataset):
+                for path in sorted(directory.glob("*.parquet")):
+                    raw = pd.read_parquet(path)
+                    if dataset == "intraday_bars":
+                        code = path.stem
+                        source = SOURCE_BARS if code[:2] in ("sh", "sz") else SOURCE_FUTURES
+                        frame = normalize_intraday_bars(raw, code, None, run_id, run_id_to_iso(run_id), source)
+                    else:
+                        code, _, stamp = path.stem.rpartition("_")
+                        frame = normalize_intraday_trades(raw, code, date(int(stamp[:4]), int(stamp[4:6]), int(stamp[6:])),
+                                                          run_id, run_id_to_iso(run_id))
+                    for session, part in frame.groupby("trade_date"):
+                        key = str(session)
+                        days[key] = merge_intraday_day(days.get(key), part, columns)
+            for key, frame in days.items():
+                write_canonical_frame(self.staging, dataset, frame, partition=f"trade_date={key}")
 
     def _rebuild_etf_bars(self, calendar_end: date) -> None:
         start = pd.to_datetime(self.config.etf_sse_start).date()

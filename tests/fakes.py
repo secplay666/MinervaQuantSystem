@@ -305,6 +305,40 @@ class FakeProvider(MarketDataProvider):
         rows = [r for r in self.share_rows if start <= str(r[date_field])[:10] < end]
         return pd.DataFrame(rows)
 
+    # Intraday: three complete sessions of 1-minute bars per code; trades of the latest session that
+    # match its bars (or of the session before, to test the check).
+    intraday_trades_lag: int = 0
+
+    def _intraday_days(self) -> list[date]:
+        return [d for d in OPEN_DATES if d <= self.today][-3:]
+
+    @staticmethod
+    def _minutes() -> list[str]:
+        morning = [f"{9 + (30 + k) // 60:02d}:{(30 + k) % 60:02d}" for k in range(1, 121)]
+        afternoon = [f"{13 + k // 60:02d}:{k % 60:02d}" for k in range(1, 121)]
+        return morning + afternoon
+
+    def _intraday_rows(self, day: date) -> list[dict[str, object]]:
+        base = 4.0 + 0.01 * (day.toordinal() % 7)
+        return [{"time": f"{day} {m}:00", "price": round(base + 0.001 * (k % 5), 3), "volume": 1000 + k}
+                for k, m in enumerate(self._minutes())]
+
+    def fetch_intraday_bars(self, code: str) -> pd.DataFrame:
+        self.calls.append(("intraday_bars", code))
+        column = "day" if code[:2] in ("sh", "sz") else "datetime"
+        rows = [{column: r["time"], "open": r["price"], "high": r["price"], "low": r["price"], "close": r["price"],
+                 "volume": r["volume"], "amount": r["price"] * r["volume"]}
+                for day in self._intraday_days() for r in self._intraday_rows(day)]
+        return pd.DataFrame(rows)
+
+    def fetch_intraday_trades(self, code: str) -> pd.DataFrame:
+        self.calls.append(("intraday_trades", code))
+        day = self._intraday_days()[-1 - self.intraday_trades_lag]
+        return pd.DataFrame([{"成交时间": f"{r['time'][11:16]}:30", "成交价格": r["price"], "价格变动": 0.0,
+                              "成交量": r["volume"] / 100, "成交金额": r["price"] * r["volume"],
+                              "性质": ("买盘", "卖盘", "中性盘")[k % 3]}
+                             for k, r in enumerate(self._intraday_rows(day))])
+
     def fetch_dividends(self, report_date: str) -> pd.DataFrame:
         self.calls.append(("dividends", report_date))
         return pd.DataFrame([r for r in self.dividend_rows if str(r["REPORT_DATE"])[:10] == report_date])

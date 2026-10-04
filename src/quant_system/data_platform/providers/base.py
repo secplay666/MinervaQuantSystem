@@ -96,6 +96,15 @@ class MarketDataProvider(ABC):
         (G/B/S/I) with ``date_field`` (REPORT_DATE or UPDATE_DATE) in [start, end)."""
         raise NotImplementedError
 
+    def fetch_intraday_bars(self, code: str) -> pd.DataFrame:
+        """The 1-minute bars the source still keeps (sh/sz codes, or a futures code such as IF0);
+        optional: providers without it skip the intraday step."""
+        raise NotImplementedError
+
+    def fetch_intraday_trades(self, code: str) -> pd.DataFrame:
+        """3-second trades of the latest session, with the active side (optional, see above)."""
+        raise NotImplementedError
+
     @abstractmethod
     def fetch_dividends(self, report_date: str) -> pd.DataFrame:
         """Dividend and bonus-share plans for one report period (YYYY-MM-DD)."""
