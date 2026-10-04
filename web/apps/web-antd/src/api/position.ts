@@ -5,7 +5,8 @@
 import { requestClient } from '#/api/request';
 
 export type PmLabel = 'base' | 'left' | 'right' | 'top' | 'undecided';
-export type PmLevelKind = 'base_zone' | 'neckline' | 'reference' | 'target' | 'top_neckline';
+export type PmLevelKind = 'base_zone' | 'buyback_zone' | 'neckline' | 'reference' | 'target' | 'top_neckline';
+export type PmPool = 'archived' | 'buyback' | 'hold' | 'ready' | 'watch';
 
 export const PM_LABELS: { color: string; key: PmLabel; name: string; rule: string }[] = [
   { color: 'red', key: 'right', name: '右侧', rule: '入场、减仓、退出规则全部生效' },
@@ -16,8 +17,13 @@ export const PM_LABELS: { color: string; key: PmLabel; name: string; rule: strin
 ];
 export const PM_LABEL = Object.fromEntries(PM_LABELS.map((l) => [l.key, l])) as Record<PmLabel, (typeof PM_LABELS)[number]>;
 export const LEVEL_NAMES: Record<PmLevelKind, string> = {
-  base_zone: '起涨区', neckline: '颈线', reference: '参考线', target: '量度目标', top_neckline: '头部颈线',
+  base_zone: '起涨区', buyback_zone: '回撤买入区', neckline: '颈线', reference: '参考线', target: '量度目标',
+  top_neckline: '头部颈线',
 };
+export const POOL_NAMES: Record<PmPool, string> = { archived: '归档', buyback: '回撤关注', hold: '持有', ready: '就绪', watch: '观察' };
+export const PATH_COLOR: Record<string, string> = { A: 'orange', B: 'gold', C: 'red' };
+/** Grades are an ordering aid: muted, distinct hues (not the red/green of prices or status). */
+export const GRADE_COLOR: Record<string, string> = { A: 'geekblue', B: 'cyan', C: 'default', D: 'default' };
 export const PHASE: Record<string, { color: string; name: string }> = {
   active: { color: 'red', name: '进行中' },
   exhausted: { color: 'default', name: '已衰竭' },
@@ -44,8 +50,39 @@ export interface StageView {
   stage: 'advance' | 'base' | 'decline' | 'top' | 'unknown';
 }
 
+export interface PmSentinel {
+  basis: string;
+  crossed_on: null | string;
+  days: null | number;
+  direction: 'down' | 'up';
+  distance: null | number;
+  effective_date: string;
+  entered_price: number;
+  id: number;
+  note: null | string;
+  price: number;
+  source_ref: null | string;
+  status: 'active' | 'crossed' | 'removed';
+  version: number;
+}
+
+export interface PmQualityBrief { grade: null | string; score: null | number }
+
 export interface PmRow {
   activated_on: null | string;
+  breakout_close: null | number;
+  buyback: null | string;
+  completion_change: null | number;
+  entered: boolean;
+  half_entry: boolean;
+  last_exit: null | { date: string; name: string; rule: string };
+  next_distance: null | number;
+  path: null | string;
+  pool: PmPool;
+  pool_name: string;
+  quality: null | PmQualityBrief;
+  round_no: number;
+  sentinels: PmSentinel[];
   change: null | number;
   close: null | number;
   completion: null | number;
@@ -101,6 +138,7 @@ export interface PmLevel {
   price: number;
   round_no: number;
   source: string;
+  fraction: null | number;
   top_mode: 'confirmed' | 'observe' | null;
   version: number;
 }
@@ -117,8 +155,40 @@ export interface PmDetail {
   peak_close: null | number;
   prompts: PmEvent[];
   round_no: number;
-  segments: { entry_close: number; entry_date: string; entry_weight: number; exit_close: number; exit_date: null | string; return: number }[];
+  segments: PmSegment[];
+  auto_base: boolean;
+  daily_range: null | number;
+  path: null | { levels: Record<string, any>; name: string; path: 'A' | 'B' | 'C'; pullback: number; reason: string };
+  quality: null | { as_of: string; dims: Record<string, { name: string; pe?: null | number; period?: null | string; score: null | number; value: any }>;
+                    grade: null | string; score: null | number };
+  zone_event: null | PmEvent;
 }
+
+export interface PmSegment {
+  entry_close: number;
+  entry_date: string;
+  entry_weight: number;
+  exit_close: number;
+  exit_date: null | string;
+  return: number;
+}
+
+export interface PmTierItem {
+  completion: null | number;
+  completion_change: null | number;
+  distance: null | number;
+  id: number;
+  label: PmLabel;
+  messages?: string[];
+  name: null | string;
+  priority?: number;
+  quality: null | PmQualityBrief;
+  star: number;
+  symbol: string;
+  waiting_for: string;
+}
+
+export interface PmTier { items: PmTierItem[]; name: string; tier: number }
 
 export interface PmSignal {
   id: number;
@@ -154,11 +224,14 @@ export interface PmBoard {
   label_mode: 'manual' | 'suggest';
   latest: null | string;
   new_signals: number;
+  pools: Record<Exclude<PmPool, 'archived'>, number>;
   signals: PmSignal[];
+  tiers: PmTier[];
   unread: number;
 }
 
 export interface PmSettings {
+  auto_base: boolean;
   evaluated_through: null | string;
   label_mode: 'manual' | 'suggest';
   presets: { key: string; name: string; params: Record<string, number> }[];
@@ -172,6 +245,7 @@ export interface PmSettings {
 }
 
 export interface PmChart {
+  close: null | number;
   completion: null | number;
   events: PmEvent[];
   item_id: null | number;
@@ -179,6 +253,7 @@ export interface PmChart {
   label: null | PmLabel;
   levels: PmLevel[];
   phase: null | string;
+  sentinels: PmSentinel[];
   stage: null | StageView;
   symbol: string;
 }
@@ -196,6 +271,7 @@ export interface PmJob {
 export interface LevelEntry {
   basis?: 'hfq' | 'none' | 'qfq';
   effective_date?: string;
+  fraction?: number;
   kind: PmLevelKind;
   lower?: number;
   new_round?: boolean;
@@ -222,7 +298,7 @@ export const pmSignalsApi = (unread = false) =>
 export const pmReadSignalsApi = (ids?: number[]) =>
   requestClient.post<{ marked: number; unread: number }>('/pm/signals/read', { ids: ids ?? null });
 export const pmSettingsApi = () => requestClient.get<PmSettings>('/pm/settings');
-export const pmSaveSettingsApi = (body: Partial<{ label_mode: string; push_daily: boolean; rule_params: Record<string, any>;
+export const pmSaveSettingsApi = (body: Partial<{ auto_base: boolean; label_mode: string; push_daily: boolean; rule_params: Record<string, any>;
   stage_params: Record<string, number>; stage_preset: string }>) => requestClient.put<PmSettings>('/pm/settings', body);
 export const pmStageApi = (symbol: string, preset?: string) =>
   requestClient.get<{ kind: string; name: string; params: Record<string, number>; segments: { end: string; name: string; stage: string; start: string }[];
@@ -230,3 +306,49 @@ export const pmStageApi = (symbol: string, preset?: string) =>
 export const pmStartBacktestApi = (body: { end?: string; params?: Record<string, number>; preset: string; start?: string }) =>
   requestClient.post<PmJob>('/pm/stage-backtest', body);
 export const pmJobApi = (id: string) => requestClient.get<PmJob>(`/pm/jobs/${id}`);
+
+export interface SentinelEntry { basis?: string; direction?: 'down' | 'up'; note?: string; price: number; source_ref?: string }
+export const pmAddSentinelApi = (itemId: number, body: SentinelEntry) =>
+  requestClient.post<PmDetail>(`/pm/items/${itemId}/sentinels`, body);
+export const pmMoveSentinelApi = (id: number, body: SentinelEntry) =>
+  requestClient.request<PmDetail>(`/pm/sentinels/${id}`, { data: body, method: 'PATCH' });
+export const pmRemoveSentinelApi = (id: number) => requestClient.delete<PmDetail>(`/pm/sentinels/${id}`);
+
+export type PmBreakoutRow = PmRow & { from_breakout: null | number };
+export const pmBreakoutsApi = () =>
+  requestClient.get<{ latest: null | string; removed: (Partial<PmRow> & { reason: string; removed_on: string })[];
+                      resonant: PmBreakoutRow[]; waiting: PmBreakoutRow[] }>('/pm/lists/breakouts');
+export interface PmTopRow {
+  change?: null | number;
+  close: null | number;
+  completion: null | number;
+  confirmed_close?: null | number;
+  confirmed_on?: string;
+  distance?: null | number;
+  how?: string;
+  id: number;
+  label?: PmLabel;
+  name: null | string;
+  state: 'confirmed' | 'observing' | 'watching';
+  symbol: string;
+  top_neckline?: number;
+  verdict?: null | string;
+}
+export const pmTopsApi = () =>
+  requestClient.get<{ accuracy: { early: number; neutral: number; right: number }; confirmed: PmTopRow[];
+                      observing: PmTopRow[]; watching: PmTopRow[] }>('/pm/lists/tops');
+export interface PmCampaign {
+  archived: boolean;
+  item_id: number;
+  name: null | string;
+  open: boolean;
+  round_no: number;
+  round_return: null | number;
+  script_return: null | number;
+  segments: PmSegment[];
+  symbol: string;
+  until: null | string;
+}
+export const pmCampaignsApi = () =>
+  requestClient.get<{ rows: PmCampaign[]; totals: { average: null | number; closed: number; open: number; rounds: number;
+                                                    win_rate: null | number; wins: number } }>('/pm/campaigns');

@@ -225,6 +225,25 @@ export function registerChartExtensions() {
     },
   });
 
+  // A sentinel of the position manager (design §11.3): a blue dash-dot line across the pane with its
+  // label; its one point can be dragged up or down (the chart then saves the new price).
+  registerOverlay<{ id: number; label: string }>({
+    name: 'sentinelLine',
+    totalStep: 2,
+    needDefaultPointFigure: true,
+    needDefaultXAxisFigure: false,
+    needDefaultYAxisFigure: true,
+    createPointFigures: ({ bounding, coordinates, overlay }) => {
+      const [a] = coordinates;
+      if (!a) return [];
+      return [
+        { type: 'line', attrs: { coordinates: [{ x: 0, y: a.y }, { x: bounding.width, y: a.y }] },
+          styles: { color: '#2563eb', size: 1, style: 'dashed', dashedValue: [6, 3, 2, 3] } },
+        label(bounding.width - 4, a.y - 3, overlay.extendData?.label ?? '⚓哨兵', '#2563eb', 'right'),
+      ];
+    },
+  });
+
   // All automatic labels in one overlay: each goes where it prefers unless that
   // spot is taken, then moves up or down one label height at a time and keeps a
   // thin leader line to its anchor.  Earlier labels win (the caller orders them).

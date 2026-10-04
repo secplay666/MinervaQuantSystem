@@ -1,17 +1,18 @@
 <script lang="ts" setup>
 import type { Dayjs } from 'dayjs';
 
-import type { LevelEntry, PmDetail, PmLabel, PmLevelKind } from '#/api';
+import type { LevelEntry, PmDetail, PmLabel, PmLevelKind, PmSentinel } from '#/api';
 
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
 
-import { Alert, Button, Card, Checkbox, Col, DatePicker, Descriptions, Empty, Form, Input, InputNumber, message, Progress,
-         Radio, Row, Select, Space, Table, Tag, Timeline, Tooltip } from 'ant-design-vue';
+import { Alert, Button, Card, Checkbox, Col, DatePicker, Descriptions, Empty, Form, Input, InputNumber, message, Popconfirm,
+         Progress, Radio, Row, Select, Space, Table, Tag, Timeline, Tooltip } from 'ant-design-vue';
 
-import { LEVEL_NAMES, PHASE, PM_LABELS, pmItemApi, pmLabelApi, pmLevelApi, PRIORITY } from '#/api';
+import { LEVEL_NAMES, PHASE, PM_LABELS, pmAddSentinelApi, pmItemApi, pmLabelApi, pmLevelApi, pmMoveSentinelApi,
+         pmRemoveSentinelApi, PRIORITY } from '#/api';
 import { pct } from '#/utils/format';
 
 import { labelColor, labelName, openChart, progress, px } from './common';
@@ -24,9 +25,82 @@ const id = computed(() => Number(route.params.id));
 const item = computed(() => detail.value?.item);
 const roundLevels = computed(() => (detail.value?.levels ?? []).filter((l) => l.round_no === detail.value?.round_no));
 const olderLevels = computed(() => (detail.value?.levels ?? []).filter((l) => l.round_no !== detail.value?.round_no));
-const form = reactive<{ effective?: Dayjs; kind: PmLevelKind; lower?: number; new_round: boolean; note: string; price?: number;
-                        top_mode: 'confirmed' | 'observe' }>({ kind: 'neckline', new_round: false, note: '', top_mode: 'observe' });
+const form = reactive<{ effective?: Dayjs; fraction: number; kind: PmLevelKind; lower?: number; new_round: boolean; note: string;
+                        price?: number; top_mode: 'confirmed' | 'observe' }>({
+  fraction: 50, kind: 'neckline', new_round: false, note: '', top_mode: 'observe' });
 const saving = ref(false);
+const isZone = computed(() => form.kind === 'base_zone' || form.kind === 'buyback_zone');
+
+// -- sentinels (design §11.3) ---------------------------------------------------------------------------
+const sentinelForm = reactive<{ direction: 'down' | 'up'; editing?: number; price?: number; source_ref: string }>({
+  direction: 'up', source_ref: '手工' });
+/** Prices worth a sentinel: the current round's levels, the zone edges, the round's peak and the failure line. */
+const sentinelRefs = computed(() => {
+  const refs: { label: string; price: number }[] = [];
+  for (const lv of roundLevels.value) {
+    if (lv.kind === 'base_zone' || lv.kind === 'buyback_zone') {
+      refs.push({ label: `${LEVEL_NAMES[lv.kind]}上沿`, price: lv.price });
+      if (lv.lower) refs.push({ label: `${LEVEL_NAMES[lv.kind]}下沿`, price: lv.lower });
+    } else {
+      refs.push({ label: LEVEL_NAMES[lv.kind], price: lv.price });
+      if (lv.kind === 'neckline') refs.push({ label: '失效线', price: Math.round(lv.price * 95) / 100 });
+    }
+  }
+  if (detail.value?.peak_close) refs.push({ label: '前高', price: detail.value.peak_close });
+  return refs;
+});
+
+function pickRef(ref: { label: string; price: number }) {
+  sentinelForm.price = Math.round(ref.price * 100) / 100;
+  sentinelForm.source_ref = ref.label;
+  sentinelForm.direction = (item.value?.close ?? 0) < ref.price ? 'up' : 'down';
+}
+
+async function saveSentinel() {
+  if (!sentinelForm.price) return;
+  const body = { direction: sentinelForm.direction, price: sentinelForm.price, source_ref: sentinelForm.source_ref };
+  detail.value = sentinelForm.editing ? await pmMoveSentinelApi(sentinelForm.editing, body) : await pmAddSentinelApi(id.value, body);
+  message.success(sentinelForm.editing ? '哨兵已重设' : '哨兵已设置');
+  Object.assign(sentinelForm, { editing: undefined, price: undefined, source_ref: '手工' });
+}
+
+function editSentinel(sentinel: PmSentinel) {
+  Object.assign(sentinelForm, { direction: sentinel.direction, editing: sentinel.id, price: sentinel.price,
+                                source_ref: sentinel.source_ref ?? '手工' });
+}
+
+async function removeSentinel(sentinel: PmSentinel) {
+  detail.value = await pmRemoveSentinelApi(sentinel.id);
+}
+
+/** Pre-fill the level form with the path suggestion (design §11.1); the user still confirms. */
+function usePath() {
+  const path = detail.value?.path;
+  if (!path) return;
+  if (path.path === 'A') {
+    const [lower, upper] = path.levels.buyback_zone as number[];
+    Object.assign(form, { fraction: Math.round(path.levels.fraction * 100), kind: 'buyback_zone', lower: round2(lower!),
+                          new_round: false, price: round2(upper!) });
+  } else if (path.path === 'B') {
+    const [lower, upper] = path.levels.base_zone as number[];
+    Object.assign(form, { kind: 'base_zone', lower: round2(lower!), new_round: false, price: round2(upper!) });
+  } else {
+    Object.assign(form, { kind: 'neckline', lower: undefined, new_round: true, price: round2(path.levels.neckline) });
+  }
+  message.info('已按建议填好，核对后点“确认”');
+}
+
+function qualityValue(key: string, dim: { pe?: null | number; period?: null | string; score: null | number; value: any }): string {
+  if (dim.value === null || dim.value === undefined) return dim.score === null ? '无数据' : '';
+  if (key === 'forecast') return `${dim.value}${dim.period ? `（${String(dim.period).slice(0, 7)}）` : ''}`;
+  if (key === 'peg') return `${Number(dim.value).toFixed(2)}${dim.pe ? `（市盈率 ${dim.pe.toFixed(1)}）` : ''}`;
+  if (key === 'margin_trend') return `${Number(dim.value) >= 0 ? '+' : ''}${Number(dim.value).toFixed(1)} 个百分点`;
+  return pct(Number(dim.value), 1, key !== 'roe');
+}
+
+function round2(value: number) {
+  return Math.round(value * 100) / 100;
+}
 
 const levelColumns = [
   { dataIndex: 'kind', key: 'kind', title: '价位' },
@@ -66,7 +140,8 @@ async function saveLevel() {
     return;
   }
   const body: LevelEntry = { kind: form.kind, new_round: form.new_round, note: form.note || undefined, price: form.price };
-  if (form.kind === 'base_zone' && form.lower) body.lower = form.lower;
+  if (isZone.value && form.lower) body.lower = form.lower;
+  if (form.kind === 'buyback_zone') body.fraction = form.fraction / 100;
   if (form.kind === 'top_neckline') body.top_mode = form.top_mode;
   if (form.effective) body.effective_date = form.effective.format('YYYY-MM-DD');
   saving.value = true;
@@ -138,10 +213,13 @@ onMounted(load);
                 <Select v-model:value="form.kind" class="!w-28"
                         :options="Object.entries(LEVEL_NAMES).map(([value, label]) => ({ label, value }))" />
               </Form.Item>
-              <Form.Item v-if="form.kind === 'base_zone'" class="!mb-2" label="下沿">
+              <Form.Item v-if="isZone" class="!mb-2" label="下沿">
                 <InputNumber v-model:value="form.lower" :min="0" :step="0.01" class="!w-24" />
               </Form.Item>
-              <Form.Item class="!mb-2" :label="form.kind === 'base_zone' ? '上沿' : '价格'">
+              <Form.Item v-if="form.kind === 'buyback_zone'" class="!mb-2" label="买回">
+                <InputNumber v-model:value="form.fraction" :min="1" :max="100" :step="10" addon-after="%" class="!w-28" />
+              </Form.Item>
+              <Form.Item class="!mb-2" :label="isZone ? '上沿' : '价格'">
                 <InputNumber v-model:value="form.price" :min="0" :step="0.01" class="!w-24" />
               </Form.Item>
               <Form.Item v-if="form.kind === 'top_neckline'" class="!mb-2">
@@ -229,6 +307,53 @@ onMounted(load);
           </Card>
         </Col>
         <Col :lg="10" :xs="24">
+          <Card v-if="detail.path" size="small" class="mb-3" :title="`本轮已走完：建议 ${detail.path.path} · ${detail.path.name}`">
+            <div class="mb-2 text-sm">{{ detail.path.reason }}</div>
+            <div class="mb-2 text-xs text-gray-500">
+              <template v-if="detail.path.path === 'A'">录回撤买入区 {{ px(detail.path.levels.buyback_zone[0]) }}–{{ px(detail.path.levels.buyback_zone[1]) }}，收盘进区买回 {{ pct(detail.path.levels.fraction, 0) }}</template>
+              <template v-else-if="detail.path.path === 'B'">录起涨区 {{ px(detail.path.levels.base_zone[0]) }}–{{ px(detail.path.levels.base_zone[1]) }}，到了也不买，先等形态；第二轮目标默认前一轮峰值 {{ px(detail.path.levels.target) }}</template>
+              <template v-else>录第二轮结构：颈线约为本轮峰值 {{ px(detail.path.levels.neckline) }}，目标画新的量度投射</template>
+            </div>
+            <Space>
+              <Button size="small" type="primary" @click="usePath">按建议预填</Button>
+              <span class="text-xs text-gray-400">三条路由你选，预填后还可以改成别的</span>
+            </Space>
+          </Card>
+          <Card size="small" class="mb-3" :title="`哨兵（${detail.item.sentinels.length}/2）`">
+            <div v-for="s in detail.item.sentinels" :key="s.id" class="mb-1 flex items-center gap-2 text-sm">
+              <span class="text-blue-500">⚓ {{ px(s.price) }} {{ s.direction === 'up' ? '↑站上' : '↓到达' }}</span>
+              <span class="text-gray-500">{{ s.source_ref ?? '' }}</span>
+              <template v-if="s.status === 'active'">
+                <span>距 {{ pct(s.distance, 1, true) }}</span>
+                <span v-if="s.days" class="text-gray-400">约 {{ s.days }} 天</span>
+              </template>
+              <Tag v-else color="blue">{{ s.crossed_on }} 已穿越</Tag>
+              <a class="ml-auto" @click="editSentinel(s)">{{ s.status === 'active' ? '改价' : '重设' }}</a>
+              <Popconfirm title="删除这条哨兵？" @confirm="removeSentinel(s)"><a class="text-red-500">删除</a></Popconfirm>
+            </div>
+            <div v-if="sentinelRefs.length" class="mb-1 mt-2 text-xs text-gray-500">
+              引用：<a v-for="r in sentinelRefs" :key="r.label" class="mr-2" @click="pickRef(r)">{{ r.label }} {{ px(r.price) }}</a>
+            </div>
+            <Space v-if="detail.item.sentinels.length < 2 || sentinelForm.editing" wrap>
+              <InputNumber v-model:value="sentinelForm.price" :min="0" :step="0.01" size="small" placeholder="价格" class="!w-24" />
+              <Radio.Group v-model:value="sentinelForm.direction" size="small">
+                <Radio.Button value="up">向上站上</Radio.Button>
+                <Radio.Button value="down">向下到达</Radio.Button>
+              </Radio.Group>
+              <Button size="small" type="primary" @click="saveSentinel">{{ sentinelForm.editing ? '重设' : '设置' }}</Button>
+              <a v-if="sentinelForm.editing" @click="sentinelForm.editing = undefined">取消</a>
+            </Space>
+            <div class="mt-1 text-xs text-gray-400">哨兵只提醒：收盘穿越时提示你考虑更新标签，不会自动改标签。</div>
+          </Card>
+          <Card v-if="detail.quality" size="small" class="mb-3"
+                :title="`质地 ${detail.quality.grade ?? '—'}${detail.quality.score !== null ? ` · ${detail.quality.score} 分` : ''}`">
+            <div v-for="(dim, key) in detail.quality.dims" :key="key" class="mb-1 flex items-center gap-2 text-sm">
+              <span class="w-20 shrink-0 text-gray-500">{{ dim.name }}</span>
+              <Progress :percent="dim.score ?? 0" :show-info="false" size="small" class="!mb-0 w-28" />
+              <span class="text-gray-500">{{ qualityValue(String(key), dim) }}</span>
+            </div>
+            <div class="mt-1 text-xs text-gray-400">数据截至 {{ detail.quality.as_of }}；只用于排序，不触发任何信号。</div>
+          </Card>
           <Card size="small" title="筑底提示">
             <div v-for="(p, k) in detail.prompts" :key="k" class="mb-1 text-sm">
               <span class="text-gray-500">{{ p.trade_date }}</span> {{ p.message }}

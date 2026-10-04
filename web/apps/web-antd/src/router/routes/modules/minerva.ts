@@ -97,6 +97,12 @@ const routes: RouteRecordRaw[] = [
         meta: { authority: ['position:use'], icon: 'lucide:mountain', title: '头部确立' },
       },
       {
+        name: 'PmCampaigns',
+        path: '/position/campaigns',
+        component: () => import('#/views/position/campaigns.vue'),
+        meta: { authority: ['position:use'], icon: 'lucide:scroll', title: '战役总账' },
+      },
+      {
         name: 'PmBacktest',
         path: '/position/backtest',
         component: () => import('#/views/position/backtest.vue'),

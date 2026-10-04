@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import type { PmLabel, PmRow } from '#/api';
+import type { PmLabel, PmPool, PmRow } from '#/api';
 
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
@@ -8,7 +8,7 @@ import { Page } from '@vben/common-ui';
 
 import { AutoComplete, Button, Card, Form, Input, message, Modal, Popconfirm, Rate, Select, Space, Table, Tag, Tooltip } from 'ant-design-vue';
 
-import { PM_LABELS, pmAddItemsApi, pmItemsApi, pmLabelApi, pmPatchItemApi } from '#/api';
+import { GRADE_COLOR, PM_LABELS, pmAddItemsApi, pmItemsApi, pmLabelApi, pmPatchItemApi, POOL_NAMES } from '#/api';
 
 import { labelColor, openChart } from './common';
 
@@ -25,13 +25,14 @@ const groups = ref<string[]>([]);
 const labelMode = ref<'manual' | 'suggest'>('suggest');
 const loading = ref(false);
 const adding = reactive({ busy: false, group: '', text: '' });
-const filter = reactive<{ group?: string; label?: PmLabel; text: string }>({ text: '' });
+const filter = reactive<{ group?: string; label?: PmLabel; pool?: PmPool; text: string }>({ text: '' });
 const editing = reactive<{ groups: string[]; id?: number; note: string; open: boolean; primary_index: string; title: string }>({
   groups: [], note: '', open: false, primary_index: '', title: '',
 });
 
 const shown = computed(() => rows.value.filter((r) =>
   (!filter.group || r.groups.includes(filter.group)) && (!filter.label || r.label === filter.label)
+  && (!filter.pool || r.pool === filter.pool)
   && (!filter.text || `${r.symbol}${r.name ?? ''}`.includes(filter.text.trim()))));
 
 const columns = [
@@ -42,6 +43,7 @@ const columns = [
   { key: 'label', title: '方向标签', width: 200 },
   { key: 'stage', title: '系统观点' },
   { key: 'index', title: '主指数', width: 100 },
+  { key: 'quality', title: '质地', width: 60 },
   { key: 'actions', title: '', width: 150 },
 ];
 
@@ -129,6 +131,8 @@ onMounted(load);
           <Select v-model:value="filter.group" class="!w-36" allow-clear placeholder="全部分组" :options="groups.map((g) => ({ label: g, value: g }))" />
           <Select v-model:value="filter.label" class="!w-32" allow-clear placeholder="全部标签"
                   :options="PM_LABELS.map((l) => ({ label: l.name, value: l.key }))" />
+          <Select v-model:value="filter.pool" class="!w-32" allow-clear placeholder="全部池子"
+                  :options="(['hold', 'ready', 'buyback', 'watch'] as const).map((k) => ({ label: POOL_NAMES[k], value: k }))" />
           <Input v-model:value="filter.text" class="!w-40" allow-clear placeholder="代码或名称" />
           <span class="text-xs font-normal text-gray-400">{{ shown.length }} / {{ rows.length }}</span>
         </Space>
@@ -170,6 +174,10 @@ onMounted(load);
             <span v-else class="text-gray-300">—</span>
           </template>
           <template v-else-if="column.key === 'index'">{{ record.main_index_name ?? record.main_index ?? '—' }}</template>
+          <template v-else-if="column.key === 'quality'">
+            <Tag v-if="record.quality?.grade" :color="GRADE_COLOR[record.quality.grade]">{{ record.quality.grade }}</Tag>
+            <span v-else class="text-gray-300">—</span>
+          </template>
           <template v-else-if="column.key === 'actions'">
             <Space :size="4">
               <Button size="small" type="link" @click="openChart(router, record.symbol)">K 线</Button>

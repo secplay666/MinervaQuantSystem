@@ -145,6 +145,7 @@ def chart_info(symbol: str, request: Request, principal: Principal = Depends(use
                "events": [event_row(e, series) for e in events if e.rule != "activated"],
                "phase": outcome.phase if outcome else None, "completion": outcome.completion if outcome else None,
                "sentinels": [sentinel_row(r, result) for r in result["sentinels"]]}
+    out["close"] = series.shown(float(series.close[-1])) if series.dates else None  # the side of a new sentinel
     session.commit()
     return safe(out)
 

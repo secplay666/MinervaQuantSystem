@@ -5,7 +5,7 @@ import { useRouter } from 'vue-router';
 
 import { Button, Progress, Table, Tag, Tooltip } from 'ant-design-vue';
 
-import { PHASE } from '#/api';
+import { GRADE_COLOR, PHASE } from '#/api';
 import { changeColor, pct } from '#/utils/format';
 
 import { labelColor, labelName, openChart, progress, px } from './common';
@@ -21,8 +21,15 @@ const columns = [
   { key: 'weight', title: '仓位', width: 56 },
   { key: 'waiting', title: '在等什么 / 下一价位', width: 230 },
   { key: 'index', title: '主指数', width: 96 },
+  { key: 'quality', title: '质地', width: 56 },
   { key: 'close', title: '收盘', width: 84 },
 ];
+
+/** The nearest active sentinel of a row, for the "what it waits for" cell. */
+function nearestSentinel(row: PmRow) {
+  return row.sentinels.filter((s) => s.status === 'active' && s.distance !== null)
+    .sort((a, b) => Math.abs(a.distance!) - Math.abs(b.distance!))[0];
+}
 </script>
 
 <template>
@@ -46,6 +53,7 @@ const columns = [
       <template v-else-if="column.key === 'phase'">
         <Tag v-if="record.phase" :color="PHASE[record.phase]?.color">{{ PHASE[record.phase]?.name ?? record.phase }}</Tag>
         <span v-else class="text-gray-400">未画</span>
+        <div class="text-xs text-gray-400">{{ record.pool_name }}<template v-if="record.round_no > 1"> · 第 {{ record.round_no }} 轮</template></div>
       </template>
       <template v-else-if="column.key === 'completion'">
         <template v-if="record.completion !== null">
@@ -59,6 +67,16 @@ const columns = [
       <template v-else-if="column.key === 'waiting'">
         <span :class="record.top_watch ? 'text-orange-500' : ''">{{ record.waiting_for }}</span>
         <div v-if="record.next_price" class="text-xs text-gray-400">下一步：{{ record.next_step }} @ {{ px(record.next_price) }}</div>
+        <div v-if="nearestSentinel(record as PmRow)" class="text-xs text-blue-500">
+          ⚓ 距哨兵 {{ pct(nearestSentinel(record as PmRow)!.distance, 1, true) }}
+          <template v-if="nearestSentinel(record as PmRow)!.days"> · 约 {{ nearestSentinel(record as PmRow)!.days }} 天</template>
+        </div>
+      </template>
+      <template v-else-if="column.key === 'quality'">
+        <Tooltip v-if="record.quality?.grade" :title="`质地 ${record.quality.score} 分（只用于排序，不触发信号）`">
+          <Tag :color="GRADE_COLOR[record.quality.grade]">{{ record.quality.grade }}</Tag>
+        </Tooltip>
+        <span v-else class="text-gray-300">—</span>
       </template>
       <template v-else-if="column.key === 'index'">
         <template v-if="record.main_index">

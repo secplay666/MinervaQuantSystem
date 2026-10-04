@@ -46,9 +46,9 @@ const RULES: Field[] = [
 
 const settings = ref<PmSettings>();
 const saving = ref(false);
-const form = reactive<{ label_mode: 'manual' | 'suggest'; ladder: number[][]; preset: string; push_daily: boolean;
+const form = reactive<{ auto_base: boolean; label_mode: 'manual' | 'suggest'; ladder: number[][]; preset: string; push_daily: boolean;
                         rules: Record<string, number>; stage: Record<string, number> }>({
-  label_mode: 'suggest', ladder: [], preset: 'steady', push_daily: false, rules: {}, stage: {},
+  auto_base: true, label_mode: 'suggest', ladder: [], preset: 'steady', push_daily: false, rules: {}, stage: {},
 });
 const presetValues = computed(() => settings.value?.presets.find((p) => p.key === form.preset)?.params ?? {});
 
@@ -68,6 +68,7 @@ function fill(s: PmSettings) {
   settings.value = s;
   form.label_mode = s.label_mode;
   form.push_daily = s.push_daily;
+  form.auto_base = s.auto_base;
   form.preset = s.stage_preset;
   form.stage = { ...s.stage_params };
   form.rules = { ...s.rule_params };
@@ -89,7 +90,8 @@ async function save() {
   if (JSON.stringify(form.ladder) !== JSON.stringify(defaults.ladder)) ruleOverrides.ladder = form.ladder;
   saving.value = true;
   try {
-    fill(await pmSaveSettingsApi({ label_mode: form.label_mode, push_daily: form.push_daily, rule_params: ruleOverrides,
+    fill(await pmSaveSettingsApi({ auto_base: form.auto_base, label_mode: form.label_mode, push_daily: form.push_daily,
+                                   rule_params: ruleOverrides,
                                    stage_params: stageOverrides, stage_preset: form.preset }));
     message.success('已保存；看板和提示按新参数重新计算');
   } finally {
@@ -111,6 +113,12 @@ onMounted(async () => fill(await pmSettingsApi()));
               <Radio value="suggest">系统给观点，我确认标签（可一键采纳）</Radio>
               <Radio value="manual">纯手工：不显示系统观点</Radio>
             </Radio.Group>
+          </Form.Item>
+          <Form.Item label="左侧→筑底">
+            <Space>
+              <Switch v-model:checked="form.auto_base" />
+              <span class="text-xs text-gray-500">标签为左侧、收盘进入你画的起涨区时，自动转为筑底并提示（唯一的自动改标签；哨兵只提醒，不改标签）</span>
+            </Space>
           </Form.Item>
           <Form.Item label="每日推送" class="!mb-0">
             <Space>

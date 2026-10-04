@@ -9,8 +9,8 @@ import { Page } from '@vben/common-ui';
 
 import { AutoComplete, Button, Checkbox, Form, Input, InputNumber, message, Modal, Radio, Tag, Tooltip } from 'ant-design-vue';
 
-import { indicesApi, instrumentApi, isIndexSymbol, LEVEL_NAMES, PM_LABEL, pmAddItemsApi, pmChartApi, pmLabelApi, pmLevelApi,
-         searchApi } from '#/api';
+import { indicesApi, instrumentApi, isIndexSymbol, LEVEL_NAMES, PM_LABEL, pmAddItemsApi, pmAddSentinelApi, pmChartApi,
+         pmLabelApi, pmLevelApi, pmMoveSentinelApi, searchApi } from '#/api';
 import StockChart from '#/components/stock-chart/stock-chart.vue';
 
 const LAST_KEY = 'minerva.chart.last';
@@ -122,6 +122,41 @@ async function saveLevels() {
   }
 }
 
+// -- sentinels: dragged lines are saved at once; a new one is confirmed first --------------------------
+const sentinelDialog = reactive<{ basis: string; direction: 'down' | 'up'; open: boolean; price?: number; saving: boolean;
+                                  source_ref: string }>({ basis: 'qfq', direction: 'up', open: false, saving: false, source_ref: '手工' });
+
+async function onMoveSentinel(value: { basis: string; id: number; price: number }) {
+  try {
+    await pmMoveSentinelApi(value.id, { basis: value.basis as 'qfq', price: value.price });
+    message.success(`哨兵移到 ${value.price}`);
+  } finally {
+    await loadPm();  // a refused move puts the line back
+  }
+}
+
+function onSetSentinel(value: { basis: string; price: number }) {
+  const close = pm.value?.close;
+  Object.assign(sentinelDialog, { basis: value.basis, direction: close != null && value.price < close ? 'down' : 'up',
+                                  open: true, price: value.price, source_ref: '手工' });
+}
+
+async function saveSentinel() {
+  if (!sentinelDialog.price) return;
+  sentinelDialog.saving = true;
+  try {
+    const id = await ensureItem();
+    if (!id) return;
+    await pmAddSentinelApi(id, { basis: sentinelDialog.basis, direction: sentinelDialog.direction, price: sentinelDialog.price,
+                                 source_ref: sentinelDialog.source_ref || undefined });
+    message.success('哨兵已设置');
+    sentinelDialog.open = false;
+    await loadPm();
+  } finally {
+    sentinelDialog.saving = false;
+  }
+}
+
 watch(symbol, async (code) => {
   localStorage.setItem(LAST_KEY, code);
   pm.value = null;
@@ -136,7 +171,8 @@ watch(symbol, async (code) => {
 <template>
   <!-- No page header: the stock's name, tags and the search sit in the chart's first toolbar row. -->
   <Page auto-content-height content-class="p-2">
-    <StockChart :key="'chart'" :symbol="symbol" :structure="pm" height="100%" @adopt-pattern="onAdoptPattern" @set-level="onSetLevel">
+    <StockChart :key="'chart'" :symbol="symbol" :structure="pm" height="100%" @adopt-pattern="onAdoptPattern"
+                @move-sentinel="onMoveSentinel" @set-level="onSetLevel" @set-sentinel="onSetSentinel">
       <template #header>
         <b class="text-base">{{ info?.name ?? symbol }}</b>
         <span class="text-muted-foreground">{{ symbol }}</span>
@@ -201,6 +237,19 @@ watch(symbol, async (code) => {
         价格按当前图上的口径（{{ confirm.basis === 'qfq' ? '前复权' : confirm.basis === 'hfq' ? '后复权' : '不复权' }}）理解，系统换算成后复权保存；
         从今天（最新交易日）起生效，规则不回看更早的历史。{{ pm?.item_id ? '' : '这只还不在标的库中，确认时会自动加入。' }}
       </div>
+    </Modal>
+    <Modal v-model:open="sentinelDialog.open" :confirm-loading="sentinelDialog.saving" title="设置哨兵" ok-text="设置" @ok="saveSentinel">
+      <Form :label-col="{ style: { width: '90px' } }">
+        <Form.Item label="价格"><InputNumber v-model:value="sentinelDialog.price" :min="0" :step="0.01" class="!w-40" /></Form.Item>
+        <Form.Item label="方向">
+          <Radio.Group v-model:value="sentinelDialog.direction">
+            <Radio value="up">向上站上</Radio>
+            <Radio value="down">向下到达</Radio>
+          </Radio.Group>
+        </Form.Item>
+        <Form.Item label="来源"><Input v-model:value="sentinelDialog.source_ref" :maxlength="24" placeholder="如 前高、颈线、起涨区上沿" /></Form.Item>
+      </Form>
+      <div class="text-xs text-gray-500">哨兵只提醒：收盘穿越时提示你考虑更新标签，不改标签。每个标的最多 2 条；在图上拖动可以改价。</div>
     </Modal>
   </Page>
 </template>

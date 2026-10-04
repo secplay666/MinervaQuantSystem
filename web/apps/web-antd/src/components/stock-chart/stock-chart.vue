@@ -34,7 +34,9 @@ const props = withDefaults(defineProps<{ height?: number | string; name?: string
 /** 仓位管家: a selected drawing or an automatic pattern offered as levels (the page confirms them). */
 const emit = defineEmits<{
   adoptPattern: [value: { basis: string; name: string; neckline: number; target: number }];
+  moveSentinel: [value: { basis: string; id: number; price: number }];
   setLevel: [value: { basis: string; kind: PmLevelKind; lower?: number; price: number }];
+  setSentinel: [value: { basis: string; price: number }];
 }>();
 
 // -- settings (kept in the browser) -------------------------------------------------------------
@@ -339,7 +341,8 @@ const PM_BADGE: Record<string, string> = {
   realized: '兑', target: '目', top_break: '顶', top_confirmed: '顶', top_watch: '观', trailing: '止', waiting_index: '待',
 };
 const PM_LINE: Record<PmLevelKind, { color: string; dashed?: boolean }> = {
-  base_zone: { color: '#0ea5e9' }, neckline: { color: '#2563eb' }, reference: { color: '#6b7280', dashed: true },
+  base_zone: { color: '#0ea5e9' }, buyback_zone: { color: '#f97316' }, neckline: { color: '#2563eb' },
+  reference: { color: '#6b7280', dashed: true },
   target: { color: '#d97706' }, top_neckline: { color: '#dc2626', dashed: true },
 };
 /** Levels are served forward-adjusted: lines are drawn on qfq charts (and indices or ETFs, never adjusted). */
@@ -364,8 +367,9 @@ function renderLevels() {
   for (const lv of currentLevels.value) {
     const start = data[Math.max(0, barIndexFor(data, lv.effective_date))]!;
     const style = PM_LINE[lv.kind];
-    if (lv.kind === 'base_zone' && lv.lower) {
-      overlays.push({ extendData: { color: style.color, label: `起涨区 ${lv.lower.toFixed(2)}–${lv.price.toFixed(2)}` } satisfies AutoLineData,
+    if ((lv.kind === 'base_zone' || lv.kind === 'buyback_zone') && lv.lower) {
+      const what = lv.kind === 'buyback_zone' ? `回撤买入区（买回 ${Math.round((lv.fraction ?? 0) * 100)}%）` : '起涨区';
+      overlays.push({ extendData: { color: style.color, label: `${what} ${lv.lower.toFixed(2)}–${lv.price.toFixed(2)}` } satisfies AutoLineData,
                       groupId: 'pm', lock: true, name: 'priceZone',
                       points: [{ timestamp: start.timestamp, value: lv.lower }, { timestamp: last.timestamp, value: lv.price }] });
       continue;
@@ -380,6 +384,38 @@ function renderLevels() {
     }
   }
   if (overlays.length) chart.createOverlay(overlays);
+  renderSentinels();
+}
+
+/** Active sentinels as draggable lines; a drag ends with the new price saved by the page. */
+function renderSentinels() {
+  if (!chart) return;
+  quiet = true;
+  chart.removeOverlay({ groupId: 'pm-sentinel' });
+  quiet = false;
+  const data = chart.getDataList();
+  if (!data.length || !levelsDrawable.value) return;
+  const last = data.at(-1)!;
+  for (const sentinel of (props.structure?.sentinels ?? []).filter((s) => s.status === 'active')) {
+    chart.createOverlay({
+      extendData: { id: sentinel.id, label: `⚓哨兵 ${sentinel.price.toFixed(2)} ${sentinel.direction === 'up' ? '↑' : '↓'}` },
+      groupId: 'pm-sentinel', lock: false, name: 'sentinelLine', points: [{ timestamp: last.timestamp, value: sentinel.price }],
+      onPressedMoveEnd: (event) => {
+        const value = event.overlay.points[0]?.value;
+        if (typeof value === 'number') {
+          emit('moveSentinel', { basis: isIndex.value ? 'qfq' : settings.adjust, id: sentinel.id,
+                                 price: Math.round(value * 100) / 100 });
+        }
+      },
+    });
+  }
+}
+
+/** The selected drawing as a sentinel (its latest end). */
+function requestSentinel() {
+  const overlay = chart?.getOverlays({ id: selectedId.value })[0];
+  const value = (overlay?.points ?? []).map((p) => p.value).filter((v): v is number => typeof v === 'number').at(-1);
+  if (value !== undefined) emit('setSentinel', { basis: isIndex.value ? 'qfq' : settings.adjust, price: Math.round(value * 100) / 100 });
 }
 
 /** The selected drawing's prices: a line's latest end, or a box's two edges. */
@@ -822,6 +858,7 @@ function reload() {
   chart?.removeOverlay({ groupId: 'range' });
   chart?.removeOverlay({ groupId: 'auto' });
   chart?.removeOverlay({ groupId: 'pm' });
+  chart?.removeOverlay({ groupId: 'pm-sentinel' });
   quiet = false;
   range.value = null;
   selectedId.value = '';
@@ -1046,14 +1083,19 @@ const PERIOD_LABEL: Record<BarPeriod, string> = { day: '日', month: '月', week
             <span>{{ lv.lower ? `${lv.lower.toFixed(2)}–` : '' }}{{ lv.price.toFixed(2) }}</span>
           </div>
           <div v-if="!currentLevels.length" class="text-muted-foreground">{{ structure.item_id ? '还没有确认的价位' : '不在标的库中' }}</div>
+          <div v-for="s in structure.sentinels.filter((x) => x.status === 'active')" :key="`s${s.id}`" class="flex justify-between text-blue-500">
+            <span>⚓哨兵 {{ s.direction === 'up' ? '↑' : '↓' }}</span>
+            <span>{{ s.price.toFixed(2) }}<template v-if="s.days">（约 {{ s.days }} 天）</template></span>
+          </div>
           <div v-if="currentLevels.length && !levelsDrawable" class="text-muted-foreground mt-1">价位按前复权保存，切到前复权可看到价位线</div>
           <template v-if="selectedId">
             <div class="mb-1 mt-2">选中的画线设为：</div>
             <Space wrap :size="4">
-              <Button v-for="kind in (['neckline', 'target', 'top_neckline', 'base_zone'] as const)" :key="kind" size="small"
-                      @click="requestLevel(kind)">{{ LEVEL_NAMES[kind] }}</Button>
+              <Button v-for="kind in (['neckline', 'target', 'top_neckline', 'base_zone', 'buyback_zone'] as const)" :key="kind"
+                      size="small" @click="requestLevel(kind)">{{ LEVEL_NAMES[kind] }}</Button>
+              <Button size="small" @click="requestSentinel">⚓ 哨兵</Button>
             </Space>
-            <div class="text-muted-foreground mt-1">水平线取它的价格，斜线取右端点，矩形框（起涨区）取上下沿；确认前可以修改。</div>
+            <div class="text-muted-foreground mt-1">水平线取它的价格，斜线取右端点，矩形框（起涨区、回撤区）取上下沿；确认前可以修改。</div>
           </template>
           <div v-else class="text-muted-foreground mt-1">单击一条画线选中后，可以把它设为颈线、目标、头部颈线或起涨区。</div>
         </template>
