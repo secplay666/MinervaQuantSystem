@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The development environment on the server: a second checkout with its own
 # copy of the production data, its own business database and settings, and a
-# user service on 127.0.0.1 (view it through an SSH tunnel).  Nothing here
-# writes to the production checkout.
+# user service on 127.0.0.1 over HTTPS (frp forwards public port 7144 to it; an
+# SSH tunnel works too).  Nothing here writes to the production checkout.
 #
 #   deploy/dev_env.sh install [--port 18444]   # settings file, systemd unit, start
 #   deploy/dev_env.sh sync-data                # refresh data/, logs/, artifacts/ from production
