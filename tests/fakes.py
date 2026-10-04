@@ -308,6 +308,24 @@ class FakeProvider(MarketDataProvider):
         rows = [r for r in self.share_rows if start <= str(r[date_field])[:10] < end]
         return pd.DataFrame(rows)
 
+    # Earnings forecasts: 600000 forecast twice for 2026-06-30 (a revision), plus a B share to drop.
+    forecast_rows: list[dict[str, object]] = field(default_factory=lambda: [
+        {"SECURITY_CODE": "600000", "SECUCODE": "600000.SH", "REPORT_DATE": "2026-06-30 00:00:00",
+         "NOTICE_DATE": "2026-07-10 00:00:00", "PREDICT_FINANCE_CODE": "004", "PREDICT_FINANCE": "归属于上市公司股东的净利润",
+         "PREDICT_TYPE": "预增", "PREDICT_AMT_LOWER": 1.0e9, "PREDICT_AMT_UPPER": 1.2e9, "ADD_AMP_LOWER": 50.0,
+         "ADD_AMP_UPPER": 80.0, "PREYEAR_SAME_PERIOD": 6.5e8, "PREDICT_CONTENT": "预计净利润 10-12 亿元"},
+        {"SECURITY_CODE": "600000", "SECUCODE": "600000.SH", "REPORT_DATE": "2026-06-30 00:00:00",
+         "NOTICE_DATE": "2026-09-14 00:00:00", "PREDICT_FINANCE_CODE": "004", "PREDICT_FINANCE": "归属于上市公司股东的净利润",
+         "PREDICT_TYPE": "略增", "PREDICT_AMT_LOWER": 7.0e8, "PREDICT_AMT_UPPER": 8.0e8, "ADD_AMP_LOWER": 8.0,
+         "ADD_AMP_UPPER": 23.0, "PREYEAR_SAME_PERIOD": 6.5e8, "PREDICT_CONTENT": "修正：预计净利润 7-8 亿元"},
+        {"SECURITY_CODE": "900901", "SECUCODE": "900901.SH", "REPORT_DATE": "2026-06-30 00:00:00",
+         "NOTICE_DATE": "2026-07-12 00:00:00", "PREDICT_FINANCE_CODE": "004", "PREDICT_TYPE": "首亏"},
+    ])
+
+    def fetch_earnings_forecast(self, date_field: str, start: str, end: str) -> pd.DataFrame:
+        self.calls.append(("forecasts", f"{date_field}:{start}"))
+        return pd.DataFrame([r for r in self.forecast_rows if start <= str(r[date_field])[:10] < end])
+
     def fetch_dividends(self, report_date: str) -> pd.DataFrame:
         self.calls.append(("dividends", report_date))
         return pd.DataFrame([r for r in self.dividend_rows if str(r["REPORT_DATE"])[:10] == report_date])

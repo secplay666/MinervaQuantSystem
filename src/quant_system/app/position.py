@@ -899,6 +899,14 @@ def run_daily(session: Session, market: MarketQueries) -> list[dict[str, Any]]:
     log = logging.getLogger(__name__)
     out: list[dict[str, Any]] = []
     user_ids = sorted(set(session.scalars(select(PmItem.user_id).where(PmItem.archived_at.is_(None)))))
+    try:  # grades first, so the boards and the tiers order by today's grades
+        from .quality import refresh_quality
+
+        refresh_quality(session, market)
+        session.commit()
+    except Exception:  # a grade is ordering only: never let it stop the signals
+        session.rollback()
+        log.exception("position manager: quality grades failed")
     for user_id in user_ids:
         try:
             results, settings = evaluate_user(session, market, user_id)

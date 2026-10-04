@@ -96,6 +96,11 @@ class MarketDataProvider(ABC):
         (G/B/S/I) with ``date_field`` (REPORT_DATE or UPDATE_DATE) in [start, end)."""
         raise NotImplementedError
 
+    def fetch_earnings_forecast(self, date_field: str, start: str, end: str) -> pd.DataFrame:
+        """Earnings forecasts (业绩预告) with ``date_field`` (REPORT_DATE or
+        NOTICE_DATE) in [start, end); optional: providers without it skip the step."""
+        raise NotImplementedError
+
     @abstractmethod
     def fetch_dividends(self, report_date: str) -> pd.DataFrame:
         """Dividend and bonus-share plans for one report period (YYYY-MM-DD)."""

@@ -415,6 +415,13 @@ class AkShareProvider(MarketDataProvider):
         return self.fetch_datacenter(f"RPT_F10_FINANCE_{company_type}{names[statement]}", filter,
                                      "SECUCODE,REPORT_DATE")
 
+    def fetch_earnings_forecast(self, date_field: str, start: str, end: str) -> pd.DataFrame:
+        if date_field not in {"REPORT_DATE", "NOTICE_DATE"}:
+            raise ValueError(f"unsupported forecast date field {date_field}")
+        filter = f"({date_field}>='{start}')({date_field}<'{end}'){A_SHARE_TYPES}"
+        return self.fetch_datacenter("RPT_PUBLIC_OP_NEWPREDICT", filter,
+                                     "SECURITY_CODE,NOTICE_DATE,PREDICT_FINANCE_CODE")
+
     def fetch_dividends(self, report_date: str) -> pd.DataFrame:
         return self.fetch_datacenter("RPT_SHAREBONUS_DET", f"(REPORT_DATE='{report_date}')", "SECUCODE")
 

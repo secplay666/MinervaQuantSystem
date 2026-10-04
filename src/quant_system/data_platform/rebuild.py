@@ -38,6 +38,8 @@ from .etf import (
 )
 from .etf_holders import holder_rows, merge_holders, reports_to_fetch
 from .financials import STATEMENTS, merge_financial_versions, normalize_financials
+from .forecasts import DATASET as FORECAST_DATASET
+from .forecasts import merge_forecasts, normalize_forecasts
 from .corporate import (
     load_sw2014_mapping,
     merge_dividends,
@@ -581,6 +583,15 @@ class CanonicalRebuilder:
         for statement, frame in merged.items():
             if frame is not None and not frame.empty:
                 write_canonical_frame(self.staging, f"fin_{statement}", frame)
+        forecasts = None
+        for run_id, directory in _raw_runs(self.raw_root, FORECAST_DATASET):
+            for path in sorted(directory.glob("*.parquet")):
+                part = normalize_forecasts(pd.read_parquet(path), run_id, run_id_to_iso(run_id))
+                forecasts = merge_forecasts(forecasts, part)
+                log_rows.append({"dataset": FORECAST_DATASET, "window": path.stem, "rows": len(part),
+                                 "run_id": run_id})
+        if forecasts is not None and not forecasts.empty:
+            write_canonical_frame(self.staging, FORECAST_DATASET, forecasts)
         if log_rows:
             write_canonical_frame(self.staging, "fundamentals_fetch_log", merge_fetch_log(None, log_rows))
 

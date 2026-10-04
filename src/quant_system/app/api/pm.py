@@ -7,6 +7,7 @@ forward-adjusted (qfq) unless a basis says otherwise; the rules work in hfq
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 from typing import Any
@@ -17,11 +18,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db.base import utc_now
-from ..db.models import PmItem
+from ..db.models import PmItem, PmQuality
 from ..deps import Principal, api_error, get_session, require
 from ..market import _clean
 from ..position import PositionError, evaluate_user, instrument_kind, summary_row
+from ..quality import refresh_quality
 
+log = logging.getLogger(__name__)
 router = APIRouter(tags=["仓位管家"])
 use = require("position:use")
 CODE = re.compile(r"(?i)\b(?:(sh|sz|bj)?(\d{6})(?:\.(?:sh|sz|bj))?|(H\d{5}))\b")
@@ -115,6 +118,14 @@ def add_items(body: ItemsIn, request: Request, principal: Principal = Depends(us
                            groups=[body.group] if body.group else [], star=0, label="undecided"))
         added.append(code)
     session.commit()
+    new_stocks = [code for code in added if session.get(PmQuality, code) is None and re.fullmatch(r"\d{6}", code)]
+    if new_stocks:  # grade new stocks now rather than tonight; ordering only, so a failure is not an error
+        try:
+            refresh_quality(session, market, new_stocks)
+            session.commit()
+        except Exception:
+            session.rollback()
+            log.exception("quality grades of new items failed")
     return {"added": added, "skipped": skipped, "errors": errors}
 
 

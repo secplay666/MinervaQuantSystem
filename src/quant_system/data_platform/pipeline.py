@@ -43,6 +43,8 @@ from .financials import (
     merge_financial_versions,
     normalize_financials,
 )
+from .forecasts import DATASET as FORECAST_DATASET
+from .forecasts import SOURCE_FORECASTS, forecast_windows, merge_forecasts, normalize_forecasts
 from .corporate import (
     SOURCE_DIVIDENDS,
     SOURCE_INDEX_WEIGHTS,
@@ -1401,8 +1403,46 @@ class IngestionPipeline:
                 ctx.issues.append(QualityIssue(
                     dataset, "fetch_windows", "warning",
                     f"{dataset} 抓取：{failed} 个窗口失败、{deferred} 个窗口推迟，下次运行重试", failed + deferred))
+        log_rows += self._ingest_forecasts(ctx, log, today)
         if log_rows:
             write_canonical_frame(self.root, "fundamentals_fetch_log", merge_fetch_log(log, log_rows))
+
+    def _ingest_forecasts(self, ctx: RunContext, log: pd.DataFrame | None, today: date) -> list[dict[str, Any]]:
+        """Earnings forecasts (业绩预告, forecasts.py), logged with the statements' windows."""
+        step = FORECAST_DATASET
+        own_log = None if log is None else log[log["dataset"] == step]
+        merged = read_canonical(self.root, step)
+        log_rows: list[dict[str, Any]] = []
+        consecutive = 0
+        for name, field, start, end in sorted(forecast_windows(today, own_log)):
+            if consecutive >= CORPORATE_MAX_CONSECUTIVE_FAILURES:
+                ctx.count(step, "deferred_windows")
+                continue
+            try:
+                raw = self.provider.fetch_earnings_forecast(field, start, end)
+            except NotImplementedError:
+                return log_rows
+            except Exception as exc:
+                ctx.error(step, name, exc)
+                ctx.count(step, "failed_windows")
+                consecutive += 1
+                continue
+            consecutive = 0
+            self._raw(ctx, step, name, raw, SOURCE_FORECASTS)
+            part = normalize_forecasts(raw, ctx.run_id, ctx.ingested_at)
+            merged = merge_forecasts(merged, part)
+            ctx.count(step, "windows")
+            log_rows.append({"dataset": step, "window": name, "rows": len(part), "run_id": ctx.run_id})
+        if merged is not None and not merged.empty:
+            write_canonical_frame(self.root, step, merged)
+            ctx.summaries[step] = {"rows": int(len(merged))}
+        failed = ctx.counters.get(step, {}).get("failed_windows", 0)
+        deferred = ctx.counters.get(step, {}).get("deferred_windows", 0)
+        if failed or deferred:
+            ctx.issues.append(QualityIssue(step, "fetch_windows", "warning",
+                                           f"业绩预告抓取：{failed} 个窗口失败、{deferred} 个窗口推迟，下次运行重试",
+                                           failed + deferred))
+        return log_rows
 
     # ------------------------------------------------------ classification
 
