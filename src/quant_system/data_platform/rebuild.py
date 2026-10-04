@@ -41,6 +41,7 @@ from .financials import STATEMENTS, merge_financial_versions, normalize_financia
 from .intraday import BAR_COLUMNS as INTRADAY_BAR_COLUMNS
 from .intraday import SOURCE_BARS, SOURCE_FUTURES
 from .intraday import TRADE_COLUMNS as INTRADAY_TRADE_COLUMNS
+from .intraday import final_day_of_run
 from .intraday import merge_day as merge_intraday_day
 from .intraday import normalize_bars as normalize_intraday_bars
 from .intraday import normalize_trades as normalize_intraday_trades
@@ -518,7 +519,8 @@ class CanonicalRebuilder:
                     if dataset == "intraday_bars":
                         code = path.stem
                         source = SOURCE_BARS if code[:2] in ("sh", "sz") else SOURCE_FUTURES
-                        frame = normalize_intraday_bars(raw, code, None, run_id, run_id_to_iso(run_id), source)
+                        last_day = final_day_of_run(run_id, self.config.session_final_time)
+                        frame = normalize_intraday_bars(raw, code, last_day, run_id, run_id_to_iso(run_id), source)
                     else:
                         code, _, stamp = path.stem.rpartition("_")
                         frame = normalize_intraday_trades(raw, code, date(int(stamp[:4]), int(stamp[4:6]), int(stamp[6:])),

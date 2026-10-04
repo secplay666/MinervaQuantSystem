@@ -9,7 +9,7 @@ import pandas as pd
 
 from fakes import FakeProvider, at, make_config
 from quant_system.data_platform.intraday import (
-    check_trades, normalize_bars, normalize_trades, symbol_of,
+    check_trades, final_day_of_run, normalize_bars, normalize_trades, symbol_of,
 )
 from quant_system.data_platform.pipeline import IngestionPipeline
 from quant_system.data_platform.rebuild import rebuild_canonical
@@ -28,7 +28,9 @@ def test_codes_bars_and_trades_are_normalized() -> None:
                                 "2026-09-25 15:00:00"],
                         "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 10, "amount": 10.0})
     bars = normalize_bars(raw, "sh510300", date(2026, 9, 24), "r", "t", "s")
-    assert list(bars["time"]) == ["14:59", "15:00"]  # 09-24 is partial, 09-25 after the last session
+    assert list(bars["time"]) == ["14:59", "15:00", "09:31"]  # 09-25 was not over when fetched
+    assert final_day_of_run("20260924T080500Z") == date(2026, 9, 24)  # 16:05 in Shanghai
+    assert final_day_of_run("20260924T020000Z") == date(2026, 9, 23)  # 10:00, the session still open
     trades = normalize_trades(pd.DataFrame({"成交时间": ["14:59:57"], "成交价格": [4.4], "价格变动": [0.0],
                                             "成交量": [12.0], "成交金额": [5280.0], "性质": ["卖盘"]}),
                               "sh510300", TODAY, "r", "t")

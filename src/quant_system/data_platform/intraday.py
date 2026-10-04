@@ -7,13 +7,14 @@ Free sources keep little history, so this is collected every evening:
 * 3-second trades with the active side (Tencent; the latest session only, and without a date): stored
   only when they agree with that session's 1-minute bars, so trades are never filed under another day.
 
-A session counts only once its last bar is from 14:59 on (a fetch during trading carries a partial day);
-the rebuild applies the same rule to the raw responses.
+Only sessions that were over when the data was fetched are kept (a fetch during trading carries a
+partial day): the run's latest final session, which the rebuild derives from the run's start time.
+A thinly traded fund's last bar can be well before 15:00, so the bars alone cannot tell.
 """
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
 
@@ -27,7 +28,6 @@ BAR_COLUMNS = ["trade_date", "symbol", "time", "open", "high", "low", "close", "
 TRADE_COLUMNS = ["trade_date", "symbol", "seq", "time", "price", "volume", "amount", "side",
                  "source", "ingested_at", "run_id", "schema_version"]
 SIDES = {"买盘": "B", "卖盘": "S", "中性盘": "N"}
-SESSION_END = "14:59"     # the last bar of a complete session is at least this late
 MAX_AMOUNT_GAP = 0.02     # trades and bars of the same session agree within this
 INDEX_PREFIXES = ("sh000", "sz399")
 
@@ -44,9 +44,16 @@ def has_trades(code: str) -> bool:
     return code[:2] in ("sh", "sz") and not code.startswith(INDEX_PREFIXES)
 
 
-def normalize_bars(raw: pd.DataFrame, code: str, last_day: date | None, run_id: str, ingested_at: str,
+def final_day_of_run(run_id: str, final_time: str = "16:00") -> date:
+    """The last day whose session was over when a run started (run ids are UTC: 20261004T143617Z)."""
+    started = datetime.strptime(run_id[:15], "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc)
+    local = started.astimezone(timezone(timedelta(hours=8)))
+    return local.date() if local.strftime("%H:%M") >= final_time else local.date() - timedelta(days=1)
+
+
+def normalize_bars(raw: pd.DataFrame, code: str, last_day: date, run_id: str, ingested_at: str,
                    source: str) -> pd.DataFrame:
-    """Complete sessions on or before ``last_day`` (None: no limit, as in a rebuild)."""
+    """The sessions on or before ``last_day``, the latest one over when the data was fetched."""
     if raw is None or raw.empty:
         return pd.DataFrame(columns=BAR_COLUMNS)
     stamp = pd.to_datetime(raw["day" if "day" in raw.columns else "datetime"])
@@ -59,10 +66,7 @@ def normalize_bars(raw: pd.DataFrame, code: str, last_day: date | None, run_id: 
                           "open": number("open"), "high": number("high"), "low": number("low"),
                           "close": number("close"), "volume": number("volume"), "amount": number("amount"),
                           "hold": number("hold")})
-    if last_day is not None:
-        frame = frame[frame["trade_date"] <= last_day]
-    complete = frame.groupby("trade_date")["time"].transform("max") >= SESSION_END
-    frame = _lineage(frame[complete].copy(), source, run_id, ingested_at)
+    frame = _lineage(frame[frame["trade_date"] <= last_day].copy(), source, run_id, ingested_at)
     return frame.drop_duplicates(["trade_date", "symbol", "time"], keep="last")[BAR_COLUMNS].reset_index(drop=True)
 
 
