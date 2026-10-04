@@ -17,7 +17,7 @@ import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
@@ -28,15 +28,22 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..position.rules import (
-    BASE, LABEL_NAMES, LEFT, PHASE_NAMES, RIGHT, TOP, UNDECIDED, IndexDay, RuleParams, Structure, base_prompts,
-    final_remaining, phases, replay,
+    BASE, EXHAUSTED, LABEL_NAMES, LEFT, PHASE_NAMES, RIGHT, TOP, UNDECIDED, IndexDay, RuleParams, Structure,
+    Zone,
+    base_prompts, final_remaining, phases, replay,
+)
+from ..position.paths import (
+    BaseZone, Sentinel, base_zone_entry, days_away, mean_range, sentinel_crossing, suggest_path,
 )
 from ..position.stages import PRESETS, STAGE_KEYS, StageParams, classify, stage_view
-from .db.models import PmItem, PmLabelChange, PmLevel, PmSettings
+from .db.base import utc_now
+from .db.models import PmItem, PmLabelChange, PmLevel, PmQuality, PmSentinel, PmSettings
 from .market import MarketQueries
 
 LABELS = (RIGHT, TOP, BASE, LEFT, UNDECIDED)
-LEVEL_KINDS = ("neckline", "target", "top_neckline", "base_zone", "reference")
+LEVEL_KINDS = ("neckline", "target", "top_neckline", "base_zone", "buyback_zone", "reference")
+ZONE_KINDS = ("base_zone", "buyback_zone")  # levels with a lower edge
+MAX_SENTINELS = 2
 STAGE_TO_LABEL = {"advance": RIGHT, "top": TOP, "base": BASE, "decline": LEFT, "unknown": UNDECIDED}
 INDEX_CODE = re.compile(r"^((sh|sz|bj)\d{6}|H\d{5})$")
 MAIN_INDICES = ("sh000001", "sh000300", "sh000905", "sh000852", "sz399006", "sh000688")
@@ -61,6 +68,8 @@ class Series:
     open: np.ndarray
     volume: np.ndarray
     factor: float          # the latest hfq factor (1 for indices and ETFs)
+    high: np.ndarray = field(default_factory=lambda: np.array([]))
+    low: np.ndarray = field(default_factory=lambda: np.array([]))
 
     @property
     def latest(self) -> date | None:
@@ -132,13 +141,12 @@ def instrument_kind(market: MarketQueries, symbol: str) -> tuple[str, str | None
 
 def load_series(market: MarketQueries, symbol: str, kind: str) -> Series:
     if kind == "stock":
-        frame = _query(market, "SELECT trade_date, hfq_open AS open, hfq_close AS close, volume_shares AS volume, "
-                               "hfq_factor FROM daily_bars_adjusted WHERE symbol = ? ORDER BY trade_date", [symbol])
-    elif kind == "index":
-        frame = _query(market, "SELECT trade_date, open, close, volume_shares AS volume FROM index_bars "
-                               "WHERE symbol = ? ORDER BY trade_date", [symbol])
+        frame = _query(market, "SELECT trade_date, hfq_open AS open, hfq_high AS high, hfq_low AS low, hfq_close AS close, "
+                               "volume_shares AS volume, hfq_factor FROM daily_bars_adjusted WHERE symbol = ? "
+                               "ORDER BY trade_date", [symbol])
     else:
-        frame = _query(market, "SELECT trade_date, open, close, volume_shares AS volume FROM etf_bars "
+        table = "index_bars" if kind == "index" else "etf_bars"
+        frame = _query(market, f"SELECT trade_date, open, high, low, close, volume_shares AS volume FROM {table} "
                                "WHERE symbol = ? ORDER BY trade_date", [symbol])
     if frame.empty:
         return Series(symbol, kind, [], np.array([]), np.array([]), np.array([]), 1.0)
@@ -148,7 +156,8 @@ def load_series(market: MarketQueries, symbol: str, kind: str) -> Series:
         factor = float(factors.iloc[-1]) if len(factors) else 1.0
     return Series(symbol, kind, list(pd.to_datetime(frame["trade_date"]).dt.date),
                   frame["close"].to_numpy(dtype=float), frame["open"].to_numpy(dtype=float),
-                  frame["volume"].to_numpy(dtype=float), factor)
+                  frame["volume"].to_numpy(dtype=float), factor, frame["high"].to_numpy(dtype=float),
+                  frame["low"].to_numpy(dtype=float))
 
 
 def to_hfq(price: float, basis: str, series: Series) -> tuple[float, float]:
@@ -234,17 +243,30 @@ def structure_of(levels: list[PmLevel]) -> Structure | None:
         if "neckline" in kinds and "target" in kinds:
             neck, target = kinds["neckline"], kinds["target"]
             top = kinds.get("top_neckline")
+            zone = kinds.get("buyback_zone")
             return Structure(
                 neckline=neck.price, target=target.price, effective=max(neck.effective_date, target.effective_date),
                 version=neck.version * 1000 + target.version, top_neckline=top.price if top else None,
                 top_mode=top.top_mode if top else None,
-                top_confirmed=top.effective_date if top is not None and top.top_mode == "confirmed" else None)
+                top_confirmed=top.effective_date if top is not None and top.top_mode == "confirmed" else None,
+                buyback=None if zone is None else Zone(zone.lower or zone.price, zone.price, zone.fraction or 0.5,
+                                                       zone.effective_date, zone.version))
     return None
+
+
+def base_zone_of(levels: list[PmLevel]) -> BaseZone | None:
+    """The latest 起涨区 (path B is drawn after a round, whatever round it is filed in)."""
+    zones = [lv for lv in levels if lv.kind == "base_zone"]
+    if not zones:
+        return None
+    zone = max(zones, key=lambda lv: (lv.round_no, lv.effective_date, lv.id))
+    return BaseZone(upper=zone.price, lower=zone.lower, effective=zone.effective_date, version=zone.id)
 
 
 def confirm_level(session: Session, item: PmItem, series: Series, kind: str, price: float, basis: str, *,
                   actor: str, source: str = "manual", lower: float | None = None, new_round: bool = False,
-                  top_mode: str | None = None, effective: date | None = None, note: str | None = None) -> PmLevel:
+                  top_mode: str | None = None, effective: date | None = None, note: str | None = None,
+                  fraction: float | None = None) -> PmLevel:
     """Write a confirmed level; the same values as the active version change nothing."""
     if kind not in LEVEL_KINDS:
         raise PositionError(f"未知的价位类型 {kind}")
@@ -252,6 +274,10 @@ def confirm_level(session: Session, item: PmItem, series: Series, kind: str, pri
         raise PositionError("价格须为正数，区间的下沿不能高于上沿")
     if kind == "top_neckline" and top_mode not in ("observe", "confirmed"):
         raise PositionError("头部颈线须选择“先观察”或“立即确认”")
+    if kind == "buyback_zone" and (lower is None or fraction is None or not 0 < fraction <= 1):
+        raise PositionError("回撤买入区须填上沿、下沿和买回成数（1%～100%）")
+    if kind != "buyback_zone":
+        fraction = None
     if series.latest is None:
         raise PositionError("没有行情数据，无法确认价位")
     effective = effective or series.latest
@@ -262,7 +288,8 @@ def confirm_level(session: Session, item: PmItem, series: Series, kind: str, pri
     hfq, factor = to_hfq(price, basis, series)
     hfq_lower = to_hfq(lower, basis, series)[0] if lower is not None else None
     current = next((lv for lv in levels if lv.round_no == round_no and lv.kind == kind), None)
-    if current is not None and abs(current.price - hfq) < 1e-6 * hfq and current.top_mode == top_mode and (
+    if current is not None and abs(current.price - hfq) < 1e-6 * hfq and current.top_mode == top_mode \
+            and current.fraction == fraction and (
             (current.lower is None and hfq_lower is None)
             or (current.lower is not None and hfq_lower is not None and abs(current.lower - hfq_lower) < 1e-6 * hfq)):
         return current  # idempotent: no new version
@@ -273,10 +300,57 @@ def confirm_level(session: Session, item: PmItem, series: Series, kind: str, pri
     level = PmLevel(item_id=item.id, round_no=round_no, kind=kind, price=hfq, lower=hfq_lower, entered_price=price,
                     entered_lower=lower, basis=basis if series.kind == "stock" else "index", factor=factor,
                     version=version, status="active", source=source, effective_date=effective, top_mode=top_mode,
-                    note=note, created_by=actor)
+                    note=note, created_by=actor, fraction=fraction)
     session.add(level)
     session.flush()
     return level
+
+
+def active_sentinels(session: Session, item_id: int) -> list[PmSentinel]:
+    """The item's sentinels that are not removed (active or crossed)."""
+    return list(session.scalars(select(PmSentinel).where(PmSentinel.item_id == item_id, PmSentinel.status != "removed")
+                                .order_by(PmSentinel.id)))
+
+
+def _check_sentinel(series: Series, hfq: float, direction: str) -> None:
+    if direction not in ("up", "down"):
+        raise PositionError("哨兵方向只能是向上站上或向下到达")
+    if series.latest is None:
+        raise PositionError("没有行情数据，无法设置哨兵")
+    close = float(series.close[-1])
+    if direction == "up" and hfq <= close:
+        raise PositionError("向上的哨兵须高于现价（现价已在它上方）")
+    if direction == "down" and hfq >= close:
+        raise PositionError("向下的哨兵须低于现价（现价已在它下方）")
+
+
+def add_sentinel(session: Session, item: PmItem, series: Series, price: float, direction: str, basis: str, *,
+                 actor: str, source_ref: str | None = None, note: str | None = None) -> PmSentinel:
+    """A new sentinel (design §11.3): at most MAX_SENTINELS that are not removed."""
+    if len(active_sentinels(session, item.id)) >= MAX_SENTINELS:
+        raise PositionError(f"每个标的最多 {MAX_SENTINELS} 条哨兵，先删除或重设一条")
+    hfq, factor = to_hfq(price, basis, series)
+    _check_sentinel(series, hfq, direction)
+    sentinel = PmSentinel(item_id=item.id, price=hfq, entered_price=price, factor=factor, direction=direction,
+                          basis=basis if series.kind == "stock" else "index", source_ref=source_ref, note=note,
+                          status="active", version=1, effective_date=series.latest, created_by=actor)
+    session.add(sentinel)
+    session.flush()
+    return sentinel
+
+
+def reset_sentinel(session: Session, sentinel: PmSentinel, series: Series, price: float, basis: str,
+                   direction: str | None = None) -> PmSentinel:
+    """A new price (dragged on the chart, or after a crossing): active again from the latest session."""
+    direction = direction or sentinel.direction
+    hfq, factor = to_hfq(price, basis, series)
+    _check_sentinel(series, hfq, direction)
+    sentinel.price, sentinel.entered_price, sentinel.factor, sentinel.direction = hfq, price, factor, direction
+    sentinel.status, sentinel.crossed_on, sentinel.effective_date = "active", None, series.latest
+    sentinel.version += 1
+    sentinel.updated_at = utc_now()
+    session.flush()
+    return sentinel
 
 
 def set_label(session: Session, item: PmItem, label: str, *, source: str, actor: str, effective: date,
@@ -351,10 +425,65 @@ def evaluate(session: Session, market: MarketQueries, item: PmItem, settings: Pm
     last = float(series.close[-1]) if len(series.close) else None
     previous = float(series.close[-2]) if len(series.close) > 1 else None
     gate = index.get(series.latest) if index and series.latest else None
+    zone = base_zone_of(levels)
+    zone_event = base_zone_entry(series.dates, series.close, labels, zone, settings.auto_base) \
+        if zone is not None and series.dates else None
+    sentinels = active_sentinels(session, item.id)
+    crossings = []
+    for row in sentinels:
+        if row.status == "active" and series.dates:
+            event = sentinel_crossing(series.dates, series.close, Sentinel(
+                row.id, row.price, row.direction, row.effective_date, row.source_ref, row.version))
+            if event is not None:
+                crossings.append((row, event))
+    quality = session.get(PmQuality, item.symbol) if item.kind == "stock" else None
     return {"series": series, "view": view, "structure": structure, "levels": levels, "labels": labels,
             "outcome": outcome, "prompts": prompts, "main_index": main, "index_today": gate,
             "last_close": series.shown(last), "change": (last / previous - 1) if last and previous else None,
-            "base_zone": base_zone, "stage_params": stage, "rule_params": rules}
+            "base_zone": base_zone, "stage_params": stage, "rule_params": rules,
+            "zone": zone, "zone_event": zone_event, "sentinels": sentinels, "crossings": crossings,
+            "daily_range": mean_range(series.high, series.low, series.close) if len(series.high) > 1 else None,
+            "path": suggest_path(structure, outcome, last) if outcome is not None else None,
+            "previous_completion": structure.completion(previous) if structure and previous else None,
+            "quality": quality}
+
+
+POOLS = {"hold": "持有", "buyback": "回撤关注", "ready": "就绪", "watch": "观察", "archived": "归档"}
+
+
+def pool_of(item: PmItem, result: dict[str, Any]) -> str:
+    """The item's pool (design §11.2), derived from its state: nothing to record."""
+    outcome = result["outcome"]
+    if item.archived_at is not None:
+        return "archived"
+    if outcome is None:
+        return "watch"
+    if outcome.weight > 0:
+        return "hold"
+    if outcome.buyback == "waiting" and (outcome.segments or outcome.phase == EXHAUSTED):
+        return "buyback"
+    if not outcome.round_over and outcome.phase != EXHAUSTED and item.label in (RIGHT, BASE):
+        return "ready"
+    return "watch"
+
+
+def sentinel_row(row: PmSentinel, result: dict[str, Any]) -> dict[str, Any]:
+    """A sentinel with its distance and "about N days" (prices in qfq)."""
+    series: Series = result["series"]
+    close = float(series.close[-1]) if len(series.close) else None
+    active = row.status == "active"
+    return {"id": row.id, "price": series.shown(row.price), "entered_price": row.entered_price, "basis": row.basis,
+            "direction": row.direction, "source_ref": row.source_ref, "note": row.note, "status": row.status,
+            "version": row.version, "effective_date": row.effective_date, "crossed_on": row.crossed_on,
+            "distance": row.price / close - 1 if close else None,
+            "days": days_away(row.price, close, result["daily_range"]) if active and close else None}
+
+
+def _distance(price: float | None, result: dict[str, Any]) -> float | None:
+    """How far an hfq trigger price is from the last close."""
+    series: Series = result["series"]
+    close = float(series.close[-1]) if len(series.close) else None
+    return price / close - 1 if price and close else None
 
 
 def summary_row(item: PmItem, result: dict[str, Any], settings: PmSettings) -> dict[str, Any]:
@@ -384,6 +513,15 @@ def summary_row(item: PmItem, result: dict[str, Any], settings: PmSettings) -> d
         "top_watch": bool(outcome and outcome.completion is not None
                           and outcome.completion >= result["rule_params"].top_watch and outcome.weight > 0),
         "note": item.note,
+        "pool": pool_of(item, result), "pool_name": POOLS[pool_of(item, result)],
+        "round_no": current_round(result["levels"]), "buyback": outcome.buyback if outcome else None,
+        "next_distance": _distance(outcome.next_price, result) if outcome else None,
+        "completion_change": (outcome.completion - result["previous_completion"])
+        if outcome and outcome.completion is not None and result["previous_completion"] is not None else None,
+        "sentinels": [sentinel_row(r, result) for r in result["sentinels"]],
+        "path": result["path"]["path"] if result["path"] else None,
+        "quality": None if result["quality"] is None else {"grade": result["quality"].grade,
+                                                           "score": result["quality"].score},
     }
 
 
@@ -475,7 +613,29 @@ def item_detail(session: Session, item: PmItem, result: dict[str, Any], settings
         "label_history": [{"label": c.label, "label_name": LABEL_NAMES.get(c.label, c.label), "source": c.source,
                            "effective_date": c.effective_date, "reason": c.stage_reason,
                            "created_by": c.created_by} for c in changes],
+        "path": shown_path(result["path"], series),
+        "zone_event": event_row(result["zone_event"], series) if result["zone_event"] else None,
+        "daily_range": result["daily_range"],
+        "auto_base": settings.auto_base,
+        "quality": None if result["quality"] is None else {
+            "grade": result["quality"].grade, "score": result["quality"].score, "as_of": result["quality"].as_of,
+            "dims": result["quality"].dims},
     }
+
+
+def shown_path(path: dict[str, Any] | None, series: Series) -> dict[str, Any] | None:
+    """The path suggestion with its pre-filled prices in qfq."""
+    if path is None:
+        return None
+    levels = {}
+    for key, value in path["levels"].items():
+        if key == "fraction":
+            levels[key] = value
+        elif isinstance(value, tuple):
+            levels[key] = [series.shown(v) for v in value]
+        else:
+            levels[key] = series.shown(value)
+    return dict(path, levels=levels)
 
 
 # -- signals and the daily report ---------------------------------------------------------------------
@@ -495,7 +655,12 @@ def sync_signals(session: Session, user_id: int, results: list[tuple[PmItem, dic
     cutoff = min(settings.evaluated_through or latest, latest)
     new: list[PmSignal] = []
     for item, result in results:
+        for row, event in result.get("crossings", []):  # a crossing is final for this version of the sentinel
+            row.status, row.crossed_on = "crossed", event.trade_date
         events = (result["outcome"].events if result["outcome"] else []) + result["prompts"]
+        events += [e for _, e in result.get("crossings", [])]
+        if result.get("zone_event") is not None:
+            events.append(result["zone_event"])
         wanted = [e for e in events if e.trade_date >= cutoff]
         if not wanted:
             continue
@@ -511,6 +676,10 @@ def sync_signals(session: Session, user_id: int, results: list[tuple[PmItem, dic
                                        "weight": event.weight})
             session.add(signal)
             new.append(signal)
+            if event.rule == "base_zone" and settings.auto_base and item.label == LEFT:
+                # The only automatic label change (design §11.1): pure arithmetic on the user's own zone.
+                set_label(session, item, BASE, source="auto", actor="system", effective=event.trade_date,
+                          reason=event.message)
     settings.evaluated_through = latest
     session.flush()
     return new

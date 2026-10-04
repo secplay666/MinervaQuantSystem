@@ -79,6 +79,16 @@ class RuleParams:
 
 
 @dataclass(frozen=True)
+class Zone:
+    """A buyback zone of a round (design §11.1, path A): hfq edges and the share bought back."""
+    lower: float
+    upper: float
+    fraction: float
+    effective: date
+    version: int = 1
+
+
+@dataclass(frozen=True)
 class Structure:
     """One round: the confirmed neckline and measured target (hfq prices)."""
     neckline: float
@@ -88,6 +98,7 @@ class Structure:
     top_neckline: float | None = None
     top_mode: str | None = None     # "observe" (alert on a close below) | "confirmed" (exit on top_confirmed)
     top_confirmed: date | None = None
+    buyback: Zone | None = None     # after the round's exit: buy back N in the zone
 
     def completion(self, close: float) -> float:
         return (close - self.neckline) / (self.target - self.neckline)
@@ -134,6 +145,8 @@ class Outcome:
     segments: list[dict] = field(default_factory=list)
     round_return: float | None = None
     script_return: float | None = None  # neckline -> target
+    round_over: bool = False            # no position and no entry to come in this round (path choice time)
+    buyback: str | None = None          # the buyback zone: waiting | bought | void | done
 
     def to_dict(self) -> dict:
         values = asdict(self)
@@ -177,6 +190,9 @@ def replay(dates: list[date], closes: np.ndarray, structure: Structure, labels: 
     segments: list[dict] = []
     segment: dict | None = None
     index = index or {}
+    zone = structure.buyback
+    buyback = None if zone is None else "waiting"
+    bought_peak = 0.0
 
     def emit(day, rule, priority, message, close, completion, key):
         events.append(Event(day, rule, priority, message, round(float(close), 4), round(weight, 4),
@@ -220,6 +236,24 @@ def replay(dates: list[date], closes: np.ndarray, structure: Structure, labels: 
         if label in (LEFT, UNDECIDED, BASE):
             continue  # the label silences the rules (base criteria are evaluated separately)
         # -- exits (P1), then reductions (P2), while held ------------------------------------------
+        if weight > 0 and buyback == "bought":
+            # The bought-back leg (§11.1): top exits as usual, then its own stop and trailing stop.
+            bought_peak = max(bought_peak, close)
+            exit_rule = None
+            if structure.top_neckline is not None and structure.top_mode == "observe" \
+                    and close < structure.top_neckline:
+                exit_rule, message = "top_break", "收盘跌破头部颈线，确认清仓"
+            elif structure.top_confirmed is not None and day >= structure.top_confirmed:
+                exit_rule, message = "top_confirmed", "已确认头部，全部清仓"
+            elif close < zone.lower * p.false_break:
+                exit_rule, message = "buyback_stop", f"回撤买回失败：收盘跌破回撤区下沿的 {p.false_break:.0%}，清仓"
+            elif close <= bought_peak * (1 - p.trailing):
+                exit_rule, message = "buyback_trailing", f"买回后自最高收盘回撤 {p.trailing:.0%}，清仓"
+            if exit_rule:
+                trade(day, close, 0.0, exit_rule)
+                buyback = "done"
+                emit(day, exit_rule, 1, message, close, completion, f"z{zone.version}:{exit_rule}")
+            continue
         if weight > 0:
             held_peak = max(held_peak, close)
             held_max_completion = max(held_max_completion, completion)
@@ -264,6 +298,24 @@ def replay(dates: list[date], closes: np.ndarray, structure: Structure, labels: 
                 watch_done = True
                 emit(day, "top_watch", 4, "进入量度满足区，开始留意头部形态", close, completion, "top_watch")
             continue
+        # -- buyback zone (P3), once the round's position is gone ------------------------------------
+        if buyback == "waiting" and day >= zone.effective and (segments or phase == EXHAUSTED):
+            if close < zone.lower * p.false_break:
+                buyback = "void"
+                emit(day, "buyback_void", 3, f"收盘跌破回撤区下沿的 {p.false_break:.0%}，买点作废", close, completion,
+                     f"z{zone.version}:buyback_void")
+                continue
+            if label == RIGHT and zone.lower <= close <= zone.upper:
+                gate = index.get(day)
+                late = gate is not None and (gate.phase in (REALIZED, EXHAUSTED) or (
+                    gate.completion is not None and gate.completion >= p.late_index))
+                buyback, weight, bought_peak = "bought", zone.fraction, close
+                segment = {"entry_date": day, "entry_close": close, "entry_weight": weight, "proceeds": 0.0,
+                           "steps": []}
+                emit(day, "buyback", 3, f"回撤到位，买回 {zone.fraction:.0%}"
+                     + ("（逆共振：主指数处于高位，提示照发，注意风险）" if late else ""), close, completion,
+                     f"z{zone.version}:buyback")
+                continue
         # -- entry (P3) ------------------------------------------------------------------------------
         if label != RIGHT or phase == EXHAUSTED or not can_enter or above < p.confirm_closes:
             continue
@@ -297,15 +349,19 @@ def replay(dates: list[date], closes: np.ndarray, structure: Structure, labels: 
             segment["entry_weight"] * segment["entry_close"]) - 1
         segments.append(open_seg)
     round_return = float(np.prod([1 + s["return"] for s in segments]) - 1) if segments else None
+    ended = bool(segments) or phase == EXHAUSTED  # the round's position (if any) has been closed
     waiting, next_price, next_step = _waiting(phase, weight, entry_weight, completion_now, rungs_done, structure,
                                               label_on(labels, dates[-1]) if dates else UNDECIDED, p, last_close,
-                                              waiting_done, can_enter)
+                                              waiting_done, can_enter, buyback=buyback, ended=ended)
+    round_over = weight <= 0 and (phase == EXHAUSTED or not can_enter or buyback in ("void", "done")) \
+        and buyback != "waiting"
     return Outcome(events, phase, completion_now, peak, activated, round(weight, 4), entry_weight, waiting,
-                   next_price, next_step, segments, round_return, structure.target / structure.neckline - 1)
+                   next_price, next_step, segments, round_return, structure.target / structure.neckline - 1,
+                   round_over, buyback)
 
 
 def _waiting(phase, weight, entry_weight, completion, rungs_done, s: Structure, label, p: RuleParams, close,
-             waited, can_enter=True) -> tuple[str, float | None, str | None]:
+             waited, can_enter=True, buyback=None, ended=False) -> tuple[str, float | None, str | None]:
     """What the item waits for, with the next trigger price."""
     if label == LEFT:
         return "左侧：规则休眠", None, None
@@ -313,6 +369,16 @@ def _waiting(phase, weight, entry_weight, completion, rungs_done, s: Structure, 
         return "未定：先确认方向标签", None, None
     if label == BASE:
         return "筑底：等形态和筑底判据", s.neckline, "站上颈线"
+    zone = s.buyback
+    if weight > 0 and buyback == "bought":
+        return (f"买回 {weight:.0%} 持有：跌破回撤区下沿的 {p.false_break:.0%} 或回撤 {p.trailing:.0%} 清仓",
+                zone.lower * p.false_break, "买回止损")
+    if weight <= 0 and ended and buyback == "waiting":
+        gap = None if close is None else zone.upper / close - 1
+        return (f"回撤关注：等回到回撤区（距上沿 {gap:+.1%}）" if gap is not None else "回撤关注：等回到回撤区"), \
+            zone.upper, "回撤区上沿"
+    if weight <= 0 and ended and buyback == "void":
+        return "回撤区买点已作废，等待下一轮结构", None, None
     if (phase == EXHAUSTED or not can_enter) and weight <= 0:
         return ("本轮结构已衰竭，等待下一轮" if phase == EXHAUSTED else "本轮已离场，等待下一轮结构"), None, None
     if label == TOP and weight <= 0:

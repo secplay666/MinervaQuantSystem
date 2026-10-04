@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 
 from quant_system.position.rules import (
-    ACTIVE, BASE, EXHAUSTED, LEFT, PENDING, REALIZED, RIGHT, TOP, IndexDay, RuleParams, Structure, base_prompts,
-    replay,
+    ACTIVE, BASE, EXHAUSTED, LEFT, PENDING, REALIZED, RIGHT, TOP, IndexDay, RuleParams, Structure, Zone,
+    base_prompts, replay,
 )
 from quant_system.position.stages import StageParams
 
@@ -141,3 +141,38 @@ def test_rule_parameters_validate() -> None:
 def test_a_top_label_without_a_position_says_no_entry() -> None:
     out = run([10.5, 11.0], labels=[(D0, TOP)])
     assert out.weight == 0 and out.waiting_for.startswith("顶部：不再入场") and out.next_price is None
+
+
+ZONE = Structure(10.0, 20.0, D0, buyback=Zone(lower=14.5, upper=16.0, fraction=0.5, effective=D0, version=2))
+
+
+def test_after_the_trailing_exit_the_buyback_zone_buys_back_and_has_its_own_stop() -> None:
+    out = run([10.5, 17.5, 13.5, 15.0, 15.8, 13.5], structure=ZONE)
+    assert [r for _, r, _ in rules(out)][-4:] == ["ladder", "trailing", "buyback", "buyback_stop"]
+    buy = next(e for e in out.events if e.rule == "buyback")
+    assert (buy.trade_date - D0).days == 3 and buy.weight == 0.5 and buy.key == "v1:z2:buyback"
+    assert out.weight == 0 and out.buyback == "done" and out.round_over
+    assert len(out.segments) == 2 and out.segments[1]["entry_weight"] == 0.5
+    assert out.segments[1]["return"] == pytest.approx(13.5 / 15.0 - 1)
+
+
+def test_waiting_for_the_zone_then_a_close_far_below_voids_it() -> None:
+    out = run([10.5, 17.5, 13.5, 16.5], structure=ZONE)
+    assert out.buyback == "waiting" and not out.round_over
+    assert out.waiting_for == "回撤关注：等回到回撤区（距上沿 -3.0%）" and out.next_price == 16.0
+    out = run([10.5, 17.5, 13.5, 13.0], structure=ZONE)
+    assert rules(out)[-1][1] == "buyback_void" and out.buyback == "void" and out.round_over
+    assert out.waiting_for == "回撤区买点已作废，等待下一轮结构"
+
+
+def test_a_buyback_late_in_the_index_move_is_flagged_but_not_blocked() -> None:
+    out = run([10.5, 17.5, 13.5, 15.0], structure=ZONE, index_completion=0.95)
+    buy = out.events[-1]
+    assert buy.rule == "buyback" and "逆共振" in buy.message and out.weight == 0.5
+
+
+def test_no_buyback_while_the_label_is_top_or_before_the_round_held_anything() -> None:
+    out = run([10.5, 17.5, 13.5, 15.0], structure=ZONE, labels=[(D0, RIGHT), (D0 + timedelta(days=3), TOP)])
+    assert out.buyback == "waiting" and out.weight == 0
+    out = run([9.0, 15.0], structure=ZONE)  # still held after a normal entry: the zone waits for the exit
+    assert "buyback" not in {e.rule for e in out.events}

@@ -457,6 +457,7 @@ class PmLevel(Base):
     source: Mapped[str] = mapped_column(String(12))  # manual | drawing | pattern
     effective_date: Mapped[date] = mapped_column(Date)
     top_mode: Mapped[str | None] = mapped_column(String(12))  # top_neckline: observe | confirmed
+    fraction: Mapped[float | None] = mapped_column(Float)  # buyback_zone: the share bought back
     note: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[str] = mapped_column(String(64))
     confirmed_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
@@ -493,5 +494,43 @@ class PmSettings(Base):
     rule_params: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     label_mode: Mapped[str] = mapped_column(String(8), default="suggest")  # suggest | manual
     push_daily: Mapped[bool] = mapped_column(Boolean, default=False)
+    auto_base: Mapped[bool] = mapped_column(Boolean, default=True)  # a close in the 起涨区 turns 左侧 into 筑底
     evaluated_through: Mapped[date | None] = mapped_column(Date)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
+
+
+class PmSentinel(Base):
+    """A reminder price of an item (design §11.3): at most two active per item; a
+    reset bumps ``version`` so the next crossing reminds again."""
+
+    __tablename__ = "pm_sentinels"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("pm_items.id", ondelete="CASCADE"), index=True)
+    price: Mapped[float] = mapped_column(Float)  # hfq
+    entered_price: Mapped[float] = mapped_column(Float)
+    basis: Mapped[str] = mapped_column(String(8))  # qfq | none | hfq | index
+    factor: Mapped[float] = mapped_column(Float, default=1.0)
+    direction: Mapped[str] = mapped_column(String(4))  # up | down
+    source_ref: Mapped[str | None] = mapped_column(String(24))  # 颈线 / 起涨区上沿 / 前高 / 失效线 / 手工
+    note: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(8), default="active")  # active | crossed | removed
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    effective_date: Mapped[date] = mapped_column(Date)
+    crossed_on: Mapped[date | None] = mapped_column(Date)
+    created_by: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
+
+
+class PmQuality(Base):
+    """The quality grade of a stock (design §11.6): ordering only, never a signal."""
+
+    __tablename__ = "pm_quality"
+
+    symbol: Mapped[str] = mapped_column(String(16), primary_key=True)
+    as_of: Mapped[date] = mapped_column(Date)
+    grade: Mapped[str | None] = mapped_column(String(1))  # A-D, None with fewer than three dimensions
+    score: Mapped[float | None] = mapped_column(Float)
+    dims: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # per dimension: value, score, period
+    computed_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)

@@ -39,8 +39,10 @@ def market_db(root: Path) -> None:
     qfq = stock_closes()
     index = 4000 * 1.002 ** np.arange(len(DAYS))  # a steady advance
     stock = pd.DataFrame({"symbol": "600000", "trade_date": DAYS.date, "hfq_open": qfq * FACTOR * 0.995,
+                          "hfq_high": qfq * FACTOR * 1.01, "hfq_low": qfq * FACTOR * 0.99,
                           "hfq_close": qfq * FACTOR, "volume_shares": 1e6, "hfq_factor": FACTOR})
     indices = pd.concat([pd.DataFrame({"symbol": s, "name": n, "trade_date": DAYS.date, "open": index * 0.998,
+                                       "high": index * 1.005, "low": index * 0.995,
                                        "close": index, "volume_shares": 1e9})
                          for s, n in (("sh000300", "沪深300"), ("sh000852", "中证1000"))])
     with duckdb.connect(str(path)) as con:
