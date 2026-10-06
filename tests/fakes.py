@@ -430,6 +430,7 @@ class FakeProvider(MarketDataProvider):
         ),
     })
     reports_failing: set[str] = field(default_factory=set)
+    report_texts_failing: bool = False
 
     def fetch_fund_reports(self, symbol: str) -> pd.DataFrame:
         self.calls.append(("fund_reports", symbol))
@@ -440,6 +441,8 @@ class FakeProvider(MarketDataProvider):
 
     def fetch_report_text(self, art_code: str) -> str:
         self.calls.append(("report_text", art_code))
+        if self.report_texts_failing:
+            raise ConnectionError("Remote end closed connection without response")
         return self.report_texts[art_code]
 
     def fetch_etf_lists(self) -> dict[str, pd.DataFrame]:

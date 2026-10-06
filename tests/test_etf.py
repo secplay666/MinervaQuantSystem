@@ -218,3 +218,25 @@ def test_a_capped_run_leaves_the_rest_of_a_fund_for_the_next_one(tmp_path, monke
     _run(tmp_path, provider, monkeypatch, etf_holder_reports_per_run=1)
     assert ("fund_reports", "510300") in provider.calls  # its list was not complete, so it is listed again
     assert [s for kind, s in provider.calls if kind == "report_text"] == ["AN2025Y"]
+
+
+def test_report_texts_stop_after_failures_in_a_row(tmp_path, monkeypatch) -> None:
+    provider = FakeProvider(today=date(2026, 9, 24))
+    for year in (2023, 2024):
+        for title, published, tag in (("年度报告", f"{year + 1}-03-31", "Y"), ("中期报告", f"{year}-08-29", "H1")):
+            provider.fund_reports["510300"].append({"FUNDCODE": "510300", "TITLE": f"某沪深300ETF{year}年{title}",
+                                                    "PUBLISHDATEDesc": published, "ID": f"AN{year}{tag}"})
+            provider.report_texts[f"AN{year}{tag}"] = provider.report_texts["AN2026H1"]
+    provider.report_texts_failing = True
+    manifest = _run(tmp_path, provider, monkeypatch)
+    assert manifest["status"] == "complete"
+    assert [s for kind, s in provider.calls if kind == "report_text"] == ["AN2026H1", "AN2025Y", "AN2024Y"]
+    counters = manifest["counters"]["etf_holders"]
+    assert counters["failed_reports"] == 3 and counters["deferred_reports"] == 3
+
+    provider.report_texts_failing = False
+    provider.calls.clear()
+    manifest = _run(tmp_path, provider, monkeypatch)
+    assert ("fund_reports", "510300") in provider.calls  # nothing was logged, so the list comes back whole
+    assert len([s for kind, s in provider.calls if kind == "report_text"]) == 6
+    assert manifest["counters"]["etf_holders"]["reports"] == 6

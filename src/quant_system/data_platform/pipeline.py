@@ -1286,7 +1286,9 @@ class IngestionPipeline:
         2015) of all funds are fetched newest period first, up to
         ``etf_holder_reports_per_run`` per run, so the latest period of every
         fund comes in first and history follows on later runs.  A fund's list
-        counts as refreshed only once all its reports are in.
+        counts as refreshed only once all its reports are in.  Eastmoney cuts
+        the server off after a burst of report requests, so a few failures in
+        a row put the rest off to the next run instead of retrying each one.
         """
         step = "etf_holders"
         budget = self.config.etf_holder_reports_per_run
@@ -1316,14 +1318,21 @@ class IngestionPipeline:
             pending += [(symbol, report) for report in reports_to_fetch(listing, log)]
         pending.sort(key=lambda item: (item[1]["report_date"], item[1]["notice_date"], item[0]), reverse=True)
         unfinished = {symbol for symbol, _ in pending[budget:]}
+        failures = 0
         for symbol, report in pending[:budget]:
+            if failures >= CORPORATE_MAX_CONSECUTIVE_FAILURES:
+                ctx.count(step, "deferred_reports")
+                unfinished.add(symbol)
+                continue
             try:
                 text = self.provider.fetch_report_text(report["art_code"])
             except Exception as exc:
                 ctx.error(step, report["art_code"], exc)
                 ctx.count(step, "failed_reports")
                 unfinished.add(symbol)
+                failures += 1
                 continue
+            failures = 0
             raw = pd.DataFrame([{"symbol": symbol, **{k: str(v) for k, v in report.items()}, "text": text}])
             self._raw(ctx, "etf_reports", report["art_code"], raw, SOURCE_FUND_REPORT)
             part = holder_rows(symbol, report, text, ctx.run_id, ctx.ingested_at)
