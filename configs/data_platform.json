@@ -23,6 +23,19 @@
   "etf_szse_start": "20160101",
   "etf_sse_max_dates_per_run": 30,
   "etf_holder_reports_per_run": 200,
+  "download_intraday": true,
+  "intraday_codes": [
+    "sh510300",
+    "sh510310",
+    "sh510330",
+    "sz159919",
+    "sh515330",
+    "sh510360",
+    "sh515380",
+    "sh510350",
+    "sh000300",
+    "IF0"
+  ],
   "manual_delistings": [
     {
       "symbol": "920680",

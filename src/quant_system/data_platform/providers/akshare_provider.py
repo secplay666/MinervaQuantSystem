@@ -422,6 +422,14 @@ class AkShareProvider(MarketDataProvider):
         return self.fetch_datacenter("RPT_PUBLIC_OP_NEWPREDICT", filter,
                                      "SECURITY_CODE,NOTICE_DATE,PREDICT_FINANCE_CODE")
 
+    def fetch_intraday_bars(self, code: str) -> pd.DataFrame:
+        if code[:2] not in ("sh", "sz"):
+            return self._call(f"futures_minute:{code}", ak.futures_zh_minute_sina, symbol=code, period="1")
+        return self._call(f"sina_minute:{code}", _sina_minutes, code=code)
+
+    def fetch_intraday_trades(self, code: str) -> pd.DataFrame:
+        return self._call(f"tencent_ticks:{code}", ak.stock_zh_a_tick_tx_js, symbol=code)
+
     def fetch_dividends(self, report_date: str) -> pd.DataFrame:
         return self.fetch_datacenter("RPT_SHAREBONUS_DET", f"(REPORT_DATE='{report_date}')", "SECUCODE")
 
@@ -473,6 +481,15 @@ def _sse_bulletin_page(title: str, start: str, end: str, page: int) -> tuple[lis
     help_ = payload["pageHelp"]
     data = [item for row in (help_["data"] or []) for item in (row if isinstance(row, list) else [row])]
     return data, int(help_["total"] or 0)
+
+
+def _sina_minutes(code: str) -> pd.DataFrame:
+    """Sina 1-minute bars: the newest 1,970 (about eight sessions), the most it serves."""
+    response = requests.get("https://quotes.sina.cn/cn/api/jsonp_v2.php/var=/CN_MarketDataService.getKLineData",
+                            params={"symbol": code, "scale": "1", "ma": "no", "datalen": "1970"},
+                            headers={"Referer": "https://finance.sina.com.cn/", "User-Agent": _BROWSER_UA}, timeout=30)
+    response.raise_for_status()
+    return pd.DataFrame(_jsonp(response.text) or [])
 
 
 def _sse_etf_scale(trade_date: str) -> pd.DataFrame:

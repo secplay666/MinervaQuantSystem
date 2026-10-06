@@ -36,6 +36,15 @@ from .etf import (
     szse_window,
 )
 from .etf_holders import SOURCE_FUND_REPORT, holder_rows, lists_to_refresh, merge_holders, reports_to_fetch
+from .intraday import BAR_COLUMNS as INTRADAY_BAR_COLUMNS
+from .intraday import SOURCE_BARS, SOURCE_FUTURES, SOURCE_TRADES
+from .intraday import TRADE_COLUMNS as INTRADAY_TRADE_COLUMNS
+from .intraday import check_trades as check_intraday_trades
+from .intraday import has_trades as intraday_has_trades
+from .intraday import merge_day as merge_intraday_day
+from .intraday import normalize_bars as normalize_intraday_bars
+from .intraday import normalize_trades as normalize_intraday_trades
+from .intraday import symbol_of as intraday_symbol
 from .financials import (
     SOURCE_FINANCIALS,
     STATEMENTS,
@@ -128,7 +137,7 @@ from .utils import code_version, ensure_directories, json_dump, run_id_to_iso, u
 
 MAX_RECORDED_ERRORS = 200
 STEPS = ("daily_bars", "adjustment_factors", "indices", "status_history", "market_snapshot", "corporate",
-         "classification", "fundamentals", "etf")
+         "classification", "fundamentals", "etf", "intraday")
 # Run only when asked (``--steps``): the one-off backfill of history before
 # the earliest stored bar, e.g. after start_date moved earlier.
 OPTIONAL_STEPS = ("bars_history",)
@@ -270,6 +279,8 @@ class IngestionPipeline:
             self._ingest_fundamentals(ctx)
         if "etf" in self.steps and self.config.download_etf:
             self._ingest_etf(ctx)
+        if "intraday" in self.steps and self.config.download_intraday:
+            self._ingest_intraday(ctx)
         self._audit(ctx, universe)
 
     # ------------------------------------------------------------ helpers
@@ -1211,6 +1222,62 @@ class IngestionPipeline:
         if failed:
             ctx.issues.append(QualityIssue(step, "fetch", "warning",
                                            f"{failed}/{len(jobs)} 只 ETF 日线下载失败，下次运行重试", failed))
+
+    def _ingest_intraday(self, ctx: RunContext) -> None:
+        """1-minute bars of the configured codes (every session the source still keeps), then the
+        latest session's 3-second trades of the funds among them, checked against those bars."""
+        assert ctx.expected_latest is not None
+        day = ctx.expected_latest
+        by_day: dict[date, list[pd.DataFrame]] = {}
+        for code in self.config.intraday_codes:
+            source = SOURCE_BARS if code[:2] in ("sh", "sz") else SOURCE_FUTURES
+            try:
+                raw = self.provider.fetch_intraday_bars(code)
+            except NotImplementedError:
+                return
+            except Exception as exc:
+                ctx.error("intraday_bars", code, exc)
+                ctx.count("intraday_bars", "failed")
+                continue
+            self._raw(ctx, "intraday_bars", code, raw, source)
+            frame = normalize_intraday_bars(raw, code, day, ctx.run_id, ctx.ingested_at, source)
+            ctx.count("intraday_bars", "codes")
+            for session, part in frame.groupby("trade_date"):
+                by_day.setdefault(session, []).append(part)
+        for session, parts in sorted(by_day.items()):
+            partition = f"trade_date={session}"
+            merged = merge_intraday_day(read_canonical(self.root, "intraday_bars", partition), pd.concat(parts),
+                                        INTRADAY_BAR_COLUMNS)
+            write_canonical_frame(self.root, "intraday_bars", merged, partition=partition)
+        today = pd.concat(by_day.get(day, [pd.DataFrame(columns=INTRADAY_BAR_COLUMNS)]), ignore_index=True)
+        trades = []
+        for code in filter(intraday_has_trades, self.config.intraday_codes):
+            try:
+                raw = self.provider.fetch_intraday_trades(code)
+            except Exception as exc:
+                ctx.error("intraday_trades", code, exc)
+                ctx.count("intraday_trades", "failed")
+                continue
+            frame = normalize_intraday_trades(raw, code, day, ctx.run_id, ctx.ingested_at)
+            problem = check_intraday_trades(frame, today[today["symbol"] == intraday_symbol(code)])
+            if problem:  # kept aside, so a rebuild does not file it under this day either
+                self._raw(ctx, "intraday_trades_rejected", f"{code}_{day:%Y%m%d}", raw, SOURCE_TRADES)
+                ctx.issues.append(QualityIssue("intraday_trades", "session_check", "warning",
+                                               f"{code} {day} 逐笔未入库：{problem}"))
+                ctx.count("intraday_trades", "rejected")
+                continue
+            self._raw(ctx, "intraday_trades", f"{code}_{day:%Y%m%d}", raw, SOURCE_TRADES)
+            trades.append(frame)
+            ctx.count("intraday_trades", "stored")
+        if trades:
+            partition = f"trade_date={day}"
+            merged = merge_intraday_day(read_canonical(self.root, "intraday_trades", partition), pd.concat(trades),
+                                        INTRADAY_TRADE_COLUMNS)
+            write_canonical_frame(self.root, "intraday_trades", merged, partition=partition)
+        failed = sum(ctx.counters.get(step, {}).get("failed", 0) for step in ("intraday_bars", "intraday_trades"))
+        if failed:
+            ctx.issues.append(QualityIssue("intraday", "fetch", "warning",
+                                           f"日内数据 {failed} 个请求失败（逐笔只有当天能补，分钟线一周内可补）", failed))
 
     def _ingest_etf_holders(self, ctx: RunContext, master: pd.DataFrame | None) -> None:
         """Top holders from the broad-index funds' annual and interim reports.
