@@ -22,6 +22,7 @@ PYTHONPATH=~/L1/minerva-dev/src ~/L1/minerva-dev/.venv/bin/python <脚本> ...
 | `buyback/` | 回购、股东增减持之后的表现；检验"回购注销 + 业绩不差，半年胜率 70%" | `probe_buybacks.py`（回购表字段）、`probe_fields.py`（进度代码含义、增减持字段单位）、`buyback_study.py`（事件研究） | `WORKLOG_2026-10-07.md` |
 | `breadth/` | 市场宽度在全历史上算一遍要多久、占多少内存 | `time_breadth.py`（最早的查询）、`measure_breadth.py`（页面实际的计算，带内存上限） | `WORKLOG_2026-10-07.md` |
 | `etf/` | 资金波段在真实数据上的检查 | `check_waves.py` | `WORKLOG_2026-10-07.md` |
+| `checks/` | 新功能在真实数据上的核对（只写业务库的临时副本）：手工账户除权、机构持有页；回购增持、市场宽度和仓位管家标签 | `check_features.py`、`check_info_lists.py` | `WORKLOG_2026-10-07.md` |
 
 **统一的写法**
 - 只用当时能知道的信息：事件按公告日之后的第一个交易日买入，筛选条件只用公告时已公布的数据。
