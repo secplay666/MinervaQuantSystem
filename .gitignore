@@ -28,3 +28,10 @@ artifacts/
 
 # Server logs (scripts/daily_update.sh)
 logs/
+
+# Research outputs (research/README.md): data files and logs stay on the server
+research/**/data/
+research/**/data_ws/
+research/**/*.parquet
+research/**/*.log
+research/**/shots/
