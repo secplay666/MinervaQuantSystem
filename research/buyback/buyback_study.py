@@ -19,17 +19,30 @@ import duckdb
 import numpy as np
 import pandas as pd
 
-from quant_system.data_platform.providers.eastmoney_dc import collect_pages, dc_page
+from quant_system.data_platform.providers.eastmoney_dc import dc_page
 
 HOLD = 126
 HERE = Path(__file__).resolve().parent
 
 
 def holder_changes() -> pd.DataFrame:
+    """All holder increases and decreases since 2016, a year at a time.  Sorting by the notice date alone
+    leaves rows of one day in no fixed order, so pages overlap; a sort on the whole key keeps them apart.
+    A year that still comes back a few rows short is kept and reported (research use)."""
     path = HERE / "holder_changes_raw.parquet"
     if not path.exists():
-        rows = collect_pages(dc_page, "RPT_SHARE_HOLDER_INCREASE", "", "NOTICE_DATE", workers=4)
-        pd.DataFrame(rows).to_parquet(path)
+        frames = []
+        sort = "NOTICE_DATE,SECURITY_CODE,HOLDER_NAME,START_DATE,END_DATE,CHANGE_NUM"
+        for year in range(2016, 2027):
+            window = f"(NOTICE_DATE>='{year}-01-01')(NOTICE_DATE<'{year + 1}-01-01')"
+            rows, pages, count = dc_page("RPT_SHARE_HOLDER_INCREASE", window, 1, sort, ",".join("1" for _ in sort.split(",")))
+            for page in range(2, pages + 1):
+                rows += dc_page("RPT_SHARE_HOLDER_INCREASE", window, page, sort,
+                                ",".join("1" for _ in sort.split(",")))[0]
+            frame = pd.DataFrame(rows).drop_duplicates()
+            print(f"holder changes {year}: {len(frame)} of {count} rows", flush=True)
+            frames.append(frame)
+        pd.concat(frames, ignore_index=True).to_parquet(path)
     return pd.read_parquet(path)
 
 
@@ -142,6 +155,9 @@ def main() -> None:
                                columns=["symbol", "date"])
     base_out = outcomes(con, base_events, sessions, level)
 
+    if sys.argv[2:] == ["holders"]:  # the buyback part was already run
+        holder_part(con, sessions, level)
+        return
     raw = pd.read_parquet(HERE / "buybacks_raw.parquet")
     text = raw["REPUROBJECTIVE"].fillna("")
     plans = pd.DataFrame({
@@ -183,6 +199,10 @@ def main() -> None:
             print(f"    {year}: n={sp['n']:4d} 胜率 {sp['win']:5.1%} 平均 {sp['mean']:+6.1%} 超额 {sp['excess']:+6.1%}"
                   f"  | 基准胜率 {sb.get('win', float('nan')):5.1%} 平均 {sb.get('mean', float('nan')):+6.1%}")
 
+    holder_part(con, sessions, level)
+
+
+def holder_part(con, sessions: pd.DatetimeIndex, level: pd.Series) -> None:
     changes = holder_changes()
     changes["date"] = pd.to_datetime(changes["NOTICE_DATE"], errors="coerce").dt.normalize()
     changes = changes[changes["date"] >= "2016-01-01"]
