@@ -8,6 +8,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Page } from '@vben/common-ui';
 import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
 import { usePreferences } from '@vben/preferences';
+import { useFullscreen } from '@vueuse/core';
 
 import { Alert, Button, Card, Col, Empty, Radio, Row, Slider, Space, Spin, Switch, Table, Tag, Tooltip } from 'ant-design-vue';
 
@@ -30,6 +31,9 @@ const detailRef = ref<EchartsUIType>();
 const { renderEcharts: renderDetail } = useEcharts(detailRef);
 let chart: any;
 let timer: ReturnType<typeof setInterval> | undefined;
+const mapBox = ref<HTMLElement>(); // the map card with its controls, shown full screen as a whole
+const { isFullscreen, toggle: toggleFullscreen } = useFullscreen(mapBox);
+const popupBox = () => mapBox.value ?? document.body; // the slider's tip stays visible in full screen
 
 /* Colour roles (validated with the dataviz validator, both modes; aqua and the red are
  * told apart by shape too: 必须减 is a triangle).  Zones without a signal stay gray. */
@@ -70,7 +74,7 @@ const extent = computed(() => {
   const xmin = Math.floor((lo - 0.05) / step) * step;
   const xmax = Math.ceil((hi + 0.05) / step) * step;
   return { step, xmin: Math.round(xmin * 100) / 100, xmax: Math.round(xmax * 100) / 100,
-           ymax: Math.round((Math.ceil(top * 5) / 5 + 0.2) * 10) / 10 };
+           ymax: Math.ceil((top + 0.15) * 2) / 2 }; // on a 0.5 tick
 });
 
 function bubbleSize(share: null | number) {
@@ -200,6 +204,24 @@ function stop() {
   timer = undefined;
 }
 
+/** One week back or forward (the buttons and, in full screen, the arrow keys). */
+function step(delta: number) {
+  stop();
+  frameIndex.value = Math.min(Math.max(frameIndex.value + delta, 0), Math.max(frames.value.length - 1, 0));
+}
+
+function onKey(event: KeyboardEvent) {
+  if (!isFullscreen.value) return;
+  const target = event.target as HTMLElement | null;
+  if (target?.closest('input, textarea, .ant-slider')) return; // the slider moves itself with the arrows
+  if (event.key === 'ArrowLeft') step(-1);
+  else if (event.key === 'ArrowRight') step(1);
+  else if (event.key === ' ') {
+    event.preventDefault();
+    play();
+  }
+}
+
 function play() {
   if (playing.value) return stop();
   if (frameIndex.value >= frames.value.length - 1) frameIndex.value = 0;
@@ -309,38 +331,51 @@ watch(range, () => {
   stop();
   void load();
 });
-onMounted(load);
-onBeforeUnmount(stop);
+onMounted(() => {
+  window.addEventListener('keydown', onKey);
+  void load();
+});
+onBeforeUnmount(() => {
+  stop();
+  window.removeEventListener('keydown', onKey);
+});
 </script>
 
 <template>
   <Page title="钱去哪地图" :description="map ? `申万一级 31 个行业的交易拥挤度与近 12 个月涨幅，按周回放；数据截至 ${map.as_of}` : ''">
     <Alert v-if="failed" type="warning" show-icon :message="failed" />
     <template v-if="map">
-      <Card size="small" class="mb-3">
-        <Space wrap :size="16" class="w-full">
-          <Button type="primary" size="small" @click="play">{{ playing ? '暂停' : '回放' }}</Button>
-          <div class="min-w-[180px] font-semibold">{{ frame?.week }} 这一周</div>
-          <Slider v-model:value="frameIndex" class="min-w-[320px] flex-1" :min="0" :max="Math.max(frames.length - 1, 0)"
-                  :tip-formatter="(i?: number) => frames[i ?? 0]?.week" @change="stop" />
-          <Radio.Group v-model:value="range" size="small" button-style="solid">
-            <Radio.Button value="recent">近 3 年</Radio.Button>
-            <Radio.Button value="all">全部（{{ map.weeks_total }} 周）</Radio.Button>
-          </Radio.Group>
-          <span class="text-xs">尾迹 <Switch v-model:checked="allTrails" size="small" /></span>
-        </Space>
-      </Card>
       <Row :gutter="[12, 12]">
         <Col :xs="24" :xl="17">
+          <div ref="mapBox" :class="{ 'bg-background h-full overflow-auto p-3': isFullscreen }">
           <Card size="small">
+            <div class="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2">
+              <Button type="primary" size="small" @click="play">{{ playing ? '暂停' : '回放' }}</Button>
+              <Button size="small" :disabled="frameIndex <= 0" title="上一周（全屏时也可按 ←）" @click="step(-1)">‹ 上一周</Button>
+              <Slider v-model:value="frameIndex" class="!mx-1 min-w-[220px] flex-1" :min="0" :max="Math.max(frames.length - 1, 0)"
+                      :tip-formatter="(i?: number) => frames[i ?? 0]?.week" :get-tooltip-popup-container="popupBox"
+                      @change="stop" />
+              <Button size="small" :disabled="frameIndex >= frames.length - 1" title="下一周（全屏时也可按 →）" @click="step(1)">下一周 ›</Button>
+              <span class="min-w-[140px] font-semibold">{{ frame?.week }} 这一周</span>
+              <Radio.Group v-model:value="range" size="small" button-style="solid">
+                <Radio.Button value="recent">近 3 年</Radio.Button>
+                <Radio.Button value="all">全部（{{ map.weeks_total }} 周）</Radio.Button>
+              </Radio.Group>
+              <span class="text-xs">尾迹 <Switch v-model:checked="allTrails" size="small" /></span>
+              <Button size="small" @click="toggleFullscreen">{{ isFullscreen ? '退出全屏' : '全屏' }}</Button>
+            </div>
             <Spin :spinning="loading">
-              <EchartsUI ref="chartRef" height="620px" />
+              <EchartsUI ref="chartRef" :height="isFullscreen ? 'calc(100vh - 120px)' : '620px'" />
             </Spin>
-            <div class="text-muted-foreground mt-1 text-xs leading-5">
+            <div v-if="isFullscreen" class="text-muted-foreground mt-1 text-xs">
+              ← → 换一周，空格回放或暂停，Esc 退出全屏；点击气泡会高亮它的轨迹，行业走势图在退出全屏后查看。
+            </div>
+            <div v-else class="text-muted-foreground mt-1 text-xs leading-5">
               气泡 = 行业，大小按成交占比；三角形是"必须减"区的行业；淡色是拥挤度基准不足 3 年的行业（不计入历史统计）。
               灰线是近 {{ TRAIL }} 周的轨迹，点击气泡或右侧名称看该行业的完整走势。
             </div>
           </Card>
+          </div>
           <Card size="small" class="mt-3">
             <template #title>{{ detail ? detail.name : '行业走势' }}</template>
             <template #extra>
