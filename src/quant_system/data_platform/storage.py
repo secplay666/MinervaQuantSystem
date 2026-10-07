@@ -37,6 +37,8 @@ SINGLE_FILE_DATASETS = (
     "etf_shares",
     "etf_master",
     "etf_top_holders",
+    "buybacks",
+    "holder_changes",
 )
 DATE_COLUMNS = {
     "daily_bars": "trade_date",
@@ -61,6 +63,8 @@ DATE_COLUMNS = {
     "intraday_trades": "trade_date",
     "etf_top_holders": "report_date",
     "sw_index_bars": "trade_date",
+    "buybacks": "notice_date",
+    "holder_changes": "notice_date",
 }
 
 

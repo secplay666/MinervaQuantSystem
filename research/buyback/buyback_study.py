@@ -207,7 +207,8 @@ def holder_part(con, sessions: pd.DatetimeIndex, level: pd.Series) -> None:
     changes["date"] = pd.to_datetime(changes["NOTICE_DATE"], errors="coerce").dt.normalize()
     changes = changes[changes["date"] >= "2016-01-01"]
     grouped = (changes.assign(symbol=changes["SECURITY_CODE"].astype(str),
-                              rate=pd.to_numeric(changes["CHANGE_RATE"], errors="coerce"))
+                              # % of total shares (CHANGE_RATE is something else; see probe_fields.py)
+                              rate=pd.to_numeric(changes["AFTER_CHANGE_RATE"], errors="coerce"))
                .groupby(["symbol", "date", "DIRECTION"], as_index=False)["rate"].sum())
     grouped = outcomes(con, grouped.rename(columns={"DIRECTION": "direction"}), sessions, level)
     grouped.to_parquet(HERE / "holder_events.parquet")

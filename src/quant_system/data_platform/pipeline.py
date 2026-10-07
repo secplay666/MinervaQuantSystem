@@ -134,11 +134,21 @@ from .storage import (
     write_raw_frame,
 )
 from .sw_index import SW_L1
+from .company_actions import (
+    SOURCE_BUYBACKS,
+    SOURCE_HOLDER_CHANGES,
+    buyback_windows,
+    holder_windows,
+    merge_buybacks,
+    merge_holder_changes,
+    normalize_buybacks,
+    normalize_holder_changes,
+)
 from .utils import code_version, ensure_directories, json_dump, run_id_to_iso, unique_run_id, utc_now_iso
 
 MAX_RECORDED_ERRORS = 200
 STEPS = ("daily_bars", "adjustment_factors", "indices", "status_history", "market_snapshot", "corporate",
-         "classification", "fundamentals", "etf", "intraday")
+         "company_actions", "classification", "fundamentals", "etf", "intraday")
 # Run only when asked (``--steps``): the one-off backfill of history before
 # the earliest stored bar, e.g. after start_date moved earlier.
 OPTIONAL_STEPS = ("bars_history",)
@@ -276,6 +286,8 @@ class IngestionPipeline:
             self._ingest_market_snapshot(ctx)
         if "corporate" in self.steps and self.config.download_corporate:
             self._ingest_corporate(ctx)
+        if "company_actions" in self.steps and self.config.download_company_actions:
+            self._ingest_company_actions(ctx)
         if "classification" in self.steps and self.config.download_classification:
             self._ingest_classification(ctx)
         if "fundamentals" in self.steps and self.config.download_fundamentals:
@@ -922,6 +934,38 @@ class IngestionPipeline:
                 )
 
     # ------------------------------------------------------ status history
+
+    def _ingest_company_actions(self, ctx: RunContext) -> None:
+        """Buybacks and holder increases/decreases (company_actions.py).  They feed
+        an information page and tags, so problems are warnings; a failed window is
+        fetched again next run (windows follow what is stored)."""
+        today = self.clock().date()
+        jobs = (("buybacks", self.provider.fetch_buybacks, normalize_buybacks, merge_buybacks, buyback_windows,
+                 SOURCE_BUYBACKS),
+                ("holder_changes", self.provider.fetch_holder_changes, normalize_holder_changes, merge_holder_changes,
+                 holder_windows, SOURCE_HOLDER_CHANGES))
+        for dataset, fetch, normalize, merge, windows, source in jobs:
+            merged = read_canonical(self.root, dataset)
+            for name, query in windows(merged, today):
+                try:
+                    raw = fetch(query)
+                except NotImplementedError:
+                    return
+                except Exception as exc:
+                    ctx.error(dataset, name, exc)
+                    ctx.count(dataset, "failed_windows")
+                    continue
+                self._raw(ctx, dataset, name, raw, source)
+                part = normalize(raw, ctx.run_id, ctx.ingested_at)
+                merged = merge(merged, part)
+                ctx.count(dataset, "windows")
+                ctx.count(dataset, "rows", len(part))
+            if merged is not None and not merged.empty:
+                write_canonical_frame(self.root, dataset, merged)
+            failed = ctx.counters.get(dataset, {}).get("failed_windows", 0)
+            if failed:
+                ctx.issues.append(QualityIssue(dataset, "fetch", "warning",
+                                               f"{dataset}：{failed} 个窗口下载失败，下次运行重试", failed))
 
     def _ingest_sw_indices(self, ctx: RunContext) -> None:
         """The 31 SW L1 industry indices behind the money map.  Each call

@@ -17,6 +17,7 @@ import pandas as pd
 import requests
 
 from ..symbols import infer_exchange, market_prefix
+from ..company_actions import BUYBACK_REPORT, BUYBACK_SORT, HOLDER_REPORT, HOLDER_SORT
 from .base import FetchResult, MarketDataProvider
 from .eastmoney_dc import A_SHARE_TYPES, DC_PAGE_WORKERS, PaginationMismatch, collect_pages, dc_page, sw_file
 
@@ -390,6 +391,12 @@ class AkShareProvider(MarketDataProvider):
         frame = self._call(f"stock_zh_index_hist_csindex:{symbol}", ak.stock_zh_index_hist_csindex,
                            symbol=code, start_date=start_date, end_date=end_date)
         return FetchResult(frame, SOURCE_CSINDEX)
+
+    def fetch_buybacks(self, filter: str) -> pd.DataFrame:
+        return self.fetch_datacenter(BUYBACK_REPORT, filter, BUYBACK_SORT)
+
+    def fetch_holder_changes(self, filter: str) -> pd.DataFrame:
+        return self.fetch_datacenter(HOLDER_REPORT, filter, HOLDER_SORT)
 
     def fetch_sw_index_daily(self, code: str) -> FetchResult:
         frame = self._call(f"index_hist_sw:{code}", ak.index_hist_sw, symbol=code, period="day")

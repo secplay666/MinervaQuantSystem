@@ -11,6 +11,7 @@ import { AutoComplete, Button, Card, Form, Input, message, Modal, Popconfirm, Ra
 import { GRADE_COLOR, PM_LABELS, pmAddItemsApi, pmItemsApi, pmLabelApi, pmPatchItemApi, POOL_NAMES } from '#/api';
 
 import { labelColor, openChart } from './common';
+import CompanyTags from './company-tags.vue';
 
 const KIND: Record<string, string> = { etf: 'ETF', index: '指数', stock: '个股' };
 const INDICES = [
@@ -128,7 +129,7 @@ onMounted(load);
 
     <Card size="small" class="mt-3">
       <template #title>
-        <Space wrap>
+        <div class="flex flex-wrap items-center gap-2 py-2">
           <Select v-model:value="filter.group" class="!w-36" allow-clear placeholder="全部分组" :options="groups.map((g) => ({ label: g, value: g }))" />
           <Select v-model:value="filter.label" class="!w-32" allow-clear placeholder="全部标签"
                   :options="PM_LABELS.map((l) => ({ label: l.name, value: l.key }))" />
@@ -136,7 +137,7 @@ onMounted(load);
                   :options="(['hold', 'ready', 'buyback', 'watch'] as const).map((k) => ({ label: POOL_NAMES[k], value: k }))" />
           <Input v-model:value="filter.text" class="!w-40" allow-clear placeholder="代码或名称" />
           <span class="text-xs font-normal text-gray-400">{{ shown.length }} / {{ rows.length }}</span>
-        </Space>
+        </div>
       </template>
       <template #extra>
         <span class="text-xs text-gray-400">{{ labelMode === 'manual' ? '手工模式：不显示系统观点（在“规则设置”里切换）' : '系统给观点，你确认标签' }}</span>
@@ -146,6 +147,7 @@ onMounted(load);
           <template v-if="column.key === 'item'">
             <a @click="router.push(`/position/items/${record.id}`)">{{ record.name || record.symbol }}</a>
             <div class="text-xs text-gray-400">{{ record.symbol }}</div>
+            <CompanyTags :company="record.company" />
           </template>
           <template v-else-if="column.key === 'kind'">{{ KIND[record.kind] ?? record.kind }}</template>
           <template v-else-if="column.key === 'groups'">

@@ -77,6 +77,18 @@ const routes: RouteRecordRaw[] = [
         meta: { authority: ['market:view'], icon: 'lucide:map', title: '钱去哪地图' },
       },
       {
+        name: 'MarketBreadth',
+        path: '/breadth',
+        component: () => import('#/views/market/breadth.vue'),
+        meta: { authority: ['market:view'], icon: 'lucide:activity', title: '市场宽度' },
+      },
+      {
+        name: 'CompanyActions',
+        path: '/company-actions',
+        component: () => import('#/views/market/company-actions.vue'),
+        meta: { authority: ['market:view'], icon: 'lucide:hand-coins', title: '回购增持' },
+      },
+      {
         name: 'PmBoard',
         path: '/position/board',
         component: () => import('#/views/position/board.vue'),

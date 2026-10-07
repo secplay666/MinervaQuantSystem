@@ -76,6 +76,7 @@ class DataPlatformConfig:
     index_weight_symbols: tuple[str, ...] = ("000300", "000905", "000852")
     download_intraday: bool = True
     download_sw_indices: bool = True  # the 31 SW L1 industry indices (sw_index.py), with the index step
+    download_company_actions: bool = True  # buybacks and holder increases/decreases (company_actions.py)
     sw_index_start: str = "20050101"
     # 1-minute bars of these codes, plus 3-second trades of the funds among them (intraday.py)
     intraday_codes: tuple[str, ...] = ("sh510300", "sh510310", "sh510330", "sz159919", "sh515330", "sh510360",
@@ -150,6 +151,7 @@ class DataPlatformConfig:
                                                                          ("000300", "000905", "000852"))),
             download_intraday=bool(payload.get("download_intraday", True)),
             download_sw_indices=bool(payload.get("download_sw_indices", True)),
+            download_company_actions=bool(payload.get("download_company_actions", True)),
             sw_index_start=str(payload.get("sw_index_start", "20050101")),
             intraday_codes=tuple(str(item) for item in payload.get("intraday_codes", cls.intraday_codes)),
             # Hash the file payload, not runtime-resolved values, so an

@@ -103,6 +103,11 @@ class FakeProvider(MarketDataProvider):
     # SW industry indices (money map): off by default, so other tests run the index step as before.
     sw_indices: bool = False
     sw_failing: set[str] = field(default_factory=set)
+    # Buybacks and holder changes (company actions): off by default, like the SW indices.
+    company_actions: bool = False
+    company_failing: bool = False
+    buyback_rows: list[dict[str, object]] = field(default_factory=list)
+    holder_rows: list[dict[str, object]] = field(default_factory=list)
     tfp_rows: list[dict[str, object]] = field(default_factory=list)
     baidu_rows: dict[date, list[dict[str, object]]] = field(default_factory=dict)
     baidu_bare: set[date] = field(default_factory=set)  # days answered with a bare DataFrame() (throttling)
@@ -216,6 +221,32 @@ class FakeProvider(MarketDataProvider):
             columns=["代码", "日期", "收盘", "开盘", "最高", "最低", "成交量", "成交额"],
         )
         return FetchResult(frame, "akshare.index_hist_sw.swsresearch")
+
+    def _datacenter_rows(self, rows: list[dict[str, object]], query: str, field: str) -> pd.DataFrame:
+        """Rows whose ``field`` (a date) satisfies the >= / < bounds of a datacenter filter."""
+        import re
+
+        frame = pd.DataFrame(rows)
+        for op, bound in re.findall(rf"\({field}(>=|<)'([0-9-]+)'\)", query):
+            dates = pd.to_datetime(frame[field]) if len(frame) else pd.Series(dtype="datetime64[ns]")
+            frame = frame[dates >= bound] if op == ">=" else frame[dates < bound]
+        return frame.reset_index(drop=True)
+
+    def fetch_buybacks(self, filter: str) -> pd.DataFrame:
+        if not self.company_actions:
+            raise NotImplementedError
+        self.calls.append(("buybacks", filter))
+        if self.company_failing:
+            raise RuntimeError("datacenter unavailable")
+        return self._datacenter_rows(self.buyback_rows, filter, "UPDATEDATE")
+
+    def fetch_holder_changes(self, filter: str) -> pd.DataFrame:
+        if not self.company_actions:
+            raise NotImplementedError
+        self.calls.append(("holder_changes", filter))
+        if self.company_failing:
+            raise RuntimeError("datacenter unavailable")
+        return self._datacenter_rows(self.holder_rows, filter, "NOTICE_DATE")
 
     def fetch_adjustment_factors(self, symbol: str) -> FetchResult:
         self.calls.append(("factors", symbol))

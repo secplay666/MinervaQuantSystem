@@ -104,6 +104,7 @@ from .storage import (
     write_parquet_atomic,
 )
 from .sw_index import SW_L1
+from .company_actions import merge_buybacks, merge_holder_changes, normalize_buybacks, normalize_holder_changes
 from .utils import code_version, json_dump, run_id_to_iso, unique_run_id, utc_now_iso
 
 LOGGER = logging.getLogger("rebuild")
@@ -170,6 +171,7 @@ class CanonicalRebuilder:
         self._rebuild_factors(open_dates)
         self._rebuild_index_bars(calendar_end)
         self._rebuild_sw_index_bars(calendar_end)
+        self._rebuild_company_actions()
         self._rebuild_snapshots()
         self._rebuild_status_history(master)
         self._rebuild_corporate()
@@ -378,6 +380,17 @@ class CanonicalRebuilder:
             if merged is not None and not merged.empty:
                 write_canonical_frame(self.staging, "index_bars", merged, partition=f"symbol={symbol}")
                 self.counters["index_partitions"] += 1
+
+    def _rebuild_company_actions(self) -> None:
+        """Replay the stored buyback and holder-change responses run by run, as ingestion merged them."""
+        for dataset, normalize, merge in (("buybacks", normalize_buybacks, merge_buybacks),
+                                          ("holder_changes", normalize_holder_changes, merge_holder_changes)):
+            merged = None
+            for run_id, directory in _raw_runs(self.raw_root, dataset):
+                for path in sorted(directory.glob("*.parquet")):
+                    merged = merge(merged, normalize(pd.read_parquet(path), run_id, run_id_to_iso(run_id)))
+            if merged is not None and not merged.empty:
+                write_canonical_frame(self.staging, dataset, merged)
 
     def _rebuild_sw_index_bars(self, calendar_end: date) -> None:
         """Replay the stored SW index responses run by run (rejected ones were kept aside)."""

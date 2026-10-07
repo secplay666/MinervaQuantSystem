@@ -78,6 +78,7 @@ export interface PmRow {
   buyback: null | string;
   completion_change: null | number;
   entered: boolean;
+  company?: null | { buying: boolean; days: number; notes: string[]; reducing: boolean };
   half_entry: boolean;
   industry?: null | PmIndustry;
   last_exit: null | { date: string; name: string; rule: string };

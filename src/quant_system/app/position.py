@@ -40,6 +40,7 @@ from .db.base import utc_now
 from .db.models import PmItem, PmLabelChange, PmLevel, PmQuality, PmSentinel, PmSettings
 from .market import MarketQueries
 from .money_map import MoneyMapMissing, industry_code, money_map_for
+from .company_actions import CompanyActionsMissing, company_actions_for
 
 LABELS = (RIGHT, TOP, BASE, LEFT, UNDECIDED)
 LEVEL_KINDS = ("neckline", "target", "top_neckline", "base_zone", "buyback_zone", "reference")
@@ -439,6 +440,7 @@ def evaluate(session: Session, market: MarketQueries, item: PmItem, settings: Pm
                 crossings.append((row, event))
     quality = session.get(PmQuality, item.symbol) if item.kind == "stock" else None
     industry, industry_events = industry_crowding(market, item, settings, series, outcome)
+    company = company_tags(market, item)
     return {"series": series, "view": view, "structure": structure, "levels": levels, "labels": labels,
             "outcome": outcome, "prompts": prompts, "main_index": main, "index_today": gate,
             "last_close": series.shown(last), "change": (last / previous - 1) if last and previous else None,
@@ -447,7 +449,17 @@ def evaluate(session: Session, market: MarketQueries, item: PmItem, settings: Pm
             "daily_range": mean_range(series.high, series.low, series.close) if len(series.high) > 1 else None,
             "path": suggest_path(structure, outcome, last) if outcome is not None else None,
             "previous_completion": structure.completion(previous) if structure and previous else None,
-            "quality": quality, "industry": industry, "industry_events": industry_events}
+            "quality": quality, "industry": industry, "industry_events": industry_events, "company": company}
+
+
+def company_tags(market: MarketQueries, item: PmItem) -> dict[str, Any] | None:
+    """公司在买 / 减持 of a stock over the last 90 days (information, no signal)."""
+    if item.kind != "stock":
+        return None
+    try:
+        return company_actions_for(market.database).tags(item.symbol)
+    except CompanyActionsMissing:
+        return None
 
 
 def industry_crowding(market: MarketQueries, item: PmItem, settings: PmSettings, series: Series,
@@ -562,6 +574,7 @@ def summary_row(item: PmItem, result: dict[str, Any], settings: PmSettings) -> d
         "quality": None if result["quality"] is None else {"grade": result["quality"].grade,
                                                            "score": result["quality"].score},
         "industry": result.get("industry"),
+        "company": result.get("company"),
         **breakout_facts(result),
     }
 

@@ -106,6 +106,15 @@ class MarketDataProvider(ABC):
         optional: providers without it skip the intraday step."""
         raise NotImplementedError
 
+    def fetch_buybacks(self, filter: str) -> pd.DataFrame:
+        """Buyback plans (Eastmoney RPTA_WEB_GETHGLIST_NEW) matching a datacenter filter ('' for all);
+        optional: providers without it skip the company-actions step."""
+        raise NotImplementedError
+
+    def fetch_holder_changes(self, filter: str) -> pd.DataFrame:
+        """Holder increases and decreases (Eastmoney RPT_SHARE_HOLDER_INCREASE) matching a datacenter filter."""
+        raise NotImplementedError
+
     def fetch_sw_index_daily(self, code: str) -> FetchResult:
         """The whole daily history of one SW industry index (e.g. 801080);
         optional: providers without it skip the SW indices."""
