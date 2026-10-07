@@ -69,35 +69,57 @@ async function load() {
   }
 }
 
+/**
+ * Click-to-sort on one field of the rows (all rows, across pages).  Numbers start from the largest, dates from
+ * the newest, text from A; empty values stay at the bottom either way.  ``tip`` names the field when a cell
+ * shows more than one value.
+ */
+function sortBy(field: string, tip?: string, first: 'ascend' | 'descend' = 'descend') {
+  const empty = (v: unknown) => v === null || v === undefined || (typeof v === 'number' && Number.isNaN(v));
+  return {
+    sorter: (a: Record<string, any>, b: Record<string, any>, order?: null | string) => {
+      const x = a[field];
+      const y = b[field];
+      if (empty(x) || empty(y)) return empty(x) && empty(y) ? 0 : (empty(x) ? 1 : -1) * (order === 'descend' ? -1 : 1);
+      return typeof x === 'string' ? x.localeCompare(y, 'zh-CN') : x - y;
+    },
+    sortDirections: first === 'descend' ? ['descend', 'ascend'] : ['ascend', 'descend'],
+    ...(tip ? { showSorterTooltip: { title: tip } } : {}),
+  };
+}
+
 const buybackColumns = [
-  { dataIndex: 'latest_notice_date', title: '最新公告', width: 100 },
+  { dataIndex: 'latest_notice_date', title: '最新公告', width: 110, ...sortBy('latest_notice_date') },
   { key: 'stock', title: '股票', width: 120 },
-  { dataIndex: 'industry', title: '行业', width: 90 },
+  { dataIndex: 'industry', title: '行业', width: 100, ...sortBy('industry', undefined, 'ascend') },
   { key: 'kind', title: '用途', width: 140 },
   { key: 'progress', title: '进度', width: 100 },
-  { key: 'plan', title: '计划金额 / 占市值', align: 'right', width: 150 },
-  { key: 'done', title: '已回购 / 占市值', align: 'right', width: 110 },
-  { key: 'price', title: '回购均价 / 现价', align: 'right', width: 130 },
-  { key: 'period', title: '首次公告 / 期限', width: 180 },
+  { key: 'plan', title: '计划金额 / 占市值', align: 'right', width: 160, ...sortBy('plan_pct_lower', '按计划占市值（下限）排序') },
+  { key: 'done', title: '已回购 / 占市值', align: 'right', width: 135, ...sortBy('done_pct', '按已回购占市值排序') },
+  { key: 'price', title: '回购均价 / 现价', align: 'right', width: 140, ...sortBy('close_vs_avg', '按现价 ÷ 均价排序', 'ascend') },
+  { key: 'period', title: '首次公告 / 期限', width: 180, ...sortBy('notice_date', '按首次公告日排序') },
 ];
 const holderColumns = [
-  { dataIndex: 'notice_date', title: '公告日', width: 100 },
+  { dataIndex: 'notice_date', title: '公告日', width: 100, ...sortBy('notice_date') },
   { key: 'stock', title: '股票', width: 120 },
-  { dataIndex: 'industry', title: '行业', width: 90 },
+  { dataIndex: 'industry', title: '行业', width: 100, ...sortBy('industry', undefined, 'ascend') },
   { dataIndex: 'holder', title: '股东', ellipsis: true },
-  { key: 'shares', title: '变动股数', align: 'right' },
-  { key: 'pct', title: '占总股本', align: 'right' },
-  { key: 'amount', title: '约合金额', align: 'right' },
-  { key: 'hold', title: '变动后持股', align: 'right' },
-  { dataIndex: 'channel', title: '方式', width: 110 },
-  { key: 'period', title: '变动期间', width: 180 },
+  { key: 'shares', title: '变动股数', align: 'right', ...sortBy('change_shares') },
+  { key: 'pct', title: '占总股本', align: 'right', ...sortBy('change_pct_total') },
+  { key: 'amount', title: '约合金额', align: 'right', ...sortBy('amount') },
+  { key: 'hold', title: '变动后持股', align: 'right', ...sortBy('hold_pct_after') },
+  { dataIndex: 'channel', title: '方式', width: 110, ...sortBy('channel', undefined, 'ascend') },
+  { key: 'period', title: '变动期间', width: 180, ...sortBy('end_date', '按变动结束日排序') },
 ];
 const industryColumns = [
-  { dataIndex: 'industry', title: '申万一级行业' },
-  { key: 'buyback', title: '在回购的公司（其中注销）', align: 'right' },
-  { key: 'buyback_amount', title: '回购计划金额', align: 'right' },
-  { key: 'increase', title: '股东增持（家 / 金额）', align: 'right' },
-  { key: 'decrease', title: '股东减持（家 / 金额）', align: 'right' },
+  { dataIndex: 'industry', title: '申万一级行业', ...sortBy('industry', undefined, 'ascend') },
+  { dataIndex: 'buyback_companies', title: '在回购的公司', align: 'right', ...sortBy('buyback_companies') },
+  { dataIndex: 'cancel_companies', title: '其中注销', align: 'right', ...sortBy('cancel_companies') },
+  { key: 'buyback_amount', title: '回购计划金额', align: 'right', ...sortBy('buyback_amount') },
+  { dataIndex: 'increase_companies', title: '股东增持（家）', align: 'right', ...sortBy('increase_companies') },
+  { key: 'increase_amount', title: '增持金额', align: 'right', ...sortBy('increase_amount') },
+  { dataIndex: 'decrease_companies', title: '股东减持（家）', align: 'right', ...sortBy('decrease_companies') },
+  { key: 'decrease_amount', title: '减持金额', align: 'right', ...sortBy('decrease_amount') },
 ];
 const pctOptions = computed(() => (tab.value === 'buybacks' ? [0.5, 1, 2] : [0.5, 1, 5]));
 
@@ -173,10 +195,7 @@ onMounted(load);
         <Table v-else-if="tab === 'industries'" size="small" row-key="industry" :columns="industryColumns as any"
                :data-source="industries" :pagination="false">
           <template #bodyCell="{ column, record }">
-            <template v-if="column.key === 'buyback'">{{ record.buyback_companies }}（{{ record.cancel_companies }}）</template>
-            <template v-else-if="column.key === 'buyback_amount'">{{ yi(record.buyback_amount) }}</template>
-            <template v-else-if="column.key === 'increase'">{{ record.increase_companies }} / {{ yi(record.increase_amount) }}</template>
-            <template v-else-if="column.key === 'decrease'">{{ record.decrease_companies }} / {{ yi(record.decrease_amount) }}</template>
+            <template v-if="String(column.key).endsWith('_amount')">{{ yi(record[String(column.key)]) }}</template>
           </template>
         </Table>
         <Table v-else size="small" row-key="change_key" :columns="holderColumns as any" :data-source="holders"
