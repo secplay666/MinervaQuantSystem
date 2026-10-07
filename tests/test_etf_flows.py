@@ -178,3 +178,54 @@ def test_holdings_of_the_national_team_per_report_period(tmp_path) -> None:
     assert fund["symbol"] == "510300" and fund["national_pct"] == 45.0
     assert [h["holder"] for h in fund["holders"]] == ["中央汇金投资有限责任公司", "中国人寿保险股份有限公司"]  # no feeder
     assert queries.holders("sse50")["periods"] == []
+
+
+# -- money waves (资金波段) --------------------------------------------------------------------------
+
+from quant_system.analytics.etf_flows import WAVE_GAP, flow_waves  # noqa: E402
+
+
+def _wave_inputs(n: int = 420, spikes: dict[int, float] | None = None, rising: bool = True):
+    import numpy as np
+
+    days = [d.date() for d in pd.bdate_range("2024-01-01", periods=n)]
+    flow = np.full(n, 1e7)  # steady flows: only the injected spikes leave the band
+    for i, value in (spikes or {}).items():
+        flow[i] = value
+    daily = pd.DataFrame({"trade_date": days, "flow": flow, "aum": 1e11})
+    step = 1.001 if rising else 0.999
+    index = pd.Series([3000 * step ** i for i in range(n)], index=days)
+    return daily, index
+
+
+def test_waves_sum_ten_sessions_and_count_streaks() -> None:
+    daily, index = _wave_inputs(30)
+    daily["flow"] = [1e8] * 12 + [-1e8] * 3 + [0.0] + [2e8] * 14
+    waves = flow_waves(daily, index)
+    assert waves["wave_flow"].iloc[9] == pytest.approx(1e9)
+    assert waves["wave_pct"].iloc[10] == pytest.approx(1e9 / 1e11)  # 10 sessions over the assets before them
+    assert waves["streak"].iloc[11] == 12 and waves["streak"].iloc[14] == -3 and waves["streak"].iloc[15] == 0
+    assert waves["after_5"].iloc[-1] != waves["after_5"].iloc[-1]  # NaN: not known yet
+
+
+def test_waves_use_only_the_past_and_need_a_gap() -> None:
+    spikes = {i: 3e9 for i in range(300, 304)} | {i: 3e9 for i in range(312, 314)} | {i: 3e9 for i in range(360, 366)}
+    daily, index = _wave_inputs(spikes=spikes, rising=False)
+    waves = flow_waves(daily, index)
+    starts = waves.index[waves["wave"] == "creation"].tolist()
+    # 312-313 belong to the first wave (its windows run to 322); the third spike passes the band on day 363
+    assert starts == [300, 363] and 363 - 322 > WAVE_GAP
+    assert 312 not in starts  # still the same wave
+    assert bool(waves.loc[300, "counter"])  # a big creation while the index fell
+    for day in (299, 300, 330):
+        cut = flow_waves(daily.iloc[:day + 1], index)
+        for column in ("low", "high", "rank", "wave", "wave_pct", "streak"):
+            assert cut[column].iloc[day] == waves[column].iloc[day] or (
+                pd.isna(cut[column].iloc[day]) and pd.isna(waves[column].iloc[day])), (day, column)
+
+
+def test_redemption_in_a_rising_market_is_counter_trend() -> None:
+    daily, index = _wave_inputs(spikes={i: -3e9 for i in range(350, 354)}, rising=True)
+    waves = flow_waves(daily, index)
+    row = waves[waves["wave"] == "redemption"].iloc[0]
+    assert row.name == 350 and bool(row["counter"]) and row["index_window"] > 0

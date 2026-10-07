@@ -37,6 +37,12 @@ def series(group_id: str, request: Request, start: date | None = None, end: date
     return _call(request, "series", group_id, start, end)
 
 
+@router.get("/etf/groups/{group_id}/waves")
+def waves(group_id: str, request: Request, _: Principal = Depends(view)) -> dict:
+    """资金波段: 10-session net creation against its own history, and the index after past waves."""
+    return _call(request, "waves", group_id)
+
+
 @router.get("/etf/marks/{symbol}")
 def marks(symbol: str, request: Request, _: Principal = Depends(view)) -> list:
     """Abnormal ETF subscription days to mark on an index chart (empty when none)."""

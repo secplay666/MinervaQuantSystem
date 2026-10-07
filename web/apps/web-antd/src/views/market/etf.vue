@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import type { EchartsUIType } from '@vben/plugins/echarts';
 
-import type { Bar, EtfDay, EtfFund, EtfGroupSummary, EtfHolders, EtfOverview } from '#/api';
+import type { Bar, EtfDay, EtfFund, EtfGroupSummary, EtfHolders, EtfOverview, EtfWave, EtfWaves } from '#/api';
 
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
@@ -12,7 +12,7 @@ import { usePreferences } from '@vben/preferences';
 
 import { Alert, Button, Card, Col, Empty, Row, Space, Spin, Table, Tag, Tooltip } from 'ant-design-vue';
 
-import { etfFundsApi, etfHoldersApi, etfOverviewApi, etfSeriesApi, indexBarsApi, indicesApi } from '#/api';
+import { etfFundsApi, etfHoldersApi, etfOverviewApi, etfSeriesApi, etfWavesApi, indexBarsApi, indicesApi } from '#/api';
 import { changeColor, DOWN_COLOR, pct, UP_COLOR } from '#/utils/format';
 
 const router = useRouter();
@@ -34,6 +34,69 @@ const holders = ref<EtfHolders>();
 const holdersChartRef = ref<EchartsUIType>();
 const { renderEcharts: renderHolders } = useEcharts(holdersChartRef);
 const { isDark } = usePreferences();
+const waves = ref<EtfWaves>();
+const wavesChartRef = ref<EchartsUIType>();
+const { renderEcharts: renderWaves } = useEcharts(wavesChartRef);
+const WAVE_NAME = { creation: '大额申购波', redemption: '大额赎回波' } as const;
+const streakText = (n: number) => (n > 0 ? `净申购 ${n} 天` : n < 0 ? `净赎回 ${-n} 天` : '—');
+const waveLabel = (w: { counter: boolean; wave: 'creation' | 'redemption' }) =>
+  w.counter ? (w.wave === 'redemption' ? '上涨中大额赎回' : '下跌中大额申购') : WAVE_NAME[w.wave];
+/** Average index change after the past waves of one kind (and how often it was up). */
+function waveSummary(kind: 'creation' | 'redemption', counter: boolean | null, h: number) {
+  const rows = (waves.value?.waves ?? []).filter((w) => w.wave === kind && (counter === null || w.counter === counter))
+    .map((w) => w[`after_${h}` as 'after_5'] as null | number).filter((v): v is number => v !== null);
+  if (!rows.length) return '—';
+  const mean = rows.reduce((a, b) => a + b, 0) / rows.length;
+  return `${pct(mean, 1, true)}（${rows.length} 次，${Math.round((rows.filter((v) => v > 0).length / rows.length) * 100)}% 上涨）`;
+}
+function drawWaves() {
+  const w = waves.value;
+  if (!w || !w.series.length) return;
+  const muted = '#898781';
+  const dates = w.series.map((r) => r.trade_date);
+  // Waves pinned on the line: 申 above for creation, 赎 below for redemption; 逆 = against the index (ringed).
+  const marks = w.waves.map((e: EtfWave) => {
+    const inflow = e.wave === 'creation';
+    return { coord: [e.trade_date, +(e.wave_pct * 100).toFixed(2)], symbolSize: e.counter ? 22 : 16,
+             symbolOffset: [0, inflow ? -12 : 12],
+             itemStyle: { color: inflow ? UP_COLOR : DOWN_COLOR, borderColor: isDark.value ? '#fff' : '#111', borderWidth: e.counter ? 1.5 : 0 },
+             label: { color: '#fff', fontSize: 10, formatter: e.counter ? '逆' : inflow ? '申' : '赎' } };
+  });
+  const start = Math.max(0, dates.length - 750);
+  void renderWaves({
+    animation: false,
+    dataZoom: [{ type: 'inside', startValue: start }, { type: 'slider', startValue: start, bottom: 4, height: 16 }],
+    grid: { left: 56, right: 24, top: 28, bottom: 52 },
+    legend: { data: ['近 10 日净申购占规模', '历史 2% / 98% 分位'], top: 0, textStyle: { fontSize: 12 } },
+    tooltip: { trigger: 'axis', formatter: (params: any) => {
+      const i = (params as any[])[0]?.dataIndex ?? 0;
+      const r = w.series[i];
+      if (!r) return '';
+      return [`<b>${r.trade_date}</b>`, `近 10 日净申购占规模 ${pct(r.wave_pct, 2, true)}`,
+              `历史分位 ${pct(r.rank, 0)}（区间 ${pct(r.low, 1, true)} ~ ${pct(r.high, 1, true)}）`].join('<br/>');
+    } },
+    xAxis: { type: 'category', data: dates, boundaryGap: false },
+    yAxis: { type: 'value', name: '%', splitLine: { lineStyle: { opacity: 0.3 } } },
+    series: [
+      { type: 'line', name: '近 10 日净申购占规模', showSymbol: false, color: '#2563eb', lineStyle: { width: 1.5 },
+        data: w.series.map((r) => (r.wave_pct === null ? '-' : +(r.wave_pct * 100).toFixed(2))),
+        markPoint: { symbol: 'circle', data: marks as any[] } },
+      { type: 'line', name: '历史 2% / 98% 分位', showSymbol: false, color: muted, lineStyle: { type: 'dashed', width: 1 },
+        data: w.series.map((r) => (r.high === null ? '-' : +(r.high * 100).toFixed(2))) },
+      { type: 'line', name: '历史 2% / 98% 分位', showSymbol: false, color: muted, lineStyle: { type: 'dashed', width: 1 },
+        data: w.series.map((r) => (r.low === null ? '-' : +(r.low * 100).toFixed(2))) },
+    ],
+  } as any);
+}
+const waveColumns = [
+  { dataIndex: 'trade_date', title: '开始日', width: 104 },
+  { key: 'kind', title: '类型', width: 130 },
+  { key: 'flow', title: '10 日净申购', align: 'right' },
+  { key: 'window', title: '期间指数', align: 'right' },
+  { key: 'after_5', title: '之后 5 日', align: 'right' },
+  { key: 'after_20', title: '之后 20 日', align: 'right' },
+  { key: 'after_60', title: '之后 60 日', align: 'right' },
+] as const;
 // Categorical slots 1-5 in fixed order (validated for both surfaces); the class keeps its colour.
 const CLASS_COLORS = { dark: ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181'],
                        light: ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4'] };
@@ -108,11 +171,13 @@ async function loadGroup() {
     const series = await etfSeriesApi(groupId.value);
     days.value = series.rows;
     holders.value = await etfHoldersApi(groupId.value).catch(() => undefined);
+    waves.value = await etfWavesApi(groupId.value).catch(() => undefined);
     bars.value = await indexBarsApi(series.group.chart_symbol, 6000);
     selectedDay.value = undefined;
     await loadFunds();
     await draw();
     drawHolders();
+    drawWaves();
   } finally {
     loading.value = false;
   }
@@ -291,6 +356,58 @@ onMounted(async () => {
           且金额超过前一日规模的 {{ pct(overview.rules.min_share, 1) }}；z 值超过 ±{{ overview.rules.strong_z }} 且超过规模 {{ pct(overview.rules.strong_min_share, 0) }} 的为强异常。
           深交所晚一天公布，最新一天只含上交所的基金（浅色柱）。
           这是按公开份额的估算，不能区分申购方是谁。点击图上某一天，下方显示各基金当天的情况。
+        </div>
+      </Card>
+
+      <Card v-if="waves?.current" size="small" class="mb-4" :title="`资金波段：${group?.name}近 ${waves.rules.sessions} 个交易日的净申购`">
+        <Row :gutter="[12, 12]" class="mb-2">
+          <Col :xs="12" :md="6">
+            <div class="text-muted-foreground text-xs">近 {{ waves.rules.sessions }} 日净申购（截至 {{ waves.current.trade_date }}）</div>
+            <div class="text-lg" :style="{ color: changeColor(waves.current.wave_flow) }">{{ yi(waves.current.wave_flow) }}</div>
+            <div class="text-xs">占规模 {{ pct(waves.current.wave_pct, 2, true) }}</div>
+          </Col>
+          <Col :xs="12" :md="6">
+            <div class="text-muted-foreground text-xs">在历史中的分位</div>
+            <div class="text-lg">{{ pct(waves.current.rank, 0) }}</div>
+            <div class="text-xs">大额区间：低于 {{ pct(waves.current.low, 1, true) }} 或高于 {{ pct(waves.current.high, 1, true) }}</div>
+          </Col>
+          <Col :xs="12" :md="6">
+            <div class="text-muted-foreground text-xs">连续</div>
+            <div class="text-lg">{{ streakText(waves.current.streak) }}</div>
+            <div class="text-xs">期间指数 {{ pct(waves.current.index_window, 1, true) }}</div>
+          </Col>
+          <Col :xs="12" :md="6">
+            <div class="text-muted-foreground text-xs">状态</div>
+            <Tag v-if="waves.current.extreme" :color="waves.current.extreme === 'creation' ? 'red' : 'green'" class="mt-1">
+              {{ waveLabel({ counter: waves.current.counter, wave: waves.current.extreme }) }}
+            </Tag>
+            <Tag v-else class="mt-1">在正常范围内</Tag>
+          </Col>
+        </Row>
+        <EchartsUI ref="wavesChartRef" height="300px" />
+        <div class="text-muted-foreground mb-2 mt-1 text-xs leading-5">
+          历次波段之后 60 日{{ indexNames[waves.group.chart_symbol] ?? waves.group.chart_symbol }}：赎回波 {{ waveSummary('redemption', null, 60) }}，其中上涨中赎回 {{ waveSummary('redemption', true, 60) }}；
+          申购波 {{ waveSummary('creation', null, 60) }}，其中下跌中申购 {{ waveSummary('creation', true, 60) }}；
+          任意一天 {{ pct(waves.base['60']?.mean, 1, true) }}（{{ pct(waves.base['60']?.up, 0) }} 上涨）。
+        </div>
+        <Table size="small" :pagination="waves.waves.length > 10 ? { pageSize: 10 } : false" row-key="trade_date"
+               :columns="waveColumns as any" :data-source="[...waves.waves].reverse()">
+          <template #bodyCell="{ column, record }">
+            <template v-if="column.key === 'kind'">
+              <Tag :color="record.wave === 'creation' ? 'red' : 'green'">{{ waveLabel(record as EtfWave) }}</Tag>
+            </template>
+            <template v-else-if="column.key === 'flow'">{{ yi(record.wave_flow) }}（{{ pct(record.wave_pct, 1, true) }}）</template>
+            <template v-else-if="column.key === 'window'">{{ pct(record.index_window, 1, true) }}</template>
+            <template v-else-if="String(column.key).startsWith('after_')">
+              <span :style="{ color: changeColor(record[String(column.key)]) }">{{ pct(record[String(column.key)], 1, true) }}</span>
+            </template>
+          </template>
+        </Table>
+        <div class="text-muted-foreground mt-2 text-xs leading-5">
+          资金波段：该组 ETF 近 {{ waves.rules.sessions }} 个交易日的净申购合计，除以期初规模。超过它自己历史上的
+          {{ waves.rules.tail * 100 }}% / {{ 100 - waves.rules.tail * 100 }}% 分位（只用当天以前的数据，至少 {{ waves.rules.min_history }} 个交易日）就算一波，
+          同方向两波之间至少隔 {{ waves.rules.gap }} 个交易日。逆势：上涨中出现大额赎回，或下跌中出现大额申购。
+          历史上的波段很少，结果只作背景参考，不能用来判断第二天的涨跌。
         </div>
       </Card>
 

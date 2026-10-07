@@ -445,6 +445,28 @@ export interface EtfHolders {
              national_value: number; report_date: string }[];
 }
 export const etfHoldersApi = (group: string) => requestClient.get<EtfHolders>(`/etf/groups/${group}/holders`);
+/** 资金波段: 10-session net creation against the group's own history (point-in-time band). */
+export interface EtfWave {
+  after_5: null | number;
+  after_20: null | number;
+  after_60: null | number;
+  counter: boolean;
+  index_window: null | number;
+  trade_date: string;
+  wave: 'creation' | 'redemption';
+  wave_flow: number;
+  wave_pct: number;
+}
+export interface EtfWaves {
+  base: Record<string, { mean: null | number; n: number; up: null | number }>;
+  current: null | { counter: boolean; extreme: 'creation' | 'redemption' | null; high: null | number; index_window: null | number;
+    low: null | number; rank: null | number; streak: number; trade_date: string; wave_flow: null | number; wave_pct: null | number };
+  group: { chart_symbol: string; id: string; name: string };
+  rules: { gap: number; horizons: number[]; min_history: number; sessions: number; tail: number };
+  series: { high: null | number; low: null | number; rank: null | number; trade_date: string; wave_pct: null | number }[];
+  waves: EtfWave[];
+}
+export const etfWavesApi = (group: string) => requestClient.get<EtfWaves>(`/etf/groups/${group}/waves`);
 export const etfMarksApi = (symbol: string) => requestClient.get<EtfMark[]>(`/etf/marks/${symbol}`);
 export const etfOverviewApi = () => requestClient.get<EtfOverview>('/etf/overview');
 export const etfSeriesApi = (group: string) =>

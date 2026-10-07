@@ -114,3 +114,74 @@ def window_sums(daily: pd.DataFrame, windows: tuple[int, ...] = (1, 5, 20, 60)) 
     """Flow over the last N sessions of a group's daily series."""
     flows = daily["flow"].to_numpy()
     return {f"flow_{n}d": (float(np.nansum(flows[-n:])) if len(flows) else None) for n in windows}
+
+
+# -- money waves (资金波段) ----------------------------------------------------------------------
+# A wave: the group's net creation over WAVE_SESSIONS sessions, as a share of its assets before them,
+# beyond the WAVE_TAIL / 1 - WAVE_TAIL percentiles of its own history up to the day before (point in
+# time).  One event per wave: a new one needs WAVE_GAP sessions without the same extreme.
+
+WAVE_SESSIONS = 10
+WAVE_TAIL = 0.02
+WAVE_MIN_HISTORY = 250
+WAVE_GAP = 20
+WAVE_HORIZONS = (5, 20, 60)
+WAVE_COLUMNS = ["trade_date", "wave_flow", "wave_pct", "low", "high", "rank", "streak", "index_window", "wave",
+                "counter"] + [f"after_{h}" for h in WAVE_HORIZONS]
+
+
+def flow_waves(daily: pd.DataFrame, index_close: pd.Series) -> pd.DataFrame:
+    """Per session: the 10-session flow (CNY) and its share of assets, the
+    point-in-time band (``low``/``high``) and percentile (``rank``) of that
+    share, the run of same-sign daily flows (``streak``: + creation, -
+    redemption), the index change over the window, the wave starting that day
+    ('creation' / 'redemption' / None), whether it went against the index
+    (``counter``), and the index change over the next 5 / 20 / 60 sessions.
+
+    ``daily``: a group's complete days (trade_date, flow, aum);
+    ``index_close``: the group's index by trade_date."""
+    frame = daily[["trade_date", "flow", "aum"]].reset_index(drop=True).copy()
+    if frame.empty:
+        return pd.DataFrame(columns=WAVE_COLUMNS)
+    flow = frame["flow"].fillna(0.0)
+    frame["wave_flow"] = flow.rolling(WAVE_SESSIONS).sum()
+    frame["wave_pct"] = frame["wave_flow"] / frame["aum"].shift(WAVE_SESSIONS)
+    past = frame["wave_pct"].shift().expanding(WAVE_MIN_HISTORY)
+    frame["low"], frame["high"] = past.quantile(WAVE_TAIL), past.quantile(1 - WAVE_TAIL)
+    ranks = frame["wave_pct"].expanding(WAVE_MIN_HISTORY).rank(pct=True)
+    frame["rank"] = ranks
+    sign = np.sign(flow.to_numpy())
+    streak = np.zeros(len(sign))
+    for i, s in enumerate(sign):
+        streak[i] = 0 if s == 0 else (streak[i - 1] + s if i and np.sign(streak[i - 1]) == s else s)
+    frame["streak"] = streak.astype(int)
+    close = index_close.reindex(frame["trade_date"]).ffill().to_numpy(dtype=float)
+    close = pd.Series(close)
+    frame["index_window"] = close / close.shift(WAVE_SESSIONS) - 1
+    for h in WAVE_HORIZONS:
+        frame[f"after_{h}"] = close.shift(-h) / close - 1
+    above = (frame["wave_pct"] > frame["high"]).to_numpy()
+    below = (frame["wave_pct"] < frame["low"]).to_numpy()
+    wave = [None] * len(frame)
+    last = {"creation": -10**9, "redemption": -10**9}
+    for i in range(len(frame)):
+        for kind, hit in (("creation", above[i]), ("redemption", below[i])):
+            if hit:
+                if i - last[kind] > WAVE_GAP:
+                    wave[i] = kind
+                last[kind] = i
+    frame["wave"] = wave
+    rising = frame["index_window"] > 0
+    frame["counter"] = ((frame["wave"] == "redemption") & rising) | ((frame["wave"] == "creation") & ~rising
+                                                                     & frame["index_window"].notna())
+    return frame[WAVE_COLUMNS]
+
+
+def wave_base(waves: pd.DataFrame) -> dict[str, dict[str, float | None]]:
+    """The index change over each horizon from any day (what a wave is compared with)."""
+    out = {}
+    for h in WAVE_HORIZONS:
+        values = waves[f"after_{h}"].dropna()
+        out[str(h)] = {"mean": float(values.mean()) if len(values) else None,
+                       "up": float((values > 0).mean()) if len(values) else None, "n": int(len(values))}
+    return out

@@ -22,8 +22,15 @@ from ..analytics.etf_flows import (
     BASELINE_SESSIONS,
     STRONG_MIN_SHARE,
     STRONG_Z,
+    WAVE_GAP,
+    WAVE_HORIZONS,
+    WAVE_MIN_HISTORY,
+    WAVE_SESSIONS,
+    WAVE_TAIL,
+    flow_waves,
     fund_flows,
     group_flows,
+    wave_base,
 )
 from ..data_platform.etf import group_members, load_etf_groups
 from ..data_platform.etf_holders import classify_holder
@@ -74,6 +81,12 @@ class EtfQueries:
                 closes = con.execute("SELECT trade_date, symbol, close FROM etf_bars "
                                      "WHERE list_contains(?, symbol)", [symbols]).fetchdf()
                 sessions = con.execute("SELECT trade_date FROM trading_calendar ORDER BY 1").fetchdf()
+                charts = sorted({g["chart_symbol"] for g in [*config["groups"], ALL_GROUP]})
+                try:
+                    index_bars = con.execute("SELECT symbol, trade_date, close FROM index_bars "
+                                             "WHERE list_contains(?, symbol)", [charts]).fetchdf()
+                except duckdb.CatalogException:  # no index bars: waves without the index columns
+                    index_bars = pd.DataFrame(columns=["symbol", "trade_date", "close"])
                 try:
                     holders = con.execute("SELECT symbol, report_date, report_type, notice_date, rank, holder, "
                                           "shares, pct, feeder FROM etf_top_holders "
@@ -93,7 +106,10 @@ class EtfQueries:
         complete_until = latest.min()
         funds = fund_flows(shares, closes, calendar).merge(members[["symbol", "group_id"]], on="symbol")
         groups = [*config["groups"], ALL_GROUP]
-        daily = {}
+        index_bars["trade_date"] = pd.to_datetime(index_bars["trade_date"]).dt.date
+        index_close = {symbol: part.set_index("trade_date")["close"].sort_index()
+                       for symbol, part in index_bars.groupby("symbol")}
+        daily, waves = {}, {}
         for group in groups:
             part = funds if group["id"] == "all" else funds[funds["group_id"] == group["id"]]
             series = group_flows(part)
@@ -102,8 +118,10 @@ class EtfQueries:
             series.loc[partial, ["z", "abnormal"]] = None
             series.loc[partial, "strong"] = False
             daily[group["id"]] = series
+            waves[group["id"]] = flow_waves(series[~series["partial"]], index_close.get(group["chart_symbol"],
+                                                                                         pd.Series(dtype=float)))
         names = members.drop_duplicates("symbol").set_index("symbol")
-        return {"groups": groups, "daily": daily, "funds": funds, "names": names, "config": config,
+        return {"groups": groups, "daily": daily, "waves": waves, "funds": funds, "names": names, "config": config,
                 "holders": _classified(holders, config), "complete_until": complete_until, "latest": latest.max()}
 
     def _group(self, state: dict[str, Any], group_id: str) -> dict[str, Any]:
@@ -153,6 +171,37 @@ class EtfQueries:
                 "as_of": state["complete_until"],
                 "rows": records(frame[["trade_date", "aum", "flow", "flow_pct", "cumulative", "z", "abnormal", "strong",
                                        "funds", "events", "partial"]])}
+
+    def waves(self, group_id: str) -> dict[str, Any]:
+        """资金波段 of a group: the 10-session net creation against its own history
+        (point-in-time band), the current state, and every past wave with the
+        index after it."""
+        state = self._load()
+        group = self._group(state, group_id)
+        frame = state["waves"][group_id]
+        if frame.empty:
+            return {"group": {k: group[k] for k in ("id", "name", "chart_symbol")}, "current": None, "series": [],
+                    "waves": [], "base": {}, "rules": self._wave_rules()}
+        last = frame.iloc[-1]
+        kind = ("creation" if last["wave_pct"] > last["high"] else "redemption" if last["wave_pct"] < last["low"]
+                else None) if pd.notna(last["high"]) else None
+        current = {"trade_date": last["trade_date"], "wave_flow": _num(last["wave_flow"]),
+                   "wave_pct": _num(last["wave_pct"]), "rank": _num(last["rank"]), "low": _num(last["low"]),
+                   "high": _num(last["high"]), "streak": int(last["streak"]), "index_window": _num(last["index_window"]),
+                   "extreme": kind,
+                   "counter": bool(kind is not None and pd.notna(last["index_window"])
+                                   and ((kind == "redemption") == (last["index_window"] > 0)))}
+        events = frame[frame["wave"].notna()]
+        return {"group": {k: group[k] for k in ("id", "name", "chart_symbol")}, "current": current,
+                "series": records(frame[["trade_date", "wave_pct", "low", "high", "rank"]]),
+                "waves": records(events[["trade_date", "wave", "counter", "wave_flow", "wave_pct", "index_window"]
+                                        + [f"after_{h}" for h in WAVE_HORIZONS]]),
+                "base": wave_base(frame), "rules": self._wave_rules()}
+
+    @staticmethod
+    def _wave_rules() -> dict[str, Any]:
+        return {"sessions": WAVE_SESSIONS, "tail": WAVE_TAIL, "min_history": WAVE_MIN_HISTORY, "gap": WAVE_GAP,
+                "horizons": list(WAVE_HORIZONS)}
 
     def marks(self, chart_symbol: str) -> list[dict[str, Any]]:
         """Abnormal days of the groups charted on this index, for the K-line workstation."""
