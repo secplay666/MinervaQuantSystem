@@ -106,6 +106,11 @@ class MarketDataProvider(ABC):
         optional: providers without it skip the intraday step."""
         raise NotImplementedError
 
+    def fetch_sw_index_daily(self, code: str) -> FetchResult:
+        """The whole daily history of one SW industry index (e.g. 801080);
+        optional: providers without it skip the SW indices."""
+        raise NotImplementedError
+
     def fetch_intraday_trades(self, code: str) -> pd.DataFrame:
         """3-second trades of the latest session, with the active side (optional, see above)."""
         raise NotImplementedError

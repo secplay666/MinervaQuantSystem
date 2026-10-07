@@ -89,11 +89,13 @@ def settings_view(settings: PmSettings) -> dict[str, Any]:
             "stage_params": stage_params(settings).to_dict(), "rule_overrides": settings.rule_params or {},
             "rule_params": rule_params(settings).to_dict(), "rule_defaults": RuleParams().to_dict(),
             "label_mode": settings.label_mode, "push_daily": settings.push_daily, "auto_base": settings.auto_base,
+            "crowd_high": settings.crowd_high, "crowd_low": settings.crowd_low,
             "evaluated_through": settings.evaluated_through,
             "presets": [{"key": key, "name": name, "params": params.to_dict()} for key, (name, params) in PRESETS.items()]}
 
 
-AUDITED_SETTINGS = ("stage_preset", "stage_overrides", "rule_overrides", "label_mode", "push_daily", "auto_base")
+AUDITED_SETTINGS = ("stage_preset", "stage_overrides", "rule_overrides", "label_mode", "push_daily", "auto_base",
+                    "crowd_high", "crowd_low")
 
 
 class SettingsIn(BaseModel):
@@ -103,6 +105,8 @@ class SettingsIn(BaseModel):
     label_mode: str | None = None                 # suggest | manual
     push_daily: bool | None = None
     auto_base: bool | None = None                 # a close in the 起涨区 turns 左侧 into 筑底
+    crowd_high: float | None = None               # industry crowding reminder (money map) ...
+    crowd_low: float | None = None                # ... and its relief
 
 
 @router.get("/pm/settings")
@@ -125,6 +129,10 @@ def put_settings(body: SettingsIn, principal: Principal = Depends(use), session:
     rules = body.rule_params if body.rule_params is not None else settings.rule_params or {}
     if body.label_mode not in (None, "suggest", "manual"):
         raise api_error(400, "invalid", "标签模式只能是 suggest（系统给观点）或 manual（手工）")
+    high = body.crowd_high if body.crowd_high is not None else settings.crowd_high
+    low = body.crowd_low if body.crowd_low is not None else settings.crowd_low
+    if not 0.5 <= low < high <= 5:
+        raise api_error(400, "invalid", "行业拥挤提醒：解除线要低于提醒线，并在 0.5 到 5 之间")
     try:
         StageParams.from_dict(overrides, PRESETS[preset][1])
         RuleParams.from_dict(rules)
@@ -137,6 +145,7 @@ def put_settings(body: SettingsIn, principal: Principal = Depends(use), session:
         settings.push_daily = body.push_daily
     if body.auto_base is not None:
         settings.auto_base = body.auto_base
+    settings.crowd_high, settings.crowd_low = high, low
     settings.updated_at = utc_now()
     after = safe(settings_view(settings))
     audit(session, principal.actor, "pm.settings", "pm_settings", str(principal.user.id),

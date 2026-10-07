@@ -49,6 +49,7 @@ SOURCE_SINA_RAW_DAILY = "akshare.stock_zh_a_cdr_daily.sina"
 SOURCE_TENCENT_INDEX = "akshare.stock_zh_a_hist_tx.tencent"
 SOURCE_EASTMONEY_INDEX = "akshare.stock_zh_index_daily_em.eastmoney"
 SOURCE_CSINDEX_INDEX = "akshare.stock_zh_index_hist_csindex.csindex"
+SOURCE_SW_INDEX = "akshare.index_hist_sw.swsresearch"
 
 DAILY_BAR_COLUMNS = [
     "symbol",
@@ -450,6 +451,8 @@ def normalize_index_bars(
     resolved = {key: _first_column(raw, values) for key, values in aliases.items()}
     if "csindex" in source:
         scale = 1.0  # CSIndex volume is in shares, amount in 100 million CNY
+    elif "swsresearch" in source:
+        scale = 1e8  # SW volume is in 100 million shares, amount in 100 million CNY
     elif "tencent" in source:
         # Tencent index volume is in lots; AKShare only converts codes outside
         # its sh000/sz399 exemption, so mirror that rule.
@@ -472,7 +475,7 @@ def normalize_index_bars(
     frame["turnover_cny"] = (
         pd.to_numeric(raw[amount_column], errors="coerce") if amount_column else np.nan
     )
-    if "csindex" in source:
+    if "csindex" in source or "swsresearch" in source:
         frame["turnover_cny"] = frame["turnover_cny"] * 1e8
     frame["volume_scale"] = scale
     # CSIndex total-return series publish only the close; open/high/low are

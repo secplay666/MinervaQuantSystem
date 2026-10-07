@@ -133,6 +133,7 @@ from .storage import (
     write_parquet_atomic,
     write_raw_frame,
 )
+from .sw_index import SW_L1
 from .utils import code_version, ensure_directories, json_dump, run_id_to_iso, unique_run_id, utc_now_iso
 
 MAX_RECORDED_ERRORS = 200
@@ -267,6 +268,8 @@ class IngestionPipeline:
             self._ingest_adjustment_factors(ctx, universe)
         if "indices" in self.steps:
             self._ingest_indices(ctx)
+            if self.config.download_sw_indices:
+                self._ingest_sw_indices(ctx)
         if "status_history" in self.steps and self.config.download_status_history:
             self._ingest_status_history(ctx)
         if "market_snapshot" in self.steps:
@@ -919,6 +922,46 @@ class IngestionPipeline:
                 )
 
     # ------------------------------------------------------ status history
+
+    def _ingest_sw_indices(self, ctx: RunContext) -> None:
+        """The 31 SW L1 industry indices behind the money map.  Each call
+        returns an index's whole history, merged into what is stored.  A
+        refresh that fails the bar checks is kept aside and the stored
+        history stays; problems are warnings (the data feeds a map, not
+        decisions)."""
+        assert ctx.expected_latest is not None
+        step = "sw_index_bars"
+        start = pd.to_datetime(self.config.sw_index_start).date()
+        for code, name in SW_L1.items():
+            try:
+                result = self.provider.fetch_sw_index_daily(code)
+            except NotImplementedError:
+                return
+            except Exception as exc:
+                ctx.error(step, code, exc)
+                ctx.count(step, "failed")
+                continue
+            incoming = normalize_index_bars(result.frame, code, name, start, ctx.expected_latest, ctx.run_id,
+                                            ctx.ingested_at, source=result.source)
+            existing = read_canonical(self.root, step, f"symbol={code}")
+            issues = validate_index_refresh(incoming, existing, code)
+            if has_blocking(issues):
+                # Kept aside so a rebuild does not replay it.
+                self._raw(ctx, f"{step}_rejected", code, result.frame, result.source)
+                ctx.issues.extend(replace(issue, dataset=step, severity="warning") for issue in issues)
+                ctx.count(step, "rejected")
+                continue
+            self._raw(ctx, step, code, result.frame, result.source)
+            write_canonical_frame(self.root, step, merge_index_bars(existing, incoming), partition=f"symbol={code}")
+            ctx.count(step, "updated")
+            if incoming["trade_date"].max() < ctx.expected_latest:
+                ctx.count(step, "behind")
+        failed = sum(ctx.counters.get(step, {}).get(key, 0) for key in ("failed", "rejected"))
+        behind = ctx.counters.get(step, {}).get("behind", 0)
+        if failed or behind:
+            ctx.issues.append(QualityIssue(step, "fetch", "warning",
+                                           f"申万行业指数：{failed} 个下载失败或被拒，{behind} 个还没有 "
+                                           f"{ctx.expected_latest} 的数据", failed + behind))
 
     def _ingest_status_history(self, ctx: RunContext) -> None:
         self._ingest_suspensions(ctx)

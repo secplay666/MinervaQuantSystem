@@ -28,8 +28,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..position.rules import (
-    BASE, EXHAUSTED, LABEL_NAMES, LEFT, PHASE_NAMES, RIGHT, TOP, UNDECIDED, IndexDay, RuleParams, Structure,
-    Zone,
+    BASE, EXHAUSTED, LABEL_NAMES, LEFT, PHASE_NAMES, RIGHT, TOP, UNDECIDED, Event, IndexDay, RuleParams,
+    Structure, Zone,
     base_prompts, final_remaining, phases, replay,
 )
 from ..position.paths import (
@@ -39,6 +39,7 @@ from ..position.stages import PRESETS, STAGE_KEYS, StageParams, classify, stage_
 from .db.base import utc_now
 from .db.models import PmItem, PmLabelChange, PmLevel, PmQuality, PmSentinel, PmSettings
 from .market import MarketQueries
+from .money_map import MoneyMapMissing, industry_code, money_map_for
 
 LABELS = (RIGHT, TOP, BASE, LEFT, UNDECIDED)
 LEVEL_KINDS = ("neckline", "target", "top_neckline", "base_zone", "buyback_zone", "reference")
@@ -437,6 +438,7 @@ def evaluate(session: Session, market: MarketQueries, item: PmItem, settings: Pm
             if event is not None:
                 crossings.append((row, event))
     quality = session.get(PmQuality, item.symbol) if item.kind == "stock" else None
+    industry, industry_events = industry_crowding(market, item, settings, series, outcome)
     return {"series": series, "view": view, "structure": structure, "levels": levels, "labels": labels,
             "outcome": outcome, "prompts": prompts, "main_index": main, "index_today": gate,
             "last_close": series.shown(last), "change": (last / previous - 1) if last and previous else None,
@@ -445,7 +447,44 @@ def evaluate(session: Session, market: MarketQueries, item: PmItem, settings: Pm
             "daily_range": mean_range(series.high, series.low, series.close) if len(series.high) > 1 else None,
             "path": suggest_path(structure, outcome, last) if outcome is not None else None,
             "previous_completion": structure.completion(previous) if structure and previous else None,
-            "quality": quality}
+            "quality": quality, "industry": industry, "industry_events": industry_events}
+
+
+def industry_crowding(market: MarketQueries, item: PmItem, settings: PmSettings, series: Series,
+                      outcome) -> tuple[dict[str, Any] | None, list[Event]]:
+    """A stock's SW L1 industry on the money map, and the reminders of its
+    crowding: C rising above ``crowd_high`` (a reduce prompt when holding),
+    then falling back below ``crowd_low``."""
+    if item.kind != "stock":
+        return None, []
+    rows = _query(market, "SELECT l1_name FROM industry_sw WHERE symbol = ? ORDER BY start_date DESC LIMIT 1",
+                  [item.symbol])
+    code = industry_code(rows["l1_name"].iloc[0]) if len(rows) else None
+    if code is None:
+        return None, []
+    try:
+        state = money_map_for(market.database).crowding(code, settings.crowd_high, settings.crowd_low)
+    except MoneyMapMissing:
+        return None, []
+    if state is None:
+        return None, []
+    weight = outcome.weight if outcome is not None else 0.0
+    events = []
+    for day, kind, value in state["events"]:
+        close = _close_on(series, day)
+        if close is None:
+            continue
+        if kind == "crowded":
+            message = (f"所属行业{state['name']}拥挤度升到 {value:.2f}（超过 {settings.crowd_high:g}）："
+                       "历史上之后 3 个月多数跑输，宜减仓、不追")
+            priority = 2 if weight > 0 else 4
+        else:
+            message = f"所属行业{state['name']}拥挤度回落到 {value:.2f}（低于 {settings.crowd_low:g}），拥挤解除"
+            priority = 4
+        events.append(Event(day, f"industry_{kind}", priority, message, close, weight, None,
+                            f"industry:{code}:{kind}:{day.isoformat()}"))
+    shown = {k: state[k] for k in ("code", "name", "as_of", "zone", "zone_name", "high", "low")}
+    return dict(shown, c=round(state["c"], 3)), events
 
 
 POOLS = {"hold": "持有", "buyback": "回撤关注", "ready": "就绪", "watch": "观察", "archived": "归档"}
@@ -522,6 +561,7 @@ def summary_row(item: PmItem, result: dict[str, Any], settings: PmSettings) -> d
         "path": result["path"]["path"] if result["path"] else None,
         "quality": None if result["quality"] is None else {"grade": result["quality"].grade,
                                                            "score": result["quality"].score},
+        "industry": result.get("industry"),
         **breakout_facts(result),
     }
 
@@ -678,7 +718,7 @@ def sync_signals(session: Session, user_id: int, results: list[tuple[PmItem, dic
         for row, event in result.get("crossings", []):  # a crossing is final for this version of the sentinel
             row.status, row.crossed_on = "crossed", event.trade_date
         events = (result["outcome"].events if result["outcome"] else []) + result["prompts"]
-        events += [e for _, e in result.get("crossings", [])]
+        events += [e for _, e in result.get("crossings", [])] + result.get("industry_events", [])
         if result.get("zone_event") is not None:
             events.append(result["zone_event"])
         wanted = [e for e in events if e.trade_date >= cutoff]

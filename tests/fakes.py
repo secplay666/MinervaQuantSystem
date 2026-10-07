@@ -100,6 +100,9 @@ class FakeProvider(MarketDataProvider):
     factors: dict[str, list[tuple[str, float]]] = field(default_factory=dict)
     empty_daily: set[str] = field(default_factory=set)
     empty_index: bool = False
+    # SW industry indices (money map): off by default, so other tests run the index step as before.
+    sw_indices: bool = False
+    sw_failing: set[str] = field(default_factory=set)
     tfp_rows: list[dict[str, object]] = field(default_factory=list)
     baidu_rows: dict[date, list[dict[str, object]]] = field(default_factory=dict)
     baidu_bare: set[date] = field(default_factory=set)  # days answered with a bare DataFrame() (throttling)
@@ -197,6 +200,22 @@ class FakeProvider(MarketDataProvider):
               "volume": 3e8, "turnover": 0.01, "amount": 4e11} for i, d in enumerate(days)]
         )
         return FetchResult(frame, "akshare.stock_zh_a_hist_tx.tencent")
+
+    def fetch_sw_index_daily(self, code: str) -> FetchResult:
+        """The whole history up to today, as swsresearch delivers it (volume and amount in 1e8)."""
+        if not self.sw_indices:
+            raise NotImplementedError
+        self.calls.append(("sw_index", code))
+        if code in self.sw_failing:
+            raise RuntimeError("swsresearch unavailable")
+        k = int(code[-3:]) % 97
+        days = [d for d in OPEN_DATES if d <= self.today]
+        frame = pd.DataFrame(
+            [{"代码": code, "日期": d, "收盘": 1000.0 + k + i, "开盘": 1000.0 + k + i, "最高": 1005.0 + k + i,
+              "最低": 995.0 + k + i, "成交量": 1.5, "成交额": 10.0 + k + 0.5 * i} for i, d in enumerate(days)],
+            columns=["代码", "日期", "收盘", "开盘", "最高", "最低", "成交量", "成交额"],
+        )
+        return FetchResult(frame, "akshare.index_hist_sw.swsresearch")
 
     def fetch_adjustment_factors(self, symbol: str) -> FetchResult:
         self.calls.append(("factors", symbol))

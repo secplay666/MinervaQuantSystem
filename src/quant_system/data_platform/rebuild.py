@@ -63,6 +63,7 @@ from .normalization import (
     SOURCE_EASTMONEY_INDEX,
     SOURCE_SINA_DAILY,
     SOURCE_SINA_RAW_DAILY,
+    SOURCE_SW_INDEX,
     SOURCE_TENCENT_DAILY,
     SOURCE_TENCENT_INDEX,
     SCHEMA_VERSION,
@@ -102,6 +103,7 @@ from .storage import (
     write_canonical_frame,
     write_parquet_atomic,
 )
+from .sw_index import SW_L1
 from .utils import code_version, json_dump, run_id_to_iso, unique_run_id, utc_now_iso
 
 LOGGER = logging.getLogger("rebuild")
@@ -167,6 +169,7 @@ class CanonicalRebuilder:
         self._rebuild_daily_bars(master, calendar_end)
         self._rebuild_factors(open_dates)
         self._rebuild_index_bars(calendar_end)
+        self._rebuild_sw_index_bars(calendar_end)
         self._rebuild_snapshots()
         self._rebuild_status_history(master)
         self._rebuild_corporate()
@@ -375,6 +378,19 @@ class CanonicalRebuilder:
             if merged is not None and not merged.empty:
                 write_canonical_frame(self.staging, "index_bars", merged, partition=f"symbol={symbol}")
                 self.counters["index_partitions"] += 1
+
+    def _rebuild_sw_index_bars(self, calendar_end: date) -> None:
+        """Replay the stored SW index responses run by run (rejected ones were kept aside)."""
+        start = pd.to_datetime(self.config.sw_index_start).date()
+        for code, entries in _raw_files_by_name(self.raw_root, "sw_index_bars").items():
+            merged = None
+            for run_id, path in sorted(entries):
+                part = normalize_index_bars(pd.read_parquet(path), code, SW_L1.get(code, code), start, calendar_end,
+                                            run_id, run_id_to_iso(run_id), read_raw_source(path) or SOURCE_SW_INDEX)
+                merged = merge_index_bars(merged, part)
+            if merged is not None and not merged.empty:
+                write_canonical_frame(self.staging, "sw_index_bars", merged, partition=f"symbol={code}")
+                self.counters["sw_index_partitions"] += 1
 
     def _rebuild_snapshots(self) -> None:
         rebuilt: set[str] = set()

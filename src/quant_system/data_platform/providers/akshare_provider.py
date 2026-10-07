@@ -391,6 +391,10 @@ class AkShareProvider(MarketDataProvider):
                            symbol=code, start_date=start_date, end_date=end_date)
         return FetchResult(frame, SOURCE_CSINDEX)
 
+    def fetch_sw_index_daily(self, code: str) -> FetchResult:
+        frame = self._call(f"index_hist_sw:{code}", ak.index_hist_sw, symbol=code, period="day")
+        return FetchResult(frame, SOURCE_SW_INDEX)
+
     def fetch_index_weights(self, symbol: str) -> pd.DataFrame:
         return self._call(f"index_stock_cons_weight_csindex:{symbol}", ak.index_stock_cons_weight_csindex,
                           symbol=symbol)
@@ -454,6 +458,7 @@ class AkShareProvider(MarketDataProvider):
 
 
 SOURCE_CSINDEX = "akshare.stock_zh_index_hist_csindex.csindex"
+SOURCE_SW_INDEX = "akshare.index_hist_sw.swsresearch"
 SSE_PAGE_SIZE = 100
 SSE_BULLETIN_PAUSE_SECONDS = 3.0
 BULLETIN_ATTEMPTS = 2

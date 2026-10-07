@@ -16,7 +16,7 @@ RAW_SOURCE_KEY = b"quant_system.source"
 
 # Canonical datasets materialized into DuckDB, with their layout.
 PARTITIONED_DATASETS = ("daily_bars", "adjustment_factors", "index_bars", "market_snapshot", "etf_bars",
-                        "intraday_bars", "intraday_trades")
+                        "intraday_bars", "intraday_trades", "sw_index_bars")
 SINGLE_FILE_DATASETS = (
     "security_master",
     "trading_calendar",
@@ -60,6 +60,7 @@ DATE_COLUMNS = {
     "intraday_bars": "trade_date",
     "intraday_trades": "trade_date",
     "etf_top_holders": "report_date",
+    "sw_index_bars": "trade_date",
 }
 
 
@@ -340,7 +341,7 @@ def build_duckdb_catalog(root: Path) -> Path:
                     continue
                 glob_path = _duckdb_glob(directory / "**" / "*.parquet")
                 order = f" ORDER BY symbol, {DATE_COLUMNS[dataset]}" if dataset in (
-                    "daily_bars", "adjustment_factors", "index_bars") else ""
+                    "daily_bars", "adjustment_factors", "index_bars", "sw_index_bars") else ""
                 con.execute(
                     f"CREATE TABLE {dataset} AS SELECT * FROM read_parquet("
                     f"'{glob_path}', union_by_name=true, hive_partitioning=false){order}"

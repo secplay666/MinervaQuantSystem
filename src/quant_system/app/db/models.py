@@ -495,6 +495,9 @@ class PmSettings(Base):
     label_mode: Mapped[str] = mapped_column(String(8), default="suggest")  # suggest | manual
     push_daily: Mapped[bool] = mapped_column(Boolean, default=False)
     auto_base: Mapped[bool] = mapped_column(Boolean, default=True)  # a close in the 起涨区 turns 左侧 into 筑底
+    # The money map's industry crowding reminder: C above crowd_high, then relief below crowd_low.
+    crowd_high: Mapped[float] = mapped_column(Float, default=1.8)
+    crowd_low: Mapped[float] = mapped_column(Float, default=1.4)
     evaluated_through: Mapped[date | None] = mapped_column(Date)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
 
