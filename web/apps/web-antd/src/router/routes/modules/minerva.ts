@@ -71,6 +71,12 @@ const routes: RouteRecordRaw[] = [
         meta: { authority: ['market:view'], fullPathKey: false, icon: 'lucide:chart-candlestick', title: '看盘' },
       },
       {
+        name: 'MoneyMap',
+        path: '/moneymap',
+        component: () => import('#/views/market/money-map.vue'),
+        meta: { authority: ['market:view'], icon: 'lucide:map', title: '钱去哪地图' },
+      },
+      {
         name: 'PmBoard',
         path: '/position/board',
         component: () => import('#/views/position/board.vue'),

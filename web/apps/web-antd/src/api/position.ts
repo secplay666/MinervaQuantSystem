@@ -68,6 +68,10 @@ export interface PmSentinel {
 
 export interface PmQualityBrief { grade: null | string; score: null | number }
 
+/** A stock's SW L1 industry on the money map (C = crowding). */
+export interface PmIndustry { as_of: string; c: number; code: string; high: number; low: number; name: string;
+  zone: null | string; zone_name: null | string }
+
 export interface PmRow {
   activated_on: null | string;
   breakout_close: null | number;
@@ -75,6 +79,7 @@ export interface PmRow {
   completion_change: null | number;
   entered: boolean;
   half_entry: boolean;
+  industry?: null | PmIndustry;
   last_exit: null | { date: string; name: string; rule: string };
   next_distance: null | number;
   path: null | string;
@@ -232,6 +237,8 @@ export interface PmBoard {
 
 export interface PmSettings {
   auto_base: boolean;
+  crowd_high: number;
+  crowd_low: number;
   evaluated_through: null | string;
   label_mode: 'manual' | 'suggest';
   presets: { key: string; name: string; params: Record<string, number> }[];
@@ -298,7 +305,7 @@ export const pmSignalsApi = (unread = false) =>
 export const pmReadSignalsApi = (ids?: number[]) =>
   requestClient.post<{ marked: number; unread: number }>('/pm/signals/read', { ids: ids ?? null });
 export const pmSettingsApi = () => requestClient.get<PmSettings>('/pm/settings');
-export const pmSaveSettingsApi = (body: Partial<{ auto_base: boolean; label_mode: string; push_daily: boolean; rule_params: Record<string, any>;
+export const pmSaveSettingsApi = (body: Partial<{ auto_base: boolean; crowd_high: number; crowd_low: number; label_mode: string; push_daily: boolean; rule_params: Record<string, any>;
   stage_params: Record<string, number>; stage_preset: string }>) => requestClient.put<PmSettings>('/pm/settings', body);
 export const pmStageApi = (symbol: string, preset?: string) =>
   requestClient.get<{ kind: string; name: string; params: Record<string, number>; segments: { end: string; name: string; stage: string; start: string }[];

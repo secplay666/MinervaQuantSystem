@@ -22,6 +22,7 @@ const columns = [
   { key: 'waiting', title: '在等什么 / 下一价位', width: 230 },
   { key: 'index', title: '主指数', width: 96 },
   { key: 'quality', title: '质地', width: 56 },
+  { key: 'industry', title: '行业拥挤度', width: 110 },
   { key: 'close', title: '收盘', width: 84 },
 ];
 
@@ -75,6 +76,16 @@ function nearestSentinel(row: PmRow) {
       <template v-else-if="column.key === 'quality'">
         <Tooltip v-if="record.quality?.grade" :title="`质地 ${record.quality.score} 分（只用于排序，不触发信号）`">
           <Tag :color="GRADE_COLOR[record.quality.grade]">{{ record.quality.grade }}</Tag>
+        </Tooltip>
+        <span v-else class="text-gray-300">—</span>
+      </template>
+      <template v-else-if="column.key === 'industry'">
+        <Tooltip v-if="record.industry"
+                 :title="`${record.industry.name}：拥挤度 ${record.industry.c.toFixed(2)}，${record.industry.zone_name ?? '—'}（${record.industry.as_of}）。升破 ${record.industry.high} 提醒，回落到 ${record.industry.low} 以下解除；点击看钱去哪地图`">
+          <a class="text-xs" @click="router.push('/moneymap')">
+            {{ record.industry.name }} {{ record.industry.c.toFixed(2) }}
+            <Tag v-if="record.industry.zone === 'crowded'" color="red" class="ml-1">拥挤</Tag>
+          </a>
         </Tooltip>
         <span v-else class="text-gray-300">—</span>
       </template>

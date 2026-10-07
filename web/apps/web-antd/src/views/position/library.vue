@@ -44,6 +44,7 @@ const columns = [
   { key: 'stage', title: '系统观点' },
   { key: 'index', title: '主指数', width: 100 },
   { key: 'quality', title: '质地', width: 60 },
+  { key: 'industry', title: '行业拥挤度', width: 120 },
   { key: 'actions', title: '', width: 150 },
 ];
 
@@ -176,6 +177,14 @@ onMounted(load);
           <template v-else-if="column.key === 'index'">{{ record.main_index_name ?? record.main_index ?? '—' }}</template>
           <template v-else-if="column.key === 'quality'">
             <Tag v-if="record.quality?.grade" :color="GRADE_COLOR[record.quality.grade]">{{ record.quality.grade }}</Tag>
+            <span v-else class="text-gray-300">—</span>
+          </template>
+          <template v-else-if="column.key === 'industry'">
+            <a v-if="record.industry" class="text-xs" :title="`${record.industry.zone_name ?? ''}（${record.industry.as_of}），点击看钱去哪地图`"
+               @click="router.push('/moneymap')">
+              {{ record.industry.name }} {{ record.industry.c.toFixed(2) }}
+              <Tag v-if="record.industry.zone === 'crowded'" color="red" class="ml-1">拥挤</Tag>
+            </a>
             <span v-else class="text-gray-300">—</span>
           </template>
           <template v-else-if="column.key === 'actions'">

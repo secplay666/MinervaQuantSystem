@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 
 SHORT = 20            # sessions in the recent turnover share
+SHORT_MIN = 15
 LONG = 750            # sessions in the baseline (about three years)
 LONG_MIN = 675        # a C counts in the statistics once its baseline has this many sessions
 BASE_MIN = 250        # C is shown from this many sessions on, flagged until LONG_MIN
@@ -43,7 +44,8 @@ def daily_measures(close: pd.DataFrame, amount: pd.DataFrame) -> dict[str, pd.Da
     """Session x industry frames: share, C, its baseline length, ΔC (60 sessions), 3- and 12-month returns."""
     share = amount.div(amount.sum(axis=1), axis=0)
     base = share.rolling(LONG, min_periods=1).count()
-    c = share.rolling(SHORT, min_periods=SHORT).mean() / share.rolling(LONG, min_periods=BASE_MIN).mean()
+    # A missing session in the source does not blank a month of C: 15 of the 20 sessions are enough.
+    c = share.rolling(SHORT, min_periods=SHORT_MIN).mean() / share.rolling(LONG, min_periods=BASE_MIN).mean()
     return {"share": share, "c": c, "base": base, "dc60": c - c.shift(CHANGE),
             "r3": close / close.shift(R3) - 1, "r12": close / close.shift(R12) - 1}
 

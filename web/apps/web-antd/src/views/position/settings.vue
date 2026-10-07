@@ -46,9 +46,10 @@ const RULES: Field[] = [
 
 const settings = ref<PmSettings>();
 const saving = ref(false);
-const form = reactive<{ auto_base: boolean; label_mode: 'manual' | 'suggest'; ladder: number[][]; preset: string; push_daily: boolean;
-                        rules: Record<string, number>; stage: Record<string, number> }>({
-  auto_base: true, label_mode: 'suggest', ladder: [], preset: 'steady', push_daily: false, rules: {}, stage: {},
+const form = reactive<{ auto_base: boolean; crowd_high: number; crowd_low: number; label_mode: 'manual' | 'suggest'; ladder: number[][];
+                        preset: string; push_daily: boolean; rules: Record<string, number>; stage: Record<string, number> }>({
+  auto_base: true, crowd_high: 1.8, crowd_low: 1.4, label_mode: 'suggest', ladder: [], preset: 'steady', push_daily: false,
+  rules: {}, stage: {},
 });
 const presetValues = computed(() => settings.value?.presets.find((p) => p.key === form.preset)?.params ?? {});
 
@@ -69,6 +70,8 @@ function fill(s: PmSettings) {
   form.label_mode = s.label_mode;
   form.push_daily = s.push_daily;
   form.auto_base = s.auto_base;
+  form.crowd_high = s.crowd_high;
+  form.crowd_low = s.crowd_low;
   form.preset = s.stage_preset;
   form.stage = { ...s.stage_params };
   form.rules = { ...s.rule_params };
@@ -88,9 +91,14 @@ async function save() {
   const ruleOverrides: Record<string, any> = Object.fromEntries(RULES
     .filter((f) => differs(form.rules[f.key], defaults[f.key])).map((f) => [f.key, form.rules[f.key]]));
   if (JSON.stringify(form.ladder) !== JSON.stringify(defaults.ladder)) ruleOverrides.ladder = form.ladder;
+  if (!(form.crowd_low < form.crowd_high)) {
+    message.error('行业拥挤提醒：解除线要低于提醒线');
+    return;
+  }
   saving.value = true;
   try {
-    fill(await pmSaveSettingsApi({ auto_base: form.auto_base, label_mode: form.label_mode, push_daily: form.push_daily,
+    fill(await pmSaveSettingsApi({ auto_base: form.auto_base, crowd_high: form.crowd_high, crowd_low: form.crowd_low,
+                                   label_mode: form.label_mode, push_daily: form.push_daily,
                                    rule_params: ruleOverrides,
                                    stage_params: stageOverrides, stage_preset: form.preset }));
     message.success('已保存；看板和提示按新参数重新计算');
@@ -118,6 +126,16 @@ onMounted(async () => fill(await pmSettingsApi()));
             <Space>
               <Switch v-model:checked="form.auto_base" />
               <span class="text-xs text-gray-500">标签为左侧、收盘进入你画的起涨区时，自动转为筑底并提示（唯一的自动改标签；哨兵只提醒，不改标签）</span>
+            </Space>
+          </Form.Item>
+          <Form.Item label="行业拥挤提醒">
+            <Space wrap>
+              <span class="text-xs">拥挤度升破</span>
+              <InputNumber v-model:value="form.crowd_high" :min="0.6" :max="5" :step="0.1" size="small" class="!w-20" />
+              <span class="text-xs">时提醒，回落到</span>
+              <InputNumber v-model:value="form.crowd_low" :min="0.5" :max="4.9" :step="0.1" size="small" class="!w-20" />
+              <span class="text-xs">以下时提示解除</span>
+              <span class="text-xs text-gray-500">只对个股：按它所属的申万一级行业（钱去哪地图）；持有时提示减仓，未持有时只作提示</span>
             </Space>
           </Form.Item>
           <Form.Item label="每日推送" class="!mb-0">

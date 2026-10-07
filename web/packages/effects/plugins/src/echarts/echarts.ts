@@ -1,4 +1,4 @@
-import { BarChart, CandlestickChart, LineChart, PieChart, RadarChart } from 'echarts/charts';
+import { BarChart, CandlestickChart, LineChart, PieChart, RadarChart, ScatterChart } from 'echarts/charts';
 import {
   AxisPointerComponent,
   DatasetComponent,
@@ -6,6 +6,8 @@ import {
   GraphicComponent,
   GridComponent,
   LegendComponent,
+  MarkAreaComponent,
+  MarkLineComponent,
   MarkPointComponent,
   TitleComponent,
   ToolboxComponent,
@@ -42,6 +44,10 @@ echarts.use([
   DataZoomComponent,
   MarkPointComponent,
   AxisPointerComponent,
+  // Minerva: the money map (industry bubbles, zone areas, threshold lines).
+  ScatterChart,
+  MarkAreaComponent,
+  MarkLineComponent,
 ]);
 export type { ECOption } from './types';
 
