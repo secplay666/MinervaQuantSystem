@@ -1,0 +1,54 @@
+{
+  "name": "regime_study_factors",
+  "experiment": "regime_study",
+  "hypothesis": "因子在不同市场状态（牛熊、趋势、波动）下的表现不同，按当时可知的市场状态调整因子类别权重能提高超额（2026-10-08 用户提出）；2006–2020 学习，2021–2026 用已有的 multifactor_v1 评估结果检验",
+  "data": {
+    "source": "duckdb",
+    "path": "data/market.duckdb"
+  },
+  "market_rules": "configs/market_rules/cn_a_share.json",
+  "schedule": {
+    "type": "month_end"
+  },
+  "universe": {
+    "size": 1800,
+    "boards": [
+      "SSE_MAIN",
+      "SZSE_MAIN",
+      "CHINEXT",
+      "STAR"
+    ],
+    "min_listing_sessions": 250,
+    "coverage_window": 60,
+    "min_coverage": 0.8,
+    "min_price": 2.0,
+    "turnover_window": 20,
+    "turnover_weight": 0.5,
+    "exclude_risk_warning": true
+  },
+  "processing": {
+    "winsorize_k": 3.0,
+    "neutralize": true,
+    "min_names": 30
+  },
+  "factors": "all",
+  "samples": {
+    "is": [
+      "2006-01-01",
+      "2020-12-31"
+    ],
+    "oos": [
+      "2021-01-01",
+      "2026-09-30"
+    ]
+  },
+  "evaluation": {
+    "horizons": [
+      1,
+      2,
+      3,
+      6
+    ],
+    "quantiles": 5
+  }
+}

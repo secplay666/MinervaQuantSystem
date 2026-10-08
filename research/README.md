@@ -22,6 +22,9 @@ PYTHONPATH=~/L1/minerva-dev/src ~/L1/minerva-dev/.venv/bin/python <脚本> ...
 | `buyback/` | 回购、股东增减持之后的表现；检验"回购注销 + 业绩不差，半年胜率 70%" | `probe_buybacks.py`（回购表字段）、`probe_fields.py`（进度代码含义、增减持字段单位）、`buyback_study.py`（事件研究） | `WORKLOG_2026-10-07.md` |
 | `breadth/` | 市场宽度在全历史上算一遍要多久、占多少内存 | `time_breadth.py`（最早的查询）、`measure_breadth.py`（页面实际的计算，带内存上限） | `WORKLOG_2026-10-07.md` |
 | `etf/` | 资金波段在真实数据上的检查 | `check_waves.py` | `WORKLOG_2026-10-07.md` |
+| `multifactor/` | 主策略（决策作业用的多因子 + 规则法）在不同市场阶段的月度胜率和超额；加减仓规则的粗算；每次调仓换掉多少只、持有多久 | `phase_winrate.py`、`exposure_overlays.py`、`turnover_detail.py` | `WORKLOG_2026-10-07.md`、`docs/guides/decision-and-paper-trading-guide.md` §14 |
+| `regime/` | 能否客观判断牛熊；各类因子在不同市场状态下的表现；按状态切换因子权重是否有用（2006–2026） | `regime_factor_study.py`（配置 `configs/research/regime_study.json`） | `WORKLOG_2026-10-08.md` |
+| `timing/` | 各数据源每天几点发布当天数据、之后会不会修订，决定每日采集能否提前（10-09 探测） | `probe_publication.py`、`timing_report.py` | `WORKLOG_2026-10-08.md` |
 | `checks/` | 新功能在真实数据上的核对（只写业务库的临时副本）：手工账户除权、机构持有页；回购增持、市场宽度和仓位管家标签 | `check_features.py`、`check_info_lists.py` | `WORKLOG_2026-10-07.md` |
 
 **统一的写法**
