@@ -30,7 +30,7 @@
 
 ## 3. 时间线
 
-**每个工作日 18:17**（`scripts/daily_update.sh`，systemd 定时器；失败时 21:47 重试）：
+**每个工作日 18:17**（`scripts/daily_update.sh`，systemd 定时器；失败时 21:47 重试）。另外，周二到周六 09:05 有一次早上补抓，只补 ETF 份额和指数，不涉及决策。18:17 这次依次运行：
 1. 数据采集；
 2. 决策作业 `quant-decision daily`；
 3. 备份；

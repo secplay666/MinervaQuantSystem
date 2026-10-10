@@ -105,12 +105,16 @@ quant-data ingest --steps bars_history
 
 - 18:17 运行一次，21:47 再触发一次作为重试。如果最近一次收盘（16:00）之后已经有完整运行，重试直接跳过。
 - 服务器在预定时间关机时，开机后补跑一次。
+- 周二到周六 09:05 另有一次早上补抓 `scripts/catchup_update.sh`（定时器 `quant-catchup`）：只跑指数和 ETF 两步，补上傍晚之后才发布的数据。
+  - 上交所 ETF 份额约 23:00 发布，深交所第二天早上发布，中证全收益指数有时晚于 18:30（10-09 探测，`research/timing/`）；
+  - 不生成决策、不推送，失败只在通知中心记一条警告；
+  - 日志在 `logs/daily/<日期>-catchup.log`，每次一行汇总在 `logs/daily/catchup.tsv`。
 - 同一时间只允许一个运行；以低优先级运行（nice 10、IO 空闲级）。
 
 ```bash
 sudo loginctl enable-linger <user>          # 一次性（需要管理员）：用户未登录时定时器也运行
 deploy/install_daily_timer.sh               # 安装或更新定时器（git pull 后如单元文件有变化，重新执行）
-systemctl --user list-timers quant-daily.timer
+systemctl --user list-timers quant-daily.timer quant-catchup.timer
 systemctl --user start quant-daily.service  # 立即按定时任务的方式运行一次
 scripts/daily_update.sh --force             # 或直接运行，不检查今天是否已完成
 tail -n 20 logs/daily/history.tsv           # 每次运行一行：开始时间、退出码、run_id、状态、最新交易日、阻断/警告数

@@ -1,0 +1,13 @@
+[Unit]
+Description=MinervaQuantSystem morning catch-up of ETF shares and indices
+Documentation=file://@REPO@/README.md
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO@
+ExecStart=@REPO@/scripts/catchup_update.sh
+# Yield to production services on the same host.
+Nice=10
+CPUSchedulingPolicy=batch
+IOSchedulingClass=idle
+TimeoutStartSec=1h

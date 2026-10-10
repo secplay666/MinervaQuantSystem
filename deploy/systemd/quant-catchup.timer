@@ -1,0 +1,13 @@
+[Unit]
+Description=MinervaQuantSystem morning catch-up of ETF shares and indices (Tue-Sat 09:05)
+
+[Timer]
+# SSE publishes ETF shares around 23:00 and SZSE the next morning (probe of
+# 2026-10-09, research/timing/); the CSI total-return indices sometimes come
+# after the 18:17 run.  Tuesday to Saturday morning covers Monday to Friday.
+OnCalendar=Tue..Sat 09:05
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target
