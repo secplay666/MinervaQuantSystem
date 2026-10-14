@@ -78,6 +78,11 @@ class DataPlatformConfig:
     download_sw_indices: bool = True  # the 31 SW L1 industry indices (sw_index.py), with the index step
     download_company_actions: bool = True  # buybacks and holder increases/decreases (company_actions.py)
     sw_index_start: str = "20050101"
+    # Options (options.py): an on-request step, run by the morning catch-up (scripts/catchup_update.sh)
+    download_options: bool = True
+    download_option_minutes: bool = True
+    options_sse_start: str = "20150209"
+    options_cffex_start: str = "20191223"
     # 1-minute bars of these codes, plus 3-second trades of the funds among them (intraday.py)
     intraday_codes: tuple[str, ...] = ("sh510300", "sh510310", "sh510330", "sz159919", "sh515330", "sh510360",
                                        "sh515380", "sh510350", "sh000300", "IF0")
@@ -153,6 +158,10 @@ class DataPlatformConfig:
             download_sw_indices=bool(payload.get("download_sw_indices", True)),
             download_company_actions=bool(payload.get("download_company_actions", True)),
             sw_index_start=str(payload.get("sw_index_start", "20050101")),
+            download_options=bool(payload.get("download_options", True)),
+            download_option_minutes=bool(payload.get("download_option_minutes", True)),
+            options_sse_start=str(payload.get("options_sse_start", "20150209")),
+            options_cffex_start=str(payload.get("options_cffex_start", "20191223")),
             intraday_codes=tuple(str(item) for item in payload.get("intraday_codes", cls.intraday_codes)),
             # Hash the file payload, not runtime-resolved values, so an
             # unchanged config keeps the same hash across days.

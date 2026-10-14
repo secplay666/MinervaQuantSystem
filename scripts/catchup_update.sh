@@ -7,7 +7,10 @@
 # the next morning, and the CSI total-return indices sometimes after 18:30.
 # This run fetches only the indices and ETF steps for the latest final session,
 # so the ETF page shows the previous session's shares in the morning instead of
-# a day (or a weekend) later.  It builds no decisions and sends nothing.
+# a day (or a weekend) later.  It also runs the options step (the options page):
+# the previous session's option prices and risk indicators, and its option
+# minute bars, which the source keeps only until the next session opens, so the
+# pipeline runs that step first.  It builds no decisions and sends nothing.
 #
 # Output: logs/daily/<date>-catchup.log and logs/daily/catchup.tsv (one line per
 # run).  It shares the daily lock and leaves last_complete_epoch alone, so the
@@ -21,7 +24,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON="$REPO/.venv/bin/python"
 CONFIG="$REPO/configs/data_platform.json"
 LOG_DIR="$REPO/logs/daily"
-STEPS="indices,etf"
+STEPS="indices,etf,options"
 
 mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/$(date +%F)-catchup.log"
@@ -56,7 +59,7 @@ EOF
 APP="$REPO/.venv/bin/quant-app"
 if (( rc != 0 )) && [[ -x "$APP" ]]; then
   "$APP" --root "$REPO" event add --level warning --category data --id "catchup-$(date +%F)-$now" \
-    --title "早上补抓 ETF 份额和指数未完成（退出码 $rc）" --body "日志：logs/daily/$(date +%F)-catchup.log" \
-    --hint "傍晚的每日流程会再抓一次" >> "$LOG" 2>&1
+    --title "早上补抓 ETF 份额、指数和期权未完成（退出码 $rc）" --body "日志：logs/daily/$(date +%F)-catchup.log" \
+    --hint "ETF 份额和指数傍晚的每日流程会再抓；期权下次早上补抓（当天的分钟线补不回来）" >> "$LOG" 2>&1
 fi
 exit "$rc"

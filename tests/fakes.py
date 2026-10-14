@@ -559,3 +559,74 @@ class FakeProvider(MarketDataProvider):
             [{"变更日期": "2026-09-08", "证券代码": "000001", "证券简称": "乙银行",
               "变更前简称": "ST乙行", "变更后简称": "乙银行"}]
         )
+
+    # Exchange-traded options (options.py): off by default; the step only runs when asked for anyway.
+    options: bool = False
+    option_failing: set[str] = field(default_factory=set)  # "risk:YYYYMMDD", "cffex:...", "daily:<id>", "minute:<id>"
+    option_minute_shift: int = 0  # sessions the minute source is ahead of ``today`` (1: the next one has opened)
+
+    def _option_check(self, kind: str, key: str) -> None:
+        if not self.options:
+            raise NotImplementedError
+        self.calls.append((f"option_{kind}", key))
+        if f"{kind}:{key}" in self.option_failing:
+            raise RuntimeError(f"option source unavailable: {kind} {key}")
+
+    def fetch_option_risk_sse(self, trade_date: str) -> pd.DataFrame:
+        """Like the exchange's file: contracts listed that session, never on their expiry day; IV 0 if unsolved."""
+        self._option_check("risk", trade_date)
+        day = datetime.strptime(trade_date, "%Y%m%d").date()
+        if day > self.today:
+            return pd.DataFrame()
+        rows = [{"TRADE_DATE": day.isoformat(), "SECURITY_ID": sid, "CONTRACT_ID": code, "CONTRACT_SYMBOL": name,
+                 "DELTA_VALUE": 0.5 if code[6] == "C" else -0.5, "THETA_VALUE": -0.3, "GAMMA_VALUE": 1.9,
+                 "VEGA_VALUE": 0.4, "RHO_VALUE": 0.1, "IMPLC_VOLATLTY": 0.0 if sid == "10009002" else 0.18}
+                for sid, (code, name, expiry) in FAKE_SSE_OPTIONS.items() if day < expiry]
+        return pd.DataFrame(rows)
+
+    def fetch_option_daily_sse(self, security_id: str) -> pd.DataFrame:
+        self._option_check("daily", security_id)
+        if security_id not in FAKE_SSE_OPTIONS:
+            return pd.DataFrame()
+        expiry = FAKE_SSE_OPTIONS[security_id][2]
+        days = [d for d in OPEN_DATES if d <= min(self.today, expiry)]
+        return pd.DataFrame({"日期": days, "开盘": 0.1, "最高": 0.12, "最低": 0.09,
+                             "收盘": [0.1 + 0.001 * i for i in range(len(days))], "成交量": 100})
+
+    def fetch_option_minute_sse(self, security_id: str) -> pd.DataFrame:
+        """The latest session only: ``today``, or a later one once the next session has opened."""
+        self._option_check("minute", security_id)
+        latest = [d for d in OPEN_DATES if d <= self.today][-1]
+        day = OPEN_DATES[OPEN_DATES.index(latest) + self.option_minute_shift]
+        times = [f"{9 + (30 + i) // 60:02d}:{(30 + i) % 60:02d}:00" for i in range(120)] + \
+                [f"{13 + i // 60:02d}:{i % 60:02d}:00" for i in range(1, 121)]
+        return pd.DataFrame({"日期": day.isoformat(), "时间": times,
+                             "价格": [0.0] + [0.1] * (len(times) - 1), "成交": [0] + [2] * (len(times) - 1),
+                             "持仓": 300, "均价": [0.0] + [0.1] * (len(times) - 1)})
+
+    def fetch_cffex_daily(self, trade_date: str) -> pd.DataFrame:
+        """The exchange's statistics file: futures, options (some codes padded with spaces) and subtotals."""
+        self._option_check("cffex", trade_date)
+        day = datetime.strptime(trade_date, "%Y%m%d").date()
+        if day > self.today:
+            return pd.DataFrame()
+        rows = [{"合约代码": "IF2610", "今开盘": 4000.0, "最高价": 4010.0, "最低价": 3990.0, "成交量": 1000,
+                 "成交金额": 120000.0, "持仓量": 5000, "今收盘": 4005.0, "今结算": 4004.0, "Delta": None}]
+        for code, expiry in FAKE_CFFEX_OPTIONS.items():
+            if day <= expiry:
+                rows.append({"合约代码": code + " ", "今开盘": 50.0, "最高价": 60.0, "最低价": 40.0, "成交量": 20,
+                             "成交金额": 10.5, "持仓量": 300, "今收盘": 55.0, "今结算": 54.0,
+                             "Delta": 0.45 if "-C-" in code else -0.55})
+        rows.append({"合约代码": "小计", "成交量": 1000})
+        return pd.DataFrame(rows)
+
+
+# security id: (code, name, expiry); the September contracts expire on 2026-09-23 (fourth Wednesday)
+FAKE_SSE_OPTIONS = {
+    "10009001": ("510050C2609M02800", "50ETF购9月2800", date(2026, 9, 23)),
+    "10009002": ("510050P2609M02800", "50ETF沽9月2800", date(2026, 9, 23)),
+    "10009003": ("510050C2610M02900", "50ETF购10月2900", date(2026, 10, 28)),
+    "10009004": ("510050P2610A02800", "50ETF沽10月2755A", date(2026, 10, 28)),  # adjusted: strike in the name
+}
+FAKE_CFFEX_OPTIONS = {"IO2609-C-4000": date(2026, 9, 18), "IO2609-P-4000": date(2026, 9, 18),
+                      "MO2610-C-7000": date(2026, 10, 16)}

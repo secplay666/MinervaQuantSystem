@@ -120,6 +120,27 @@ class MarketDataProvider(ABC):
         optional: providers without it skip the SW indices."""
         raise NotImplementedError
 
+    def fetch_option_risk_sse(self, trade_date: str) -> pd.DataFrame:
+        """SSE option risk indicators of one session (YYYYMMDD): every listed contract's greeks and implied
+        volatility (TRADE_DATE, SECURITY_ID, CONTRACT_ID, CONTRACT_SYMBOL, ...); optional: providers without
+        it skip the options step."""
+        raise NotImplementedError
+
+    def fetch_option_daily_sse(self, security_id: str) -> pd.DataFrame:
+        """The whole daily history of one SSE option contract (日期, 开盘, 最高, 最低, 收盘, 成交量);
+        empty when the source has none."""
+        raise NotImplementedError
+
+    def fetch_option_minute_sse(self, security_id: str) -> pd.DataFrame:
+        """1-minute bars of one SSE option contract's latest session (日期, 时间, 价格, 成交, 持仓, 均价)."""
+        raise NotImplementedError
+
+    def fetch_cffex_daily(self, trade_date: str) -> pd.DataFrame:
+        """CFFEX daily statistics of one session (YYYYMMDD): every futures and option contract
+        (合约代码, 今开盘, 最高价, 最低价, 成交量, 成交金额, 持仓量, 今收盘, 今结算, Delta, ...); empty when
+        the exchange has no file."""
+        raise NotImplementedError
+
     def fetch_intraday_trades(self, code: str) -> pd.DataFrame:
         """3-second trades of the latest session, with the active side (optional, see above)."""
         raise NotImplementedError

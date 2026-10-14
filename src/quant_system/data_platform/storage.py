@@ -14,9 +14,10 @@ from .utils import file_sha256, json_hash
 
 RAW_SOURCE_KEY = b"quant_system.source"
 
-# Canonical datasets materialized into DuckDB, with their layout.
+# Canonical datasets materialized into DuckDB, with their layout.  Not materialized: the fetch logs, and
+# option_minute_bars (some 36 million rows a year, read one session at a time from its partition by the app).
 PARTITIONED_DATASETS = ("daily_bars", "adjustment_factors", "index_bars", "market_snapshot", "etf_bars",
-                        "intraday_bars", "intraday_trades", "sw_index_bars")
+                        "intraday_bars", "intraday_trades", "sw_index_bars", "option_daily_bars", "option_risk")
 SINGLE_FILE_DATASETS = (
     "security_master",
     "trading_calendar",
@@ -39,6 +40,8 @@ SINGLE_FILE_DATASETS = (
     "etf_top_holders",
     "buybacks",
     "holder_changes",
+    "option_contracts",
+    "option_minute_totals",
 )
 DATE_COLUMNS = {
     "daily_bars": "trade_date",
@@ -65,6 +68,11 @@ DATE_COLUMNS = {
     "sw_index_bars": "trade_date",
     "buybacks": "notice_date",
     "holder_changes": "notice_date",
+    "option_contracts": "expiry_date",
+    "option_daily_bars": "trade_date",
+    "option_risk": "trade_date",
+    "option_minute_bars": "trade_date",
+    "option_minute_totals": "trade_date",
 }
 
 

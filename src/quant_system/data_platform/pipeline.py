@@ -52,6 +52,29 @@ from .financials import (
     merge_financial_versions,
     normalize_financials,
 )
+from .options import MAX_CONSECUTIVE_FAILURES as OPTION_MAX_CONSECUTIVE_FAILURES
+from .options import (
+    SOURCE_CFFEX_DAILY,
+    SOURCE_SSE_DAILY,
+    SOURCE_SSE_MINUTE,
+    SOURCE_SSE_RISK,
+    minutes_moved_on,
+    normalize_cffex_daily,
+    normalize_sse_daily,
+    normalize_sse_minutes,
+    normalize_sse_risk,
+    sse_contracts,
+    sse_daily_todo,
+)
+from .options import log_row as option_log_row
+from .options import merge_bars as merge_option_bars
+from .options import merge_contracts as merge_option_contracts
+from .options import merge_log as merge_option_log
+from .options import merge_minutes as merge_option_minutes
+from .options import merge_totals as merge_option_totals
+from .options import minute_totals as option_minute_totals
+from .options import merge_risk as merge_option_risk
+from .options import sessions_todo as option_sessions_todo
 from .forecasts import DATASET as FORECAST_DATASET
 from .forecasts import SOURCE_FORECASTS, forecast_windows, merge_forecasts, normalize_forecasts
 from .corporate import (
@@ -151,7 +174,7 @@ STEPS = ("daily_bars", "adjustment_factors", "indices", "status_history", "marke
          "company_actions", "classification", "fundamentals", "etf", "intraday")
 # Run only when asked (``--steps``): the one-off backfill of history before
 # the earliest stored bar, e.g. after start_date moved earlier.
-OPTIONAL_STEPS = ("bars_history",)
+OPTIONAL_STEPS = ("bars_history", "options")
 ALL_STEPS = STEPS + OPTIONAL_STEPS
 CORPORATE_MAX_CONSECUTIVE_FAILURES = 3
 ETF_MAX_CONSECUTIVE_FAILURES = 2
@@ -270,6 +293,9 @@ class IngestionPipeline:
         self._ingest_calendar(ctx)
         self._ingest_security_master(ctx)
         universe = self._daily_universe(ctx)
+        if "options" in self.steps and self.config.download_options:
+            # First: the source keeps the option minute bars only until the next session opens (09:30).
+            self._ingest_options(ctx)
         if "daily_bars" in self.steps:
             self._ingest_daily_bars(ctx, universe)
         if "bars_history" in self.steps:
@@ -1365,6 +1391,190 @@ class IngestionPipeline:
         if failed:
             ctx.issues.append(QualityIssue("intraday", "fetch", "warning",
                                            f"日内数据 {failed} 个请求失败（逐笔只有当天能补，分钟线一周内可补）", failed))
+
+    def _ingest_options(self, ctx: RunContext) -> None:
+        """Exchange-traded options (options.py) for the options page, run by the morning catch-up.
+
+        Session by session what the fetch log lacks: the SSE risk indicators (which also list the contracts),
+        then the latest session's SSE minute bars (the source keeps that session only, until the next one
+        opens), the CFFEX daily statistics, and last the SSE daily bars of every contract not fetched since its
+        latest session (each request returns a contract's whole history).  Stored phase by phase, so a long
+        backfill keeps what it got.  The data feeds a page: problems are warnings, failures are retried next run.
+        """
+        assert ctx.expected_latest is not None
+        latest = ctx.expected_latest
+        open_sessions = [d for d in ctx.open_dates if d <= latest]
+        contracts = read_canonical(self.root, "option_contracts")
+        log = read_canonical(self.root, "option_fetch_log")
+        pending: dict[str, list[tuple[str, pd.DataFrame]]] = {"option_risk": [], "option_daily_bars": []}
+        log_rows: list[dict[str, Any]] = []
+        merges = {"option_risk": merge_option_risk, "option_daily_bars": merge_option_bars}
+
+        def flush() -> None:
+            nonlocal log
+            for dataset, parts in pending.items():
+                by_underlying: dict[str, list[pd.DataFrame]] = {}
+                for underlying, part in parts:
+                    by_underlying.setdefault(underlying, []).append(part)
+                for underlying, frames in by_underlying.items():
+                    partition = f"underlying={underlying}"
+                    merged = merges[dataset](read_canonical(self.root, dataset, partition), pd.concat(frames))
+                    if not merged.empty:
+                        write_canonical_frame(self.root, dataset, merged, partition=partition)
+                parts.clear()
+            if contracts is not None and not contracts.empty:
+                write_canonical_frame(self.root, "option_contracts", contracts)
+            if log_rows:
+                log = merge_option_log(log, log_rows)
+                write_canonical_frame(self.root, "option_fetch_log", log)
+                log_rows.clear()
+
+        def by_session(step: str, dataset: str, start: str, fetch: Callable[[date], pd.DataFrame],
+                     take: Callable[[date, pd.DataFrame], int]) -> None:
+            todo = option_sessions_todo(open_sessions, pd.to_datetime(start).date(), log, dataset)
+            failures = 0
+            for i, day in enumerate(todo):
+                if failures >= OPTION_MAX_CONSECUTIVE_FAILURES:
+                    ctx.count(step, "deferred", len(todo) - i)
+                    break
+                try:
+                    raw = fetch(day)
+                except NotImplementedError:
+                    raise
+                except Exception as exc:
+                    ctx.error(step, day.isoformat(), exc)
+                    ctx.count(step, "failed")
+                    failures += 1
+                    continue
+                failures = 0
+                rows = take(day, raw)
+                row = option_log_row(dataset, day.isoformat(), rows, ctx.run_id, latest, day)
+                if row:
+                    log_rows.append(row)
+                ctx.count(step, "sessions")
+                ctx.count(step, "rows", rows)
+            flush()
+
+        def take_risk(day: date, raw: pd.DataFrame) -> int:
+            nonlocal contracts
+            self._raw(ctx, "option_risk_sse", self._date_str(day), raw, SOURCE_SSE_RISK)
+            part = normalize_sse_risk(raw, ctx.run_id, ctx.ingested_at)
+            part = part[part["trade_date"] == day]
+            contracts = merge_option_contracts(contracts, sse_contracts(raw, ctx.open_dates, ctx.run_id,
+                                                                       ctx.ingested_at))
+            pending["option_risk"].extend(part.groupby("underlying"))
+            return len(part)
+
+        def take_cffex(day: date, raw: pd.DataFrame) -> int:
+            nonlocal contracts
+            self._raw(ctx, "option_cffex_daily", self._date_str(day), raw, SOURCE_CFFEX_DAILY)
+            found, bars = normalize_cffex_daily(raw, day, ctx.open_dates, ctx.run_id, ctx.ingested_at)
+            contracts = merge_option_contracts(contracts, found)
+            pending["option_daily_bars"].extend(bars.groupby("underlying"))
+            return len(bars)
+
+        try:
+            by_session("option_risk", "sse_risk", self.config.options_sse_start,
+                     lambda day: self.provider.fetch_option_risk_sse(self._date_str(day)), take_risk)
+            if self.config.download_option_minutes and contracts is not None and not contracts.empty:
+                self._ingest_option_minutes(ctx, contracts, latest)
+            by_session("option_cffex", "cffex_daily", self.config.options_cffex_start,
+                     lambda day: self.provider.fetch_cffex_daily(self._date_str(day)), take_cffex)
+            self._ingest_option_daily_sse(ctx, contracts, log, latest, pending, log_rows, flush)
+        except NotImplementedError:
+            flush()
+            return
+        self._option_warnings(ctx, latest)
+
+    def _ingest_option_daily_sse(self, ctx: RunContext, contracts: pd.DataFrame | None, log: pd.DataFrame | None,
+                                 latest: date, pending: dict[str, list[tuple[str, pd.DataFrame]]],
+                                 log_rows: list[dict[str, Any]], flush: Callable[[], None]) -> None:
+        """Daily bars of the SSE contracts not fetched since their latest session, whole history per request."""
+        todo = sse_daily_todo(contracts, log, latest)
+        underlyings = {} if contracts is None else contracts.set_index("contract")["underlying"].to_dict()
+        failures = 0
+        for i, contract in enumerate(todo):
+            if failures >= OPTION_MAX_CONSECUTIVE_FAILURES:
+                ctx.count("option_sse_daily", "deferred", len(todo) - i)
+                break
+            try:
+                raw = self.provider.fetch_option_daily_sse(contract)
+            except NotImplementedError:
+                raise
+            except Exception as exc:
+                ctx.error("option_sse_daily", contract, exc)
+                ctx.count("option_sse_daily", "failed")
+                failures += 1
+                continue
+            failures = 0
+            self._raw(ctx, "option_daily_sse", contract, raw, SOURCE_SSE_DAILY)
+            bars = normalize_sse_daily(raw, contract, underlyings[contract], ctx.run_id, ctx.ingested_at)
+            bars = bars[bars["trade_date"] <= latest]
+            if not bars.empty:
+                pending["option_daily_bars"].append((underlyings[contract], bars))
+            log_rows.append(option_log_row("sse_daily", contract, len(bars), ctx.run_id, latest))
+            ctx.count("option_sse_daily", "contracts")
+            ctx.count("option_sse_daily", "rows", len(bars))
+            if (i + 1) % 1000 == 0:
+                flush()
+        flush()
+
+    def _ingest_option_minutes(self, ctx: RunContext, contracts: pd.DataFrame, latest: date) -> None:
+        """1-minute bars of the SSE contracts listed on ``latest`` that are not stored yet.  Stops once the source
+        serves a later session (the next one has opened): what is missed then cannot be fetched any more."""
+        partition = f"trade_date={latest}"
+        stored = read_canonical(self.root, "option_minute_bars", partition)
+        have = set() if stored is None else set(stored["contract"])
+        listed = contracts[(contracts["exchange"] == "SSE")
+                           & (pd.to_datetime(contracts["expiry_date"]) >= pd.Timestamp(latest))]
+        parts: list[pd.DataFrame] = []
+        failures = moved = 0
+        for contract, underlying in listed[["contract", "underlying"]].itertuples(index=False):
+            if contract in have:
+                continue
+            if failures >= OPTION_MAX_CONSECUTIVE_FAILURES or moved >= OPTION_MAX_CONSECUTIVE_FAILURES:
+                ctx.count("option_minutes", "missed")
+                continue
+            try:
+                raw = self.provider.fetch_option_minute_sse(contract)
+            except NotImplementedError:
+                return
+            except Exception as exc:
+                ctx.error("option_minutes", contract, exc)
+                ctx.count("option_minutes", "failed")
+                ctx.count("option_minutes", "missed")
+                failures += 1
+                continue
+            failures = 0
+            if minutes_moved_on(raw, latest):
+                moved += 1
+                ctx.count("option_minutes", "missed")
+                continue
+            moved = 0
+            self._raw(ctx, "option_minute_sse", f"{contract}_{latest:%Y%m%d}", raw, SOURCE_SSE_MINUTE)
+            frame = normalize_sse_minutes(raw, contract, underlying, latest, ctx.run_id, ctx.ingested_at)
+            if not frame.empty:
+                parts.append(frame)
+            ctx.count("option_minutes", "contracts")
+        if parts:
+            merged = merge_option_minutes(stored, pd.concat(parts, ignore_index=True))
+            write_canonical_frame(self.root, "option_minute_bars", merged, partition=partition)
+            totals = merge_option_totals(read_canonical(self.root, "option_minute_totals"), option_minute_totals(merged))
+            write_canonical_frame(self.root, "option_minute_totals", totals)
+
+    def _option_warnings(self, ctx: RunContext, latest: date) -> None:
+        counts = {step: ctx.counters.get(step, {}) for step in
+                  ("option_risk", "option_cffex", "option_sse_daily", "option_minutes")}
+        failed = sum(counts[step].get(key, 0) for step in ("option_risk", "option_cffex", "option_sse_daily")
+                     for key in ("failed", "deferred"))
+        if failed:
+            ctx.issues.append(QualityIssue("options", "fetch", "warning",
+                                           f"期权：{failed} 个请求失败或推迟，下次运行重试", failed))
+        missed = counts["option_minutes"].get("missed", 0)
+        if missed:
+            ctx.issues.append(QualityIssue("option_minute_bars", "fetch", "warning",
+                                           f"期权分钟线：{missed} 个合约没抓到 {latest} 的数据（数据源只保留最近"
+                                           f"一个交易日，下一个交易日开盘后无法再补）", missed))
 
     def _ingest_etf_holders(self, ctx: RunContext, master: pd.DataFrame | None) -> None:
         """Top holders from the broad-index funds' annual and interim reports.

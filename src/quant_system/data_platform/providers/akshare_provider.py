@@ -463,11 +463,53 @@ class AkShareProvider(MarketDataProvider):
         return self._call(f"fund_scale_daily_szse:{start}", ak.fund_scale_daily_szse,
                           start_date=start, end_date=end, symbol="ETF")
 
+    # -- options (options.py) ------------------------------------------------
+
+    def fetch_option_risk_sse(self, trade_date: str) -> pd.DataFrame:
+        time.sleep(OPTION_SSE_PAUSE_SECONDS)  # query.sse.com.cn, the service of the ETF shares too
+        return self._call(f"option_risk_indicator_sse:{trade_date}", ak.option_risk_indicator_sse, date=trade_date)
+
+    def fetch_option_daily_sse(self, security_id: str) -> pd.DataFrame:
+        return self._call(f"option_sse_daily_sina:{security_id}", _empty_when_none, fetch=ak.option_sse_daily_sina,
+                          symbol=security_id)
+
+    def fetch_option_minute_sse(self, security_id: str) -> pd.DataFrame:
+        return self._call(f"option_sse_minute_sina:{security_id}", _empty_when_none,
+                          fetch=ak.option_sse_minute_sina, symbol=security_id)
+
+    def fetch_cffex_daily(self, trade_date: str) -> pd.DataFrame:
+        return self._call(f"cffex_daily:{trade_date}", _cffex_daily, trade_date=trade_date)
+
 
 SOURCE_CSINDEX = "akshare.stock_zh_index_hist_csindex.csindex"
 SOURCE_SW_INDEX = "akshare.index_hist_sw.swsresearch"
 SSE_PAGE_SIZE = 100
 SSE_BULLETIN_PAUSE_SECONDS = 3.0
+OPTION_SSE_PAUSE_SECONDS = 0.8  # a 2015-2026 backfill at this pace ran without refusals (research/options/)
+CFFEX_DAILY_URL = "http://www.cffex.com.cn/sj/hqsj/rtj/{month}/{day}/{date}_1.csv"
+
+
+def _empty_when_none(fetch: Callable[..., pd.DataFrame], **kwargs: object) -> pd.DataFrame:
+    """Sina's option endpoints raise a length mismatch for a contract without data: an empty answer."""
+    try:
+        return fetch(**kwargs)
+    except (ValueError, IndexError) as exc:
+        if "Length mismatch" in str(exc) or "out-of-bounds" in str(exc):
+            return pd.DataFrame()
+        raise
+
+
+def _cffex_daily(trade_date: str) -> pd.DataFrame:
+    """The exchange's daily statistics file (GBK CSV); empty when there is none for the day."""
+    url = CFFEX_DAILY_URL.format(month=trade_date[:6], day=trade_date[6:], date=trade_date)
+    response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+    if response.status_code == 404:
+        return pd.DataFrame()
+    response.raise_for_status()
+    text = response.content.decode("gbk", errors="replace")
+    if not text.strip() or "<html" in text[:500].lower():
+        return pd.DataFrame()
+    return pd.read_csv(io.StringIO(text), dtype={"合约代码": str})
 BULLETIN_ATTEMPTS = 2
 _BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
                "Chrome/124.0 Safari/537.36")

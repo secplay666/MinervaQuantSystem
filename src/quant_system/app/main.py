@@ -18,12 +18,13 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import (accounts, auth, decisions, etf, events, info_lists, invitations, market, money_map, pm, pm_board,
-                  pm_detail, system, users)
+from .api import (accounts, auth, decisions, etf, events, info_lists, invitations, market, money_map, options, pm,
+                  pm_board, pm_detail, system, users)
 from .db.base import open_database
 from .etf import EtfQueries
 from .market import MarketQueries
 from .money_map import money_map_for
+from .options import options_for
 from .breadth import market_breadth_for
 from .company_actions import company_actions_for
 from .position_jobs import StageBacktests
@@ -53,6 +54,7 @@ def create_app(settings: AppSettings) -> FastAPI:
     app.state.money_map = money_map_for(settings.market_db)
     app.state.company_actions = company_actions_for(settings.market_db)
     app.state.breadth = market_breadth_for(settings.market_db)
+    app.state.options = options_for(settings.market_db)
     app.state.stage_jobs = StageBacktests(app.state.market)
     app.state.jobs = {}
     app.add_middleware(GZipMiddleware, minimum_size=1024)
@@ -82,7 +84,7 @@ def create_app(settings: AppSettings) -> FastAPI:
         return JSONResponse(status_code=503, content={"detail": {"code": "incomplete_market_data",
                                                                  "message": f"行情库缺少所需的数据：{exc}"}})
 
-    for module in (system, auth, users, invitations, events, market, etf, money_map, info_lists, accounts,
+    for module in (system, auth, users, invitations, events, market, etf, money_map, info_lists, options, accounts,
                    decisions, pm, pm_detail, pm_board):
         app.include_router(module.router, prefix=API_PREFIX)
     if settings.mobile_dir is not None and (settings.mobile_dir / "index.html").is_file():

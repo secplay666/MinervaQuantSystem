@@ -10,6 +10,7 @@ deleted).
 
 from __future__ import annotations
 
+import bisect
 import logging
 import os
 import re
@@ -105,6 +106,17 @@ from .storage import (
 )
 from .sw_index import SW_L1
 from .company_actions import merge_buybacks, merge_holder_changes, normalize_buybacks, normalize_holder_changes
+from .options import BAR_COLUMNS as OPTION_BAR_COLUMNS
+from .options import RISK_COLUMNS as OPTION_RISK_COLUMNS
+from .options import log_row as option_log_row
+from .options import merge_bars as merge_option_bars
+from .options import merge_contracts as merge_option_contracts
+from .options import merge_log as merge_option_log
+from .options import merge_minutes as merge_option_minutes
+from .options import merge_totals as merge_option_totals
+from .options import minute_totals as option_minute_totals
+from .options import merge_risk as merge_option_risk
+from .options import normalize_cffex_daily, normalize_sse_daily, normalize_sse_minutes, normalize_sse_risk, sse_contracts
 from .utils import code_version, json_dump, run_id_to_iso, unique_run_id, utc_now_iso
 
 LOGGER = logging.getLogger("rebuild")
@@ -181,6 +193,7 @@ class CanonicalRebuilder:
         self._rebuild_etf_master()
         self._rebuild_etf_bars(calendar_end)
         self._rebuild_intraday()
+        self._rebuild_options()
         self._rebuild_etf_holders()
         self._carry_forward("daily_bars_history_log")
         audit = run_audit(self.staging, calendar_end, self.start_date,
@@ -569,6 +582,85 @@ class CanonicalRebuilder:
                         days[key] = merge_intraday_day(days.get(key), part, columns)
             for key, frame in days.items():
                 write_canonical_frame(self.staging, dataset, frame, partition=f"trade_date={key}")
+
+    def _rebuild_options(self) -> None:
+        """Replay the stored option responses run by run (later runs win), and the fetch log from them."""
+        final_time = self.config.session_final_time
+        contracts = None
+        log_rows: list[dict[str, Any]] = []
+        parts: dict[tuple[str, str], list[pd.DataFrame]] = defaultdict(list)
+
+        def session_of(path: Path) -> date:
+            stamp = path.stem.rpartition("_")[2]
+            return date(int(stamp[:4]), int(stamp[4:6]), int(stamp[6:8]))
+
+        def latest_of(run_id: str) -> date:
+            """The latest session over when the run started (its expected_latest)."""
+            final = final_day_of_run(run_id, final_time)
+            return self.open_dates[max(bisect.bisect_right(self.open_dates, final) - 1, 0)]
+
+        def logged(dataset: str, window: str, rows: int, run_id: str, day: date | None = None) -> None:
+            row = option_log_row(dataset, window, rows, run_id, latest_of(run_id), day)
+            if row:
+                log_rows.append(row)
+
+        for run_id, directory in _raw_runs(self.raw_root, "option_risk_sse"):
+            for path in sorted(directory.glob("*.parquet")):
+                raw, day = pd.read_parquet(path), session_of(path)
+                risk = normalize_sse_risk(raw, run_id, run_id_to_iso(run_id))
+                risk = risk[risk["trade_date"] == day]
+                contracts = merge_option_contracts(contracts, sse_contracts(raw, self.open_dates, run_id,
+                                                                           run_id_to_iso(run_id)))
+                for underlying, part in risk.groupby("underlying"):
+                    parts[("option_risk", underlying)].append(part)
+                logged("sse_risk", day.isoformat(), len(risk), run_id, day)
+        for run_id, directory in _raw_runs(self.raw_root, "option_cffex_daily"):
+            for path in sorted(directory.glob("*.parquet")):
+                day = session_of(path)
+                found, bars = normalize_cffex_daily(pd.read_parquet(path), day, self.open_dates, run_id,
+                                                    run_id_to_iso(run_id))
+                contracts = merge_option_contracts(contracts, found)
+                for underlying, part in bars.groupby("underlying"):
+                    parts[("option_daily_bars", underlying)].append(part)
+                logged("cffex_daily", day.isoformat(), len(bars), run_id, day)
+        underlyings = {} if contracts is None else contracts.set_index("contract")["underlying"].to_dict()
+        for run_id, directory in _raw_runs(self.raw_root, "option_daily_sse"):
+            last_day = latest_of(run_id)
+            for path in sorted(directory.glob("*.parquet")):
+                contract = path.stem
+                underlying = underlyings.get(contract, contract)
+                bars = normalize_sse_daily(pd.read_parquet(path), contract, underlying, run_id, run_id_to_iso(run_id))
+                bars = bars[bars["trade_date"] <= last_day]
+                if not bars.empty:
+                    parts[("option_daily_bars", underlying)].append(bars)
+                logged("sse_daily", contract, len(bars), run_id)
+        minutes: dict[date, pd.DataFrame] = {}
+        for run_id, directory in _raw_runs(self.raw_root, "option_minute_sse"):
+            for path in sorted(directory.glob("*.parquet")):
+                contract, day = path.stem.rpartition("_")[0], session_of(path)
+                frame = normalize_sse_minutes(pd.read_parquet(path), contract, underlyings.get(contract, contract), day,
+                                              run_id, run_id_to_iso(run_id))
+                if not frame.empty:
+                    minutes[day] = merge_option_minutes(minutes.get(day), frame)
+
+        merges = {"option_risk": (merge_option_risk, OPTION_RISK_COLUMNS),
+                  "option_daily_bars": (merge_option_bars, OPTION_BAR_COLUMNS)}
+        for (dataset, underlying), frames in sorted(parts.items()):
+            merge, columns = merges[dataset]
+            merged = merge(None, pd.concat([f.reindex(columns=columns) for f in frames], ignore_index=True))
+            if not merged.empty:
+                write_canonical_frame(self.staging, dataset, merged, partition=f"underlying={underlying}")
+                self.counters["option_partitions"] += 1
+        totals = None
+        for day, frame in sorted(minutes.items()):
+            write_canonical_frame(self.staging, "option_minute_bars", frame, partition=f"trade_date={day}")
+            totals = merge_option_totals(totals, option_minute_totals(frame))
+        if totals is not None and not totals.empty:
+            write_canonical_frame(self.staging, "option_minute_totals", totals)
+        if contracts is not None and not contracts.empty:
+            write_canonical_frame(self.staging, "option_contracts", contracts)
+        if log_rows:
+            write_canonical_frame(self.staging, "option_fetch_log", merge_option_log(None, log_rows))
 
     def _rebuild_etf_bars(self, calendar_end: date) -> None:
         start = pd.to_datetime(self.config.etf_sse_start).date()
