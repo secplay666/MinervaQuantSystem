@@ -80,11 +80,15 @@ def test_sw_mapping_uses_transitions_then_level2_majority() -> None:
         ("600004", "2014-02-21", "220303", "2015"), ("600004", "2021-07-30", "630101", "2022"),
         ("600005", "2014-02-21", "220304", "2015"), ("600005", "2021-07-30", "220101", "2022"),
         ("600006", "2014-02-21", "220399", "2015"),  # delisted before 2021: no transition of its own
+        # 220101 is a SW2021 code too: the stocks that kept it got no row at the switch, the one that moved did
+        ("600007", "2014-02-21", "220101", "2015"), ("600008", "2014-02-21", "220101", "2015"),
+        ("600009", "2014-02-21", "220101", "2015"), ("600009", "2021-07-30", "630101", "2022"),
     ])
     mapping = derive_sw2014_mapping(history, CODES).set_index("sw2014_code")
     assert mapping.loc["340301", ["l1_code", "method"]].tolist() == ["340000", "transition"]
     assert mapping.loc["220303", "l1_code"] == "630000"  # the stocks moved to 电力设备
     assert mapping.loc["220399", ["l1_code", "method"]].tolist() == ["630000", "level2_majority"]
+    assert mapping.loc["220101", ["l1_code", "method", "stocks"]].tolist() == ["220000", "same_code", 2]
 
 
 def test_sw_intervals_are_dated_and_mapped() -> None:
@@ -93,6 +97,7 @@ def test_sw_intervals_are_dated_and_mapped() -> None:
         ("600001", "2021-07-30 00:00:00", "340501", "2022-05-09"),
         ("600001", "2021-07-30 00:00:00", "340501", "2023-01-01"),  # re-issued: latest update wins
         ("600002", "2016-01-04 00:00:00", "999999", "2016-01-04"),
+        ("000333", "2013-01-18 00:00:00", "630101", "2013-01-18"),  # a SW2021 code: never re-recorded at the switch
     ])
     intervals, missing = normalize_sw_classification(history, CODES, {"340301": "340000"}, "r", "t")
     first = intervals[intervals["symbol"] == "600001"].reset_index(drop=True)
@@ -102,6 +107,8 @@ def test_sw_intervals_are_dated_and_mapped() -> None:
     assert first["mapping"].tolist() == ["sw2014_to_sw2021_l1", "native"]
     assert missing == ["999999"]
     assert intervals.loc[intervals["symbol"] == "600002", "l1_code"].item() == UNCLASSIFIED
+    kept = intervals[intervals["symbol"] == "000333"].iloc[0]
+    assert (kept["l1_code"], kept["l1_name"], kept["mapping"]) == ("630000", "电力设备", "same_code")
 
 
 def test_committed_mapping_covers_codes_active_since_2020() -> None:

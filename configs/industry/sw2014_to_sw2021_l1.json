@@ -1,5 +1,5 @@
 {
- "description": "SW2014 industry code -> SW2021 level-1 code, from stocks classified on both sides of the 2021-07-30 switch (majority), else the SW2014 level-2 / level-1 majority.",
+ "description": "SW2014 industry code -> SW2021 level-1 code: a code that is also a SW2021 code keeps its SW2021 class (same_code); otherwise the class that stocks classified on both sides of the 2021-07-30 switch moved into (majority), else the SW2014 level-2 / level-1 majority.",
  "switch_date": "2021-07-30",
  "sources": [
   "https://www.swsresearch.com/swindex/pdf/SwClass2021/StockClassifyUse_stock.xls",
@@ -10,44 +10,44 @@
   "110101": {
    "l1_code": "110000",
    "l1_name": "农林牧渔",
-   "method": "level2_majority",
-   "stocks": 4,
-   "share": 0.6667
+   "method": "same_code",
+   "stocks": 8,
+   "share": 1.0
   },
   "110102": {
    "l1_code": "110000",
    "l1_name": "农林牧渔",
-   "method": "transition",
-   "stocks": 4,
+   "method": "same_code",
+   "stocks": 2,
    "share": 1.0
   },
   "110103": {
-   "l1_code": "370000",
-   "l1_name": "医药生物",
-   "method": "transition",
-   "stocks": 1,
-   "share": 0.5
+   "l1_code": "110000",
+   "l1_name": "农林牧渔",
+   "method": "same_code",
+   "stocks": 4,
+   "share": 1.0
   },
   "110201": {
    "l1_code": "110000",
    "l1_name": "农林牧渔",
-   "method": "level2_majority",
-   "stocks": 1,
-   "share": 0.5
+   "method": "same_code",
+   "stocks": 2,
+   "share": 1.0
   },
   "110202": {
    "l1_code": "110000",
    "l1_name": "农林牧渔",
-   "method": "transition",
-   "stocks": 1,
-   "share": 0.5
+   "method": "same_code",
+   "stocks": 7,
+   "share": 1.0
   },
   "110301": {
    "l1_code": "110000",
    "l1_name": "农林牧渔",
-   "method": "level1_majority",
-   "stocks": 35,
-   "share": 0.7609
+   "method": "same_code",
+   "stocks": 3,
+   "share": 1.0
   },
   "110401": {
    "l1_code": "110000",
@@ -57,18 +57,18 @@
    "share": 0.9333
   },
   "110501": {
-   "l1_code": "220000",
-   "l1_name": "基础化工",
-   "method": "level2_majority",
-   "stocks": 2,
-   "share": 0.5
+   "l1_code": "110000",
+   "l1_name": "农林牧渔",
+   "method": "same_code",
+   "stocks": 5,
+   "share": 1.0
   },
   "110502": {
-   "l1_code": "220000",
-   "l1_name": "基础化工",
-   "method": "level2_majority",
-   "stocks": 2,
-   "share": 0.5
+   "l1_code": "110000",
+   "l1_name": "农林牧渔",
+   "method": "same_code",
+   "stocks": 4,
+   "share": 1.0
   },
   "110503": {
    "l1_code": "220000",
@@ -78,11 +78,11 @@
    "share": 0.5
   },
   "110504": {
-   "l1_code": "220000",
-   "l1_name": "基础化工",
-   "method": "transition",
-   "stocks": 2,
-   "share": 0.5
+   "l1_code": "110000",
+   "l1_name": "农林牧渔",
+   "method": "same_code",
+   "stocks": 9,
+   "share": 1.0
   },
   "110601": {
    "l1_code": "110000",
@@ -99,11 +99,11 @@
    "share": 0.9375
   },
   "110801": {
-   "l1_code": "220000",
-   "l1_name": "基础化工",
-   "method": "transition",
-   "stocks": 1,
-   "share": 0.5
+   "l1_code": "110000",
+   "l1_name": "农林牧渔",
+   "method": "same_code",
+   "stocks": 12,
+   "share": 1.0
   },
   "210101": {
    "l1_code": "750000",
@@ -164,30 +164,30 @@
   "220201": {
    "l1_code": "220000",
    "l1_name": "基础化工",
-   "method": "transition",
-   "stocks": 2,
+   "method": "same_code",
+   "stocks": 3,
    "share": 1.0
   },
   "220202": {
    "l1_code": "220000",
    "l1_name": "基础化工",
-   "method": "transition",
-   "stocks": 3,
+   "method": "same_code",
+   "stocks": 14,
    "share": 1.0
   },
   "220203": {
    "l1_code": "220000",
    "l1_name": "基础化工",
-   "method": "transition",
-   "stocks": 1,
-   "share": 0.3333
+   "method": "same_code",
+   "stocks": 6,
+   "share": 1.0
   },
   "220204": {
    "l1_code": "220000",
    "l1_name": "基础化工",
-   "method": "transition",
-   "stocks": 6,
-   "share": 0.6
+   "method": "same_code",
+   "stocks": 2,
+   "share": 1.0
   },
   "220301": {
    "l1_code": "220000",
@@ -218,11 +218,11 @@
    "share": 0.9167
   },
   "220305": {
-   "l1_code": "270000",
-   "l1_name": "电子",
-   "method": "transition",
-   "stocks": 3,
-   "share": 0.5
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "same_code",
+   "stocks": 12,
+   "share": 1.0
   },
   "220306": {
    "l1_code": "220000",
@@ -232,25 +232,25 @@
    "share": 0.75
   },
   "220307": {
-   "l1_code": "240000",
-   "l1_name": "有色金属",
-   "method": "transition",
-   "stocks": 1,
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "same_code",
+   "stocks": 12,
    "share": 1.0
   },
   "220308": {
    "l1_code": "220000",
    "l1_name": "基础化工",
-   "method": "transition",
-   "stocks": 2,
+   "method": "same_code",
+   "stocks": 8,
    "share": 1.0
   },
   "220309": {
    "l1_code": "220000",
    "l1_name": "基础化工",
-   "method": "transition",
-   "stocks": 47,
-   "share": 0.5054
+   "method": "same_code",
+   "stocks": 37,
+   "share": 1.0
   },
   "220310": {
    "l1_code": "220000",
@@ -262,9 +262,9 @@
   "220311": {
    "l1_code": "220000",
    "l1_name": "基础化工",
-   "method": "level2_majority",
-   "stocks": 103,
-   "share": 0.5787
+   "method": "same_code",
+   "stocks": 6,
+   "share": 1.0
   },
   "220312": {
    "l1_code": "220000",
@@ -276,9 +276,9 @@
   "220313": {
    "l1_code": "220000",
    "l1_name": "基础化工",
-   "method": "transition",
-   "stocks": 1,
-   "share": 0.3333
+   "method": "same_code",
+   "stocks": 7,
+   "share": 1.0
   },
   "220314": {
    "l1_code": "610000",
@@ -288,11 +288,11 @@
    "share": 1.0
   },
   "220401": {
-   "l1_code": "750000",
-   "l1_name": "石油石化",
-   "method": "transition",
-   "stocks": 5,
-   "share": 0.7143
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "same_code",
+   "stocks": 7,
+   "share": 1.0
   },
   "220402": {
    "l1_code": "220000",
@@ -304,30 +304,30 @@
   "220403": {
    "l1_code": "220000",
    "l1_name": "基础化工",
-   "method": "transition",
+   "method": "same_code",
    "stocks": 1,
-   "share": 0.3333
+   "share": 1.0
   },
   "220404": {
    "l1_code": "220000",
    "l1_name": "基础化工",
-   "method": "transition",
-   "stocks": 3,
-   "share": 0.6
+   "method": "same_code",
+   "stocks": 1,
+   "share": 1.0
   },
   "220405": {
    "l1_code": "220000",
    "l1_name": "基础化工",
-   "method": "transition",
+   "method": "same_code",
    "stocks": 1,
    "share": 1.0
   },
   "220501": {
    "l1_code": "220000",
    "l1_name": "基础化工",
-   "method": "transition",
+   "method": "same_code",
    "stocks": 12,
-   "share": 0.7059
+   "share": 1.0
   },
   "220502": {
    "l1_code": "220000",
@@ -337,10 +337,10 @@
    "share": 1.0
   },
   "220503": {
-   "l1_code": "630000",
-   "l1_name": "电力设备",
-   "method": "transition",
-   "stocks": 1,
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "same_code",
+   "stocks": 12,
    "share": 1.0
   },
   "220601": {
@@ -353,16 +353,16 @@
   "220602": {
    "l1_code": "220000",
    "l1_name": "基础化工",
-   "method": "transition",
-   "stocks": 1,
+   "method": "same_code",
+   "stocks": 8,
    "share": 1.0
   },
   "220603": {
-   "l1_code": "280000",
-   "l1_name": "汽车",
-   "method": "level2_majority",
-   "stocks": 9,
-   "share": 0.9
+   "l1_code": "220000",
+   "l1_name": "基础化工",
+   "method": "same_code",
+   "stocks": 5,
+   "share": 1.0
   },
   "220701": {
    "l1_code": "220000",
@@ -451,16 +451,16 @@
   "240201": {
    "l1_code": "240000",
    "l1_name": "有色金属",
-   "method": "transition",
-   "stocks": 5,
-   "share": 0.625
+   "method": "same_code",
+   "stocks": 7,
+   "share": 1.0
   },
   "240202": {
-   "l1_code": "640000",
-   "l1_name": "机械设备",
-   "method": "transition",
-   "stocks": 2,
-   "share": 0.5
+   "l1_code": "240000",
+   "l1_name": "有色金属",
+   "method": "same_code",
+   "stocks": 9,
+   "share": 1.0
   },
   "240203": {
    "l1_code": "220000",
@@ -472,44 +472,44 @@
   "240301": {
    "l1_code": "240000",
    "l1_name": "有色金属",
-   "method": "transition",
-   "stocks": 1,
-   "share": 0.2
+   "method": "same_code",
+   "stocks": 23,
+   "share": 1.0
   },
   "240302": {
    "l1_code": "240000",
    "l1_name": "有色金属",
-   "method": "transition",
-   "stocks": 4,
-   "share": 0.6667
+   "method": "same_code",
+   "stocks": 10,
+   "share": 1.0
   },
   "240303": {
    "l1_code": "240000",
    "l1_name": "有色金属",
-   "method": "transition",
-   "stocks": 3,
-   "share": 0.75
+   "method": "same_code",
+   "stocks": 10,
+   "share": 1.0
   },
   "240401": {
    "l1_code": "240000",
    "l1_name": "有色金属",
-   "method": "transition",
-   "stocks": 1,
-   "share": 0.3333
+   "method": "same_code",
+   "stocks": 9,
+   "share": 1.0
   },
   "240501": {
    "l1_code": "240000",
    "l1_name": "有色金属",
-   "method": "level2_majority",
-   "stocks": 11,
-   "share": 0.9167
+   "method": "same_code",
+   "stocks": 4,
+   "share": 1.0
   },
   "240502": {
    "l1_code": "240000",
    "l1_name": "有色金属",
-   "method": "level2_majority",
-   "stocks": 11,
-   "share": 0.9167
+   "method": "same_code",
+   "stocks": 4,
+   "share": 1.0
   },
   "240503": {
    "l1_code": "240000",
@@ -521,9 +521,9 @@
   "240504": {
    "l1_code": "240000",
    "l1_name": "有色金属",
-   "method": "transition",
+   "method": "same_code",
    "stocks": 8,
-   "share": 0.8889
+   "share": 1.0
   },
   "250101": {
    "l1_code": "000000",
@@ -764,18 +764,18 @@
    "share": 0.9615
   },
   "270102": {
-   "l1_code": "630000",
-   "l1_name": "电力设备",
-   "method": "transition",
-   "stocks": 1,
+   "l1_code": "270000",
+   "l1_name": "电子",
+   "method": "same_code",
+   "stocks": 7,
    "share": 1.0
   },
   "270103": {
    "l1_code": "270000",
    "l1_name": "电子",
-   "method": "transition",
-   "stocks": 3,
-   "share": 0.75
+   "method": "same_code",
+   "stocks": 8,
+   "share": 1.0
   },
   "270201": {
    "l1_code": "270000",
@@ -787,44 +787,44 @@
   "270202": {
    "l1_code": "270000",
    "l1_name": "电子",
-   "method": "transition",
-   "stocks": 1,
+   "method": "same_code",
+   "stocks": 35,
    "share": 1.0
   },
   "270203": {
    "l1_code": "270000",
    "l1_name": "电子",
-   "method": "transition",
-   "stocks": 2,
-   "share": 0.4
+   "method": "same_code",
+   "stocks": 10,
+   "share": 1.0
   },
   "270301": {
    "l1_code": "270000",
    "l1_name": "电子",
-   "method": "transition",
-   "stocks": 6,
-   "share": 0.6667
+   "method": "same_code",
+   "stocks": 32,
+   "share": 1.0
   },
   "270302": {
-   "l1_code": "330000",
-   "l1_name": "家用电器",
-   "method": "transition",
-   "stocks": 8,
-   "share": 0.6667
+   "l1_code": "270000",
+   "l1_name": "电子",
+   "method": "same_code",
+   "stocks": 24,
+   "share": 1.0
   },
   "270303": {
-   "l1_code": "710000",
-   "l1_name": "计算机",
-   "method": "transition",
-   "stocks": 3,
-   "share": 0.75
+   "l1_code": "270000",
+   "l1_name": "电子",
+   "method": "same_code",
+   "stocks": 12,
+   "share": 1.0
   },
   "270401": {
    "l1_code": "270000",
    "l1_name": "电子",
-   "method": "transition",
-   "stocks": 8,
-   "share": 0.3077
+   "method": "same_code",
+   "stocks": 12,
+   "share": 1.0
   },
   "270501": {
    "l1_code": "270000",
@@ -878,9 +878,9 @@
   "280401": {
    "l1_code": "280000",
    "l1_name": "汽车",
-   "method": "transition",
-   "stocks": 5,
-   "share": 0.7143
+   "method": "same_code",
+   "stocks": 6,
+   "share": 1.0
   },
   "310101": {
    "l1_code": "000000",
@@ -1023,11 +1023,11 @@
    "share": 1.0
   },
   "330102": {
-   "l1_code": "430000",
-   "l1_name": "房地产",
-   "method": "transition",
-   "stocks": 1,
-   "share": 0.5
+   "l1_code": "330000",
+   "l1_name": "家用电器",
+   "method": "same_code",
+   "stocks": 3,
+   "share": 1.0
   },
   "330103": {
    "l1_code": "330000",
@@ -1053,16 +1053,16 @@
   "330201": {
    "l1_code": "330000",
    "l1_name": "家用电器",
-   "method": "transition",
+   "method": "same_code",
    "stocks": 3,
-   "share": 0.75
+   "share": 1.0
   },
   "330202": {
    "l1_code": "330000",
    "l1_name": "家用电器",
-   "method": "transition",
-   "stocks": 1,
-   "share": 0.3333
+   "method": "same_code",
+   "stocks": 3,
+   "share": 1.0
   },
   "340101": {
    "l1_code": "340000",
@@ -1144,8 +1144,8 @@
   "340401": {
    "l1_code": "340000",
    "l1_name": "食品饮料",
-   "method": "transition",
-   "stocks": 1,
+   "method": "same_code",
+   "stocks": 6,
    "share": 1.0
   },
   "340402": {
@@ -1165,9 +1165,9 @@
   "340404": {
    "l1_code": "340000",
    "l1_name": "食品饮料",
-   "method": "transition",
-   "stocks": 31,
-   "share": 0.7381
+   "method": "same_code",
+   "stocks": 0,
+   "share": 1.0
   },
   "350101": {
    "l1_code": "350000",
@@ -1179,9 +1179,9 @@
   "350102": {
    "l1_code": "350000",
    "l1_name": "纺织服饰",
-   "method": "transition",
-   "stocks": 1,
-   "share": 0.5
+   "method": "same_code",
+   "stocks": 8,
+   "share": 1.0
   },
   "350103": {
    "l1_code": "350000",
@@ -1191,25 +1191,25 @@
    "share": 0.5
   },
   "350104": {
-   "l1_code": "220000",
-   "l1_name": "基础化工",
-   "method": "transition",
-   "stocks": 1,
+   "l1_code": "350000",
+   "l1_name": "纺织服饰",
+   "method": "same_code",
+   "stocks": 2,
    "share": 1.0
   },
   "350105": {
-   "l1_code": "110000",
-   "l1_name": "农林牧渔",
-   "method": "transition",
-   "stocks": 1,
+   "l1_code": "350000",
+   "l1_name": "纺织服饰",
+   "method": "same_code",
+   "stocks": 4,
    "share": 1.0
   },
   "350106": {
-   "l1_code": "770000",
-   "l1_name": "美容护理",
-   "method": "transition",
-   "stocks": 2,
-   "share": 0.3333
+   "l1_code": "350000",
+   "l1_name": "纺织服饰",
+   "method": "same_code",
+   "stocks": 7,
+   "share": 1.0
   },
   "350201": {
    "l1_code": "350000",
@@ -1242,16 +1242,16 @@
   "350205": {
    "l1_code": "350000",
    "l1_name": "纺织服饰",
-   "method": "transition",
-   "stocks": 2,
-   "share": 0.6667
+   "method": "same_code",
+   "stocks": 6,
+   "share": 1.0
   },
   "350206": {
    "l1_code": "350000",
    "l1_name": "纺织服饰",
-   "method": "level2_majority",
-   "stocks": 48,
-   "share": 0.96
+   "method": "same_code",
+   "stocks": 6,
+   "share": 1.0
   },
   "350207": {
    "l1_code": "350000",
@@ -1319,16 +1319,16 @@
   "370101": {
    "l1_code": "370000",
    "l1_name": "医药生物",
-   "method": "transition",
-   "stocks": 9,
-   "share": 0.75
+   "method": "same_code",
+   "stocks": 26,
+   "share": 1.0
   },
   "370102": {
    "l1_code": "370000",
    "l1_name": "医药生物",
-   "method": "transition",
-   "stocks": 9,
-   "share": 0.75
+   "method": "same_code",
+   "stocks": 77,
+   "share": 1.0
   },
   "370103": {
    "l1_code": "370000",
@@ -1340,8 +1340,8 @@
   "370201": {
    "l1_code": "370000",
    "l1_name": "医药生物",
-   "method": "transition",
-   "stocks": 5,
+   "method": "same_code",
+   "stocks": 69,
    "share": 1.0
   },
   "370301": {
@@ -1375,16 +1375,16 @@
   "410101": {
    "l1_code": "410000",
    "l1_name": "公用事业",
-   "method": "transition",
-   "stocks": 1,
-   "share": 0.3333
+   "method": "same_code",
+   "stocks": 25,
+   "share": 1.0
   },
   "410102": {
    "l1_code": "410000",
    "l1_name": "公用事业",
-   "method": "transition",
+   "method": "same_code",
    "stocks": 10,
-   "share": 0.8333
+   "share": 1.0
   },
   "410103": {
    "l1_code": "410000",
@@ -1396,8 +1396,8 @@
   "410104": {
    "l1_code": "410000",
    "l1_name": "公用事业",
-   "method": "transition",
-   "stocks": 1,
+   "method": "same_code",
+   "stocks": 10,
    "share": 1.0
   },
   "410105": {
@@ -1417,9 +1417,9 @@
   "410301": {
    "l1_code": "410000",
    "l1_name": "公用事业",
-   "method": "transition",
-   "stocks": 1,
-   "share": 0.25
+   "method": "same_code",
+   "stocks": 24,
+   "share": 1.0
   },
   "410401": {
    "l1_code": "760000",
@@ -1487,9 +1487,9 @@
   "430101": {
    "l1_code": "430000",
    "l1_name": "房地产",
-   "method": "transition",
-   "stocks": 22,
-   "share": 0.4889
+   "method": "same_code",
+   "stocks": 77,
+   "share": 1.0
   },
   "430201": {
    "l1_code": "430000",
@@ -1548,39 +1548,39 @@
    "share": 0.619
   },
   "450201": {
-   "l1_code": "420000",
-   "l1_name": "交通运输",
-   "method": "transition",
-   "stocks": 3,
-   "share": 0.2727
+   "l1_code": "450000",
+   "l1_name": "商贸零售",
+   "method": "same_code",
+   "stocks": 11,
+   "share": 1.0
   },
   "450301": {
    "l1_code": "450000",
    "l1_name": "商贸零售",
-   "method": "transition",
-   "stocks": 3,
-   "share": 0.75
+   "method": "same_code",
+   "stocks": 20,
+   "share": 1.0
   },
   "450302": {
-   "l1_code": "240000",
-   "l1_name": "有色金属",
-   "method": "transition",
-   "stocks": 1,
-   "share": 0.3333
+   "l1_code": "450000",
+   "l1_name": "商贸零售",
+   "method": "same_code",
+   "stocks": 8,
+   "share": 1.0
   },
   "450303": {
    "l1_code": "450000",
    "l1_name": "商贸零售",
-   "method": "transition",
-   "stocks": 3,
-   "share": 0.6
+   "method": "same_code",
+   "stocks": 10,
+   "share": 1.0
   },
   "450401": {
    "l1_code": "450000",
    "l1_name": "商贸零售",
-   "method": "transition",
-   "stocks": 3,
-   "share": 0.6
+   "method": "same_code",
+   "stocks": 7,
+   "share": 1.0
   },
   "450501": {
    "l1_code": "450000",
@@ -1732,16 +1732,16 @@
   "490101": {
    "l1_code": "490000",
    "l1_name": "非银金融",
-   "method": "transition",
-   "stocks": 2,
+   "method": "same_code",
+   "stocks": 49,
    "share": 1.0
   },
   "490201": {
    "l1_code": "490000",
    "l1_name": "非银金融",
-   "method": "level1_majority",
-   "stocks": 27,
-   "share": 0.8182
+   "method": "same_code",
+   "stocks": 7,
+   "share": 1.0
   },
   "490301": {
    "l1_code": "490000",
@@ -1751,60 +1751,60 @@
    "share": 0.8065
   },
   "510101": {
-   "l1_code": "460000",
-   "l1_name": "社会服务",
-   "method": "transition",
-   "stocks": 12,
-   "share": 0.3871
-  },
-  "610101": {
    "l1_code": "510000",
    "l1_name": "综合",
-   "method": "transition",
-   "stocks": 2,
-   "share": 0.3333
+   "method": "same_code",
+   "stocks": 20,
+   "share": 1.0
+  },
+  "610101": {
+   "l1_code": "610000",
+   "l1_name": "建筑材料",
+   "method": "same_code",
+   "stocks": 12,
+   "share": 1.0
   },
   "610201": {
-   "l1_code": "630000",
-   "l1_name": "电力设备",
-   "method": "transition",
-   "stocks": 3,
+   "l1_code": "610000",
+   "l1_name": "建筑材料",
+   "method": "same_code",
+   "stocks": 5,
    "share": 1.0
   },
   "610301": {
    "l1_code": "610000",
    "l1_name": "建筑材料",
-   "method": "level2_majority",
-   "stocks": 13,
-   "share": 0.52
+   "method": "same_code",
+   "stocks": 5,
+   "share": 1.0
   },
   "610302": {
    "l1_code": "610000",
    "l1_name": "建筑材料",
-   "method": "transition",
-   "stocks": 3,
-   "share": 0.75
+   "method": "same_code",
+   "stocks": 7,
+   "share": 1.0
   },
   "610303": {
    "l1_code": "610000",
    "l1_name": "建筑材料",
-   "method": "transition",
-   "stocks": 10,
-   "share": 0.4762
+   "method": "same_code",
+   "stocks": 13,
+   "share": 1.0
   },
   "620101": {
    "l1_code": "620000",
    "l1_name": "建筑装饰",
-   "method": "transition",
-   "stocks": 13,
-   "share": 0.8125
+   "method": "same_code",
+   "stocks": 7,
+   "share": 1.0
   },
   "620201": {
    "l1_code": "620000",
    "l1_name": "建筑装饰",
-   "method": "transition",
-   "stocks": 2,
-   "share": 0.4
+   "method": "same_code",
+   "stocks": 24,
+   "share": 1.0
   },
   "620301": {
    "l1_code": "620000",
@@ -1844,30 +1844,30 @@
   "620401": {
    "l1_code": "620000",
    "l1_name": "建筑装饰",
-   "method": "level2_majority",
-   "stocks": 3,
-   "share": 0.4286
+   "method": "same_code",
+   "stocks": 8,
+   "share": 1.0
   },
   "620402": {
    "l1_code": "620000",
    "l1_name": "建筑装饰",
-   "method": "transition",
-   "stocks": 1,
-   "share": 0.5
+   "method": "same_code",
+   "stocks": 7,
+   "share": 1.0
   },
   "620403": {
    "l1_code": "620000",
    "l1_name": "建筑装饰",
-   "method": "level2_majority",
-   "stocks": 3,
-   "share": 0.4286
+   "method": "same_code",
+   "stocks": 5,
+   "share": 1.0
   },
   "620404": {
    "l1_code": "620000",
    "l1_name": "建筑装饰",
-   "method": "transition",
-   "stocks": 2,
-   "share": 0.4
+   "method": "same_code",
+   "stocks": 6,
+   "share": 1.0
   },
   "620501": {
    "l1_code": "620000",
@@ -1877,10 +1877,10 @@
    "share": 0.8846
   },
   "630101": {
-   "l1_code": "240000",
-   "l1_name": "有色金属",
-   "method": "transition",
-   "stocks": 1,
+   "l1_code": "630000",
+   "l1_name": "电力设备",
+   "method": "same_code",
+   "stocks": 18,
    "share": 1.0
   },
   "630201": {
@@ -1907,9 +1907,9 @@
   "630301": {
    "l1_code": "630000",
    "l1_name": "电力设备",
-   "method": "level2_majority",
-   "stocks": 80,
-   "share": 0.9195
+   "method": "same_code",
+   "stocks": 2,
+   "share": 1.0
   },
   "630302": {
    "l1_code": "630000",
@@ -1928,9 +1928,9 @@
   "630304": {
    "l1_code": "630000",
    "l1_name": "电力设备",
-   "method": "transition",
+   "method": "same_code",
    "stocks": 1,
-   "share": 0.3333
+   "share": 1.0
   },
   "630305": {
    "l1_code": "630000",
@@ -1942,8 +1942,8 @@
   "630306": {
    "l1_code": "630000",
    "l1_name": "电力设备",
-   "method": "transition",
-   "stocks": 3,
+   "method": "same_code",
+   "stocks": 4,
    "share": 1.0
   },
   "630401": {
@@ -1977,8 +1977,8 @@
   "640101": {
    "l1_code": "640000",
    "l1_name": "机械设备",
-   "method": "transition",
-   "stocks": 2,
+   "method": "same_code",
+   "stocks": 16,
    "share": 1.0
   },
   "640102": {
@@ -1989,11 +1989,11 @@
    "share": 0.9796
   },
   "640103": {
-   "l1_code": "630000",
-   "l1_name": "电力设备",
-   "method": "transition",
-   "stocks": 2,
-   "share": 0.6667
+   "l1_code": "640000",
+   "l1_name": "机械设备",
+   "method": "same_code",
+   "stocks": 11,
+   "share": 1.0
   },
   "640104": {
    "l1_code": "280000",
@@ -2003,18 +2003,18 @@
    "share": 0.8571
   },
   "640105": {
-   "l1_code": "630000",
-   "l1_name": "电力设备",
-   "method": "transition",
-   "stocks": 1,
+   "l1_code": "640000",
+   "l1_name": "机械设备",
+   "method": "same_code",
+   "stocks": 8,
    "share": 1.0
   },
   "640106": {
    "l1_code": "640000",
    "l1_name": "机械设备",
-   "method": "transition",
-   "stocks": 15,
-   "share": 0.75
+   "method": "same_code",
+   "stocks": 24,
+   "share": 1.0
   },
   "640201": {
    "l1_code": "640000",
@@ -2031,18 +2031,18 @@
    "share": 1.0
   },
   "640203": {
-   "l1_code": "620000",
-   "l1_name": "建筑装饰",
-   "method": "transition",
-   "stocks": 1,
-   "share": 0.25
+   "l1_code": "640000",
+   "l1_name": "机械设备",
+   "method": "same_code",
+   "stocks": 26,
+   "share": 1.0
   },
   "640204": {
-   "l1_code": "730000",
-   "l1_name": "通信",
-   "method": "transition",
-   "stocks": 1,
-   "share": 0.5
+   "l1_code": "640000",
+   "l1_name": "机械设备",
+   "method": "same_code",
+   "stocks": 14,
+   "share": 1.0
   },
   "640205": {
    "l1_code": "760000",
@@ -2052,32 +2052,32 @@
    "share": 0.9333
   },
   "640206": {
-   "l1_code": "350000",
-   "l1_name": "纺织服饰",
-   "method": "transition",
-   "stocks": 1,
+   "l1_code": "640000",
+   "l1_name": "机械设备",
+   "method": "same_code",
+   "stocks": 8,
    "share": 1.0
   },
   "640207": {
    "l1_code": "640000",
    "l1_name": "机械设备",
-   "method": "level2_majority",
-   "stocks": 55,
-   "share": 0.5046
+   "method": "same_code",
+   "stocks": 3,
+   "share": 1.0
   },
   "640208": {
-   "l1_code": "630000",
-   "l1_name": "电力设备",
-   "method": "transition",
-   "stocks": 1,
-   "share": 0.5
+   "l1_code": "640000",
+   "l1_name": "机械设备",
+   "method": "same_code",
+   "stocks": 7,
+   "share": 1.0
   },
   "640209": {
    "l1_code": "640000",
    "l1_name": "机械设备",
-   "method": "transition",
-   "stocks": 32,
-   "share": 0.5
+   "method": "same_code",
+   "stocks": 61,
+   "share": 1.0
   },
   "640301": {
    "l1_code": "640000",
@@ -2096,36 +2096,36 @@
   "640501": {
    "l1_code": "640000",
    "l1_name": "机械设备",
-   "method": "transition",
-   "stocks": 1,
+   "method": "same_code",
+   "stocks": 24,
    "share": 1.0
   },
   "650101": {
    "l1_code": "650000",
    "l1_name": "国防军工",
-   "method": "transition",
-   "stocks": 10,
-   "share": 0.9091
+   "method": "same_code",
+   "stocks": 7,
+   "share": 1.0
   },
   "650201": {
    "l1_code": "650000",
    "l1_name": "国防军工",
-   "method": "transition",
-   "stocks": 5,
-   "share": 0.625
+   "method": "same_code",
+   "stocks": 33,
+   "share": 1.0
   },
   "650301": {
    "l1_code": "650000",
    "l1_name": "国防军工",
-   "method": "transition",
-   "stocks": 11,
-   "share": 0.9167
+   "method": "same_code",
+   "stocks": 9,
+   "share": 1.0
   },
   "650401": {
-   "l1_code": "630000",
-   "l1_name": "电力设备",
-   "method": "transition",
-   "stocks": 2,
+   "l1_code": "650000",
+   "l1_name": "国防军工",
+   "method": "same_code",
+   "stocks": 9,
    "share": 1.0
   },
   "710101": {

@@ -181,10 +181,15 @@ def sw_code_table(codes: pd.DataFrame) -> pd.DataFrame:
 def derive_sw2014_mapping(history: pd.DataFrame, codes: pd.DataFrame) -> pd.DataFrame:
     """Map every SW2014 code to a SW2021 level-1 code.
 
-    Evidence: for stocks classified on both sides of the 2021-07-30 switch,
-    the SW2021 level-1 class they moved into.  Codes held only by stocks
-    that left before 2021 fall back to the majority of their SW2014 level-2
-    (then level-1) group.  The result is reviewed and committed as
+    A code that is also a SW2021 code keeps its SW2021 class (``same_code``):
+    Shenwan recorded a new row at the 2021-07-30 switch only for stocks whose
+    code changed (none of the 3,187 re-recorded stocks kept its code), so the
+    stocks that stayed on such a code are invisible to the transitions, which
+    only show the few that moved away (e.g. 330102 空调 had read 房地产).
+    Other codes: for stocks classified on both sides of the switch, the
+    SW2021 level-1 class they moved into.  Codes held only by stocks that
+    left before 2021 fall back to the majority of their SW2014 level-2 (then
+    level-1) group.  The result is reviewed and committed as
     ``configs/industry/sw2014_to_sw2021_l1.json``.
     """
     rows = sw_history_rows(history)
@@ -209,8 +214,14 @@ def derive_sw2014_mapping(history: pd.DataFrame, codes: pd.DataFrame) -> pd.Data
     pairs["l1"] = pairs["sw_code_2014"].str[:2]
     by_l2, by_l1 = majority(pairs, "l2"), majority(pairs, "l1")
     old_codes = sorted(set(rows.loc[rows["start_date"] < SW_SWITCH_DATE, "sw_code"]))
+    stayed = before[~before["symbol"].isin(rows.loc[rows["start_date"] >= SW_SWITCH_DATE, "symbol"])]
+    stayed = stayed.groupby("sw_code").size()
     records = []
     for code in old_codes:
+        if code in table.index:
+            records.append({"sw2014_code": code, "l1_code": code[:2] + "0000", "method": "same_code",
+                            "stocks": int(stayed.get(code, 0)), "share": 1.0})
+            continue
         for method, lookup, key in (("transition", by_code, code), ("level2_majority", by_l2, code[:4]),
                                     ("level1_majority", by_l1, code[:2])):
             if key in lookup.index:
@@ -233,23 +244,30 @@ def normalize_sw_classification(history: pd.DataFrame, codes: pd.DataFrame, mapp
                                 run_id: str, ingested_at: str) -> tuple[pd.DataFrame, list[str]]:
     """Dated industry intervals [start_date, end_date) with a SW2021 level-1
     class for every date.  Returns (intervals, SW2014 codes missing from the
-    mapping)."""
+    mapping).
+
+    A row from before the 2021-07-30 switch whose code is also a SW2021 code
+    takes that code's SW2021 class (``same_code``): Shenwan recorded a new row
+    at the switch only when a stock's code changed, so such a row is the
+    stock's SW2021 classification too (美的 and 格力 since 2013 and 1996)."""
     rows = sw_history_rows(history)
     table = sw_code_table(codes)
     rows = rows.sort_values(["symbol", "start_date"], ignore_index=True)
     end = rows.groupby("symbol")["start_date"].shift(-1)
     rows["end_date"] = end.astype(object).where(end.notna(), None)
     new = rows["start_date"] >= SW_SWITCH_DATE
+    same = ~new & rows["sw_code"].isin(table.index)
+    native = new | same
     rows["sw_version"] = np.where(new, "SW2021", "SW2014")
-    rows["mapping"] = np.where(new, "native", "sw2014_to_sw2021_l1")
-    rows["l1_code"] = np.where(new, rows["sw_code"].str[:2] + "0000", rows["sw_code"].map(mapping))
-    missing = sorted(set(rows.loc[~new & rows["l1_code"].isna(), "sw_code"]))
+    rows["mapping"] = np.select([new, same], ["native", "same_code"], "sw2014_to_sw2021_l1")
+    rows["l1_code"] = np.where(native, rows["sw_code"].str[:2] + "0000", rows["sw_code"].map(mapping))
+    missing = sorted(set(rows.loc[~native & rows["l1_code"].isna(), "sw_code"]))
     rows["l1_code"] = rows["l1_code"].fillna(UNCLASSIFIED)
     unknown_new = new & ~rows["sw_code"].isin(table.index)
     rows.loc[unknown_new, "mapping"] = "native_code_not_in_table"
     rows["l1_name"] = rows["l1_code"].map(table["l1_name"])
-    rows["l2_name"] = np.where(new, rows["sw_code"].map(table["l2_name"]), None)
-    rows["l3_name"] = np.where(new, rows["sw_code"].map(table["l3_name"]), None)
+    rows["l2_name"] = np.where(native, rows["sw_code"].map(table["l2_name"]), None)
+    rows["l3_name"] = np.where(native, rows["sw_code"].map(table["l3_name"]), None)
     frame = _lineage(rows, SOURCE_SW, run_id, ingested_at)
     return frame[INDUSTRY_COLUMNS].reset_index(drop=True), missing
 
