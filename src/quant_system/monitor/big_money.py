@@ -467,6 +467,18 @@ class NotATradingDay(RuntimeError):
     pass
 
 
+def is_trading_day(root: Path, day: date) -> bool:
+    """From the latest raw trading calendar (Sina's open dates run to the end of the year; the canonical
+    calendar stops at the latest final session); a weekday when the calendar does not reach ``day``."""
+    files = sorted((root / "data" / "raw").glob("*/trading_calendar/run_id=*/cn_open_dates.parquet"),
+                   key=lambda p: p.parent.name)
+    if files:
+        dates = set(pd.to_datetime(pd.read_parquet(files[-1])["trade_date"]).dt.date)
+        if dates and max(dates) >= day:
+            return day in dates
+    return day.weekday() < 5
+
+
 def prepare(root: Path, config: MonitorConfig, day: date) -> tuple[list[Group], pd.Series]:
     """The groups with their funds and usual turnover (sessions before ``day``) and the intraday turnover profile
     (the stored 1-minute bars of the funds, last ``baseline_sessions`` complete sessions before ``day``)."""
@@ -474,11 +486,10 @@ def prepare(root: Path, config: MonitorConfig, day: date) -> tuple[list[Group], 
 
     from ..data_platform.etf import group_members, load_etf_groups
 
+    if not is_trading_day(root, day):
+        raise NotATradingDay(f"{day} 不是交易日")
     groups_config = load_etf_groups(root / config.groups_config)
     with duckdb.connect(str(root / "data" / "market.duckdb"), read_only=True) as con:
-        open_day = con.execute("SELECT count(*) FROM trading_calendar WHERE trade_date = ?", [day]).fetchone()[0]
-        if not open_day:
-            raise NotATradingDay(f"{day} 不是交易日")
         master = con.execute("SELECT * FROM etf_master").fetchdf()
         turnover = con.execute(
             "SELECT symbol, median(turnover_cny) AS avg_turnover FROM (SELECT symbol, turnover_cny, row_number() OVER "

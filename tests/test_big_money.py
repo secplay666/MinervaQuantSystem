@@ -212,3 +212,17 @@ def test_the_api(tmp_path: Path) -> None:
     body = client.get("/api/v1/monitor/big-money", headers=headers).json()
     assert body["day"] == "2026-10-15" and body["groups"][0]["latest"]["time"] == "14:56"
     assert client.get("/api/v1/monitor/big-money", params={"day": "2026-10-14"}, headers=headers).status_code == 404
+
+
+def test_the_trading_day_comes_from_the_raw_calendar(tmp_path: Path) -> None:
+    from quant_system.monitor.big_money import is_trading_day
+
+    folder = tmp_path / "data" / "raw" / "akshare" / "trading_calendar"
+    for run, days in (("run_id=20261023T101500Z", ["2026-10-23"]),
+                      ("run_id=20261024T010600Z", ["2026-10-23", "2026-10-26", "2026-12-31"])):
+        (folder / run).mkdir(parents=True)
+        pd.DataFrame({"trade_date": pd.to_datetime(days)}).to_parquet(folder / run / "cn_open_dates.parquet")
+    assert is_trading_day(tmp_path, date(2026, 10, 26))       # a future session of the latest calendar
+    assert not is_trading_day(tmp_path, date(2026, 10, 27))   # covered, but not an open date
+    assert is_trading_day(tmp_path, date(2027, 1, 4))         # beyond the calendar: a weekday
+    assert not is_trading_day(tmp_path / "none", date(2027, 1, 2))  # no calendar, a Saturday
