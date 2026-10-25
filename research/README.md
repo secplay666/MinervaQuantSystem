@@ -25,7 +25,10 @@ PYTHONPATH=~/L1/minerva-dev/src ~/L1/minerva-dev/.venv/bin/python <脚本> ...
 | `multifactor/` | 主策略（决策作业用的多因子 + 规则法）在不同市场阶段的月度胜率和超额；加减仓规则的粗算；每次调仓换掉多少只、持有多久 | `phase_winrate.py`、`exposure_overlays.py`、`turnover_detail.py` | `WORKLOG_2026-10-07.md`、`docs/guides/decision-and-paper-trading-guide.md` §14 |
 | `regime/` | 能否客观判断牛熊；各类因子在不同市场状态下的表现；按状态切换因子权重是否有用（2006–2026） | `regime_factor_study.py`（配置 `configs/research/regime_study.json`） | `WORKLOG_2026-10-08.md` |
 | `timing/` | 各数据源每天几点发布当天数据、之后会不会修订，决定每日采集能否提前（10-09 探测） | `probe_publication.py`、`timing_report.py` | `WORKLOG_2026-10-08.md` |
-| `options/` | 上交所和深交所 ETF 期权历史数据（2015 年起逐合约风险指标和日线、每日统计），用于研究破位后买认沽等问题 | `download_options.py`（下载）、`put_after_breakdown.py`（破位后买认沽的检验）、`put_grid.py`（买入时机、卖出方式、期限、行权价、下跌快慢）、`underlyings.py`（有期权的 ETF 背后的指数：成分、行业、估值、波动、期权活跃度） | `WORKLOG_2026-10-10.md`、`WORKLOG_2026-10-11.md`、`docs/research/options-put-after-breakdown-2026-10.md`、`docs/research/option-underlyings-2026-10.md` |
+| `options/` | 上交所和深交所 ETF 期权历史数据（2015 年起逐合约风险指标和日线、每日统计），用于研究破位后买认沽等问题 | `download_options.py`（下载）、`put_after_breakdown.py`（破位后买认沽的检验）、`put_grid.py`（买入时机、卖出方式、期限、行权价、下跌快慢）、`underlyings.py`（有期权的 ETF 背后的指数：成分、行业、估值、波动、期权活跃度）、`hindsight_puts.py`（事后测算：某个高点买入各合约，到某日的收益） | `WORKLOG_2026-10-10.md`、`WORKLOG_2026-10-11.md`、`docs/research/options-put-after-breakdown-2026-10.md`、`docs/research/option-underlyings-2026-10.md`、`docs/research/options-hindsight-0922-2026-10.md` |
+| `us_markets/` | 美股主要指数（标普500、道琼斯、纳斯达克、费城半导体、中国金龙，新浪）和富时中国 A50 期货的日线，用于研究美股和 A 股的关系 | `download_us.py`（下载）、`us_ashare_relation.py`（隔夜影响、开盘跳空、大涨大跌后、周月相关、每年涨跌、危机回撤） | `docs/research/us-ashare-relation-2026-10.md` |
+| `macro/` | 美联储利率周期（美联储官网的历次调整）、中美国债收益率、人民币汇率与 A 股牛熊的关系；牛熊的事后划分和实时指标的滞后 | `parse_fed.py`（解析美联储官网的利率调整表）、`fed_cycles.py`（分析）、`bonds_stocks.py`（国债是否领先股票）、`stream_1024_checks.py`（10-24 直播里的比值规律、清仓时点等说法） | `docs/research/fed-cycles-ashare-2026-10.md`、`WORKLOG_2026-10-24.md` |
+| `index_timing/` | 能否预测指数短期涨跌：量价（跌久放巨量、急跌）、宽基 ETF 大额申购、趋势、成交热度、拥挤度、融资余额、股债性价比，以及合起来的滚动样本外预测 | `index_signals.py`、`intraday_creation.py`（盘中能否估计当天的申购） | `docs/research/index-timing-2026-10.md` |
 | `checks/` | 新功能在真实数据上的核对（只写业务库的临时副本）：手工账户除权、机构持有页；回购增持、市场宽度和仓位管家标签 | `check_features.py`、`check_info_lists.py` | `WORKLOG_2026-10-07.md` |
 
 **统一的写法**
