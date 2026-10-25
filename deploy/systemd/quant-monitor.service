@@ -1,0 +1,11 @@
+[Unit]
+Description=MinervaQuantSystem 盘中大资金监测 (broad-index ETF flows during the session)
+Documentation=file://@REPO@/docs/guides/big-money-monitor.md
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO@
+ExecStart=@REPO@/scripts/monitor_big_money.sh
+# A few requests a minute; yield to production services on the same host.
+Nice=10
+TimeoutStartSec=7h

@@ -118,6 +118,7 @@ quant-data ingest --steps bars_history
   - 不生成决策、不推送，失败只在通知中心记一条警告；
   - 日志在 `logs/daily/<日期>-catchup.log`，每次一行汇总在 `logs/daily/catchup.tsv`。
 - 同一时间只允许一个运行；以低优先级运行（nice 10、IO 空闲级）。
+- 可选：交易日 09:20 起的盘中大资金监测 `scripts/monitor_big_money.sh`（定时器 `quant-monitor`，`deploy/install_monitor_timer.sh` 安装）。每分钟查一次宽基 ETF 的行情和逐笔，写到 `data/monitor/big_money/<日期>/`，触发时记入通知中心；不取锁，收盘后退出。说明见 `docs/guides/big-money-monitor.md`。
 
 ```bash
 sudo loginctl enable-linger <user>          # 一次性（需要管理员）：用户未登录时定时器也运行

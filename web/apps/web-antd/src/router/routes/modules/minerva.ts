@@ -89,6 +89,12 @@ const routes: RouteRecordRaw[] = [
         meta: { authority: ['market:view'], icon: 'lucide:hand-coins', title: '回购增持' },
       },
       {
+        name: 'BigMoney',
+        path: '/big-money',
+        component: () => import('#/views/market/big-money.vue'),
+        meta: { authority: ['market:view'], icon: 'lucide:radar', title: '盘中大资金' },
+      },
+      {
         name: 'Options',
         path: '/options', // ?underlying=510050&month=2026-10&contract=10009003
         component: () => import('#/views/market/options.vue'),

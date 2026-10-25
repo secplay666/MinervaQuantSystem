@@ -1,0 +1,15 @@
+{
+  "description": "盘中大资金监测（src/quant_system/monitor/big_money.py）：交易时间每分钟查一次宽基 ETF 的行情和逐笔，按组合计成交额、主动大单净买入和溢价，和过去 20 个交易日同一时刻的成交比较。",
+  "groups_config": "configs/etf/broad_groups.json",
+  "funds": {"coverage": 0.9, "max_per_group": 5, "min_avg_turnover_yuan": 100000000},
+  "big_order_yuan": 5000000,
+  "poll_seconds": 60,
+  "baseline_sessions": 20,
+  "alert": {
+    "not_before": "09:45",
+    "min_turnover_ratio": 2.0,
+    "min_big_net_share_of_daily": 0.15,
+    "min_big_net_yuan": 200000000,
+    "min_big_share": 0.5
+  }
+}

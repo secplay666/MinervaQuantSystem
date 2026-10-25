@@ -10,6 +10,7 @@
     quant-app event add --level critical --category data --title "..."   # record an event (scripts)
     quant-app notify status | test | dispatch    # external notifications (app/notify.py)
     quant-app pm daily                           # position manager signals after the data update
+    quant-app monitor big-money                  # 盘中大资金监测: poll during today's session (systemd timer)
 """
 
 from __future__ import annotations
@@ -204,6 +205,63 @@ def command_pm_daily(args: argparse.Namespace) -> int:
     return 1 if any(row["error"] for row in rows) else 0
 
 
+def command_monitor_big_money(args: argparse.Namespace) -> int:
+    """During today's session: broad-index ETF flows every minute (monitor/big_money.py), alerts as events."""
+    import logging
+    import time
+
+    import requests
+
+    from ..data_platform.sessions import shanghai_now
+    from .db.base import utc_now
+    from .db.models import Event
+    from ..monitor.big_money import BigMoneyMonitor, MonitorConfig, NotATradingDay, alert_text, prepare
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    settings = _settings(args, require_secret=False)
+    config = MonitorConfig.load(settings.root / "configs" / "monitor" / "big_money.json")
+    clock = lambda: shanghai_now().replace(tzinfo=None)  # noqa: E731 (local exchange time, naive)
+    day = clock().date()
+    for attempt in range(10):  # the 09:05 catch-up may be rebuilding the catalog
+        try:
+            groups, profile = prepare(settings.root, config, day)
+            break
+        except NotATradingDay as exc:
+            print(exc)
+            return 0
+        except Exception as exc:  # noqa: BLE001
+            if attempt == 9:
+                print(f"cannot prepare the monitor: {exc}", file=sys.stderr)
+                return 1
+            time.sleep(60)
+    http = requests.Session()
+    http.headers["User-Agent"] = "Mozilla/5.0"
+
+    def get(url: str, params: dict | None) -> str:
+        time.sleep(0.05)  # a restart mid-session re-reads the day's trades: about 1,400 pages
+        response = http.get(url, params=params, timeout=8)
+        response.raise_for_status()
+        return response.content.decode("gbk", errors="replace")
+
+    _, sessions = open_database(settings.db_path)
+
+    def on_alert(direction, group, row) -> None:  # type: ignore[no-untyped-def]
+        title, body = alert_text(direction, group, row)
+        event_id = f"bigmoney-{day:%Y%m%d}-{group.id}-{direction}"
+        with sessions() as session:
+            if session.get(Event, event_id) is None:
+                session.add(Event(event_id=event_id, at=utc_now(), level="info", category="market", title=title,
+                                  body=body, trade_date=day, action_hint="看盘与仓位 → 盘中大资金"))
+                session.commit()
+        print(title, flush=True)
+
+    funds = sum(len(g.funds) for g in groups)
+    print(f"{day}: {len(groups)} groups, {funds} funds; polling every {config.poll_seconds}s", flush=True)
+    BigMoneyMonitor(settings.root, config, groups, profile, day, get, on_alert, clock).run()
+    print("session over", flush=True)
+    return 0
+
+
 def _report(settings, results) -> int:  # type: ignore[no-untyped-def]
     for problem in settings.notify.problems:
         print(f"config: {problem}", file=sys.stderr)
@@ -265,6 +323,9 @@ def build_parser() -> argparse.ArgumentParser:
     pm = sub.add_parser("pm").add_subparsers(dest="pm_command", required=True)
     pm.add_parser("daily", help="position manager: evaluate every user's library, store new signals").set_defaults(
         handler=command_pm_daily)
+    monitor = sub.add_parser("monitor").add_subparsers(dest="monitor_command", required=True)
+    monitor.add_parser("big-money", help="盘中大资金监测 for today's session (exits after the close)").set_defaults(
+        handler=command_monitor_big_money)
     return parser
 
 

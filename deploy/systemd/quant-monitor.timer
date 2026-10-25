@@ -1,0 +1,11 @@
+[Unit]
+Description=MinervaQuantSystem 盘中大资金监测 (Mon-Fri 09:20, exits after the close)
+
+[Timer]
+# Started before the open so it can wait out the 09:05 catch-up's catalog
+# rebuild; it exits at once on a non-trading day and after 15:02 otherwise.
+OnCalendar=Mon..Fri 09:20
+Persistent=true
+
+[Install]
+WantedBy=timers.target
