@@ -498,6 +498,9 @@ class PmSettings(Base):
     # The money map's industry crowding reminder: C above crowd_high, then relief below crowd_low.
     crowd_high: Mapped[float] = mapped_column(Float, default=1.8)
     crowd_low: Mapped[float] = mapped_column(Float, default=1.4)
+    # 大涨后股东户数大增 (position/holders.py): run-up over 120 sessions and the count's rise on the quarter before.
+    holder_run: Mapped[float] = mapped_column(Float, default=0.5)
+    holder_rise: Mapped[float] = mapped_column(Float, default=0.2)
     evaluated_through: Mapped[date | None] = mapped_column(Date)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
 

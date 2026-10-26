@@ -1,6 +1,7 @@
 /**
  * KLineChart extensions for the stock chart: event badges on bars, a
- * range-statistics band and an index comparison line.  Registered once.
+ * range-statistics band, an index comparison line and the shareholder
+ * panes.  Registered once.
  */
 import type { KLineData, OverlayFigure } from 'klinecharts';
 
@@ -82,6 +83,23 @@ export function rangeStats(data: KLineData[], t1: number, t2: number): null | Ra
     turnoverRate: rates.every((r) => r === null || r === undefined) ? null : rates.reduce<number>((n, r) => n + (r ?? 0), 0),
     volume: bars.reduce((n, d) => n + (d.volume ?? 0), 0),
   };
+}
+
+/** A shareholder count at its count date (ms, 00:00 Beijing time); stakes in % (periodic reports only). */
+export interface HolderPoint {
+  holders: null | number;
+  t: number;
+  top10: null | number;
+}
+
+/** For each bar, the latest point dated on or before it that has a value (a step line between counts). */
+export function carryForward(data: KLineData[], points: HolderPoint[], pick: (p: HolderPoint) => null | number): (number | undefined)[] {
+  const known = points.filter((p) => pick(p) !== null);
+  let k = -1;
+  return data.map((d) => {
+    while (k + 1 < known.length && known[k + 1]!.t <= d.timestamp) k += 1;
+    return k >= 0 ? (pick(known[k]!) as number) : undefined;
+  });
 }
 
 let registered = false;
@@ -409,5 +427,26 @@ export function registerChartExtensions() {
         return value === undefined ? {} : { cmp: value * ratio };
       });
     },
+  });
+
+  // Shareholder panes: step lines through the counts by count date, carried to the next count.
+  registerIndicator<{ holders?: number }, number, { points: HolderPoint[] }>({
+    name: 'HOLDERS',
+    shortName: '股东户数',
+    precision: 2,
+    calcParams: [],
+    figures: [{ key: 'holders', title: '万户: ', type: 'line' }],
+    calc: (dataList, indicator) => carryForward(dataList, indicator.extendData?.points ?? [],
+                                                (p) => (p.holders === null ? null : p.holders / 1e4))
+      .map((v) => (v === undefined ? {} : { holders: v })),
+  });
+  registerIndicator<{ big?: number; small?: number }, number, { points: HolderPoint[] }>({
+    name: 'TOP10',
+    shortName: '大股东/小股东',
+    precision: 2,
+    calcParams: [],
+    figures: [{ key: 'big', title: '前十大股东%: ', type: 'line' }, { key: 'small', title: '其余股东%: ', type: 'line' }],
+    calc: (dataList, indicator) => carryForward(dataList, indicator.extendData?.points ?? [], (p) => p.top10)
+      .map((v) => (v === undefined ? {} : { big: v, small: 100 - v })),
   });
 }

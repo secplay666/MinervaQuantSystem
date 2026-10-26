@@ -167,6 +167,12 @@ from .company_actions import (
     normalize_buybacks,
     normalize_holder_changes,
 )
+from .shareholders import (
+    SOURCE_SHAREHOLDER_COUNTS,
+    count_windows,
+    merge_shareholder_counts,
+    normalize_shareholder_counts,
+)
 from .utils import code_version, ensure_directories, json_dump, run_id_to_iso, unique_run_id, utc_now_iso
 
 MAX_RECORDED_ERRORS = 200
@@ -962,14 +968,17 @@ class IngestionPipeline:
     # ------------------------------------------------------ status history
 
     def _ingest_company_actions(self, ctx: RunContext) -> None:
-        """Buybacks and holder increases/decreases (company_actions.py).  They feed
-        an information page and tags, so problems are warnings; a failed window is
-        fetched again next run (windows follow what is stored)."""
+        """Buybacks and holder increases/decreases (company_actions.py) and shareholder
+        counts (shareholders.py).  They feed information pages, tags, reminders and a
+        candidate factor, so problems are warnings; a failed window is fetched again
+        next run (windows follow what is stored)."""
         today = self.clock().date()
         jobs = (("buybacks", self.provider.fetch_buybacks, normalize_buybacks, merge_buybacks, buyback_windows,
                  SOURCE_BUYBACKS),
                 ("holder_changes", self.provider.fetch_holder_changes, normalize_holder_changes, merge_holder_changes,
-                 holder_windows, SOURCE_HOLDER_CHANGES))
+                 holder_windows, SOURCE_HOLDER_CHANGES),
+                ("shareholder_counts", self.provider.fetch_shareholder_counts, normalize_shareholder_counts,
+                 merge_shareholder_counts, count_windows, SOURCE_SHAREHOLDER_COUNTS))
         for dataset, fetch, normalize, merge, windows, source in jobs:
             merged = read_canonical(self.root, dataset)
             for name, query in windows(merged, today):

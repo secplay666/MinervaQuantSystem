@@ -45,7 +45,7 @@ function nearestSentinel(row: PmRow) {
           <Button size="small" type="link" class="!h-auto !p-0 !text-xs" @click="openChart(router, record.symbol)">K 线</Button>
           <span v-if="record.star" class="ml-1 text-amber-500">{{ '★'.repeat(record.star) }}</span>
         </div>
-        <CompanyTags :company="record.company" />
+        <CompanyTags :company="record.company" :holders="record.holders" />
       </template>
       <template v-else-if="column.key === 'label'">
         <Tag :color="labelColor(record.label)">{{ labelName(record.label) }}</Tag>

@@ -9,6 +9,7 @@ only reflects information usable at the close of session ``t``
 * shares      max(first session >= change date, first session > notice date)
 * industry    first session >= the Shenwan 计入日期
 * dividends   the ex-dividend session (implemented distributions only)
+* holders     the first session after the notice date (shareholder counts, fundamentals/holders.py)
 """
 
 from __future__ import annotations
@@ -54,6 +55,7 @@ class ResearchData:
     industry_names: tuple[str, ...]
     dividend_ttm_cny: np.ndarray  # float64 [T, N]; cash paid with ex-date in the last 365 days
     fundamentals: Any = None      # fundamentals.pit.FundamentalStore (stage 3, P3)
+    holders: Any = None           # fundamentals.holders.HolderStore (shareholder counts)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -83,6 +85,8 @@ class ResearchData:
         digest.update(json.dumps([self.industry_codes, self.industry_names], ensure_ascii=False).encode())
         if self.fundamentals is not None:
             digest.update(self.fundamentals.fingerprint().encode())
+        if self.holders is not None:
+            digest.update(self.holders.fingerprint().encode())
         return digest.hexdigest()
 
     # -- construction -----------------------------------------------------------
@@ -220,4 +224,7 @@ def load_research_data(source: str, path: Path, market: MarketData | None = None
     from ..fundamentals.pit import load_fundamentals  # stage 3 (P3); absent datasets -> None
 
     data.fundamentals = load_fundamentals(source, path, market, extra_lag_sessions=fundamentals_lag_sessions)
+    from ..fundamentals.holders import load_holder_store  # absent dataset -> None
+
+    data.holders = load_holder_store(source, path, market)
     return data

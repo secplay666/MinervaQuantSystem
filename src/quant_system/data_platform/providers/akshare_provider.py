@@ -18,6 +18,7 @@ import requests
 
 from ..symbols import infer_exchange, market_prefix
 from ..company_actions import BUYBACK_REPORT, BUYBACK_SORT, HOLDER_REPORT, HOLDER_SORT
+from ..shareholders import COUNT_REPORT, COUNT_SORT
 from .base import FetchResult, MarketDataProvider
 from .eastmoney_dc import A_SHARE_TYPES, DC_PAGE_WORKERS, PaginationMismatch, collect_pages, dc_page, sw_file
 
@@ -397,6 +398,9 @@ class AkShareProvider(MarketDataProvider):
 
     def fetch_holder_changes(self, filter: str) -> pd.DataFrame:
         return self.fetch_datacenter(HOLDER_REPORT, filter, HOLDER_SORT)
+
+    def fetch_shareholder_counts(self, filter: str) -> pd.DataFrame:
+        return self.fetch_datacenter(COUNT_REPORT, filter, COUNT_SORT)
 
     def fetch_sw_index_daily(self, code: str) -> FetchResult:
         frame = self._call(f"index_hist_sw:{code}", ak.index_hist_sw, symbol=code, period="day")

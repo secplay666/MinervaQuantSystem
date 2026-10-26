@@ -88,6 +88,14 @@ def marks(symbol: str, request: Request, principal: Principal = Depends(view),
     return {**out, "fills": fills}
 
 
+@router.get("/instruments/{symbol}/holders")
+def holders(symbol: str, request: Request, _: Principal = Depends(view)) -> list:
+    """Shareholder counts and the top-ten holders' combined stake by count date (the chart's holder panes)."""
+    if not re.fullmatch(r"\d{6}", symbol):
+        raise api_error(404, "not_found", "证券不存在")
+    return _market(request).shareholders(symbol)
+
+
 INDEX_CODE = re.compile(r"(sh|sz|bj)\d{6}|H\d{5}")
 
 

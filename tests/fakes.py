@@ -103,11 +103,12 @@ class FakeProvider(MarketDataProvider):
     # SW industry indices (money map): off by default, so other tests run the index step as before.
     sw_indices: bool = False
     sw_failing: set[str] = field(default_factory=set)
-    # Buybacks and holder changes (company actions): off by default, like the SW indices.
+    # Buybacks, holder changes and shareholder counts (company actions): off by default, like the SW indices.
     company_actions: bool = False
     company_failing: bool = False
     buyback_rows: list[dict[str, object]] = field(default_factory=list)
     holder_rows: list[dict[str, object]] = field(default_factory=list)
+    count_rows: list[dict[str, object]] = field(default_factory=list)
     tfp_rows: list[dict[str, object]] = field(default_factory=list)
     baidu_rows: dict[date, list[dict[str, object]]] = field(default_factory=dict)
     baidu_bare: set[date] = field(default_factory=set)  # days answered with a bare DataFrame() (throttling)
@@ -247,6 +248,14 @@ class FakeProvider(MarketDataProvider):
         if self.company_failing:
             raise RuntimeError("datacenter unavailable")
         return self._datacenter_rows(self.holder_rows, filter, "NOTICE_DATE")
+
+    def fetch_shareholder_counts(self, filter: str) -> pd.DataFrame:
+        if not self.company_actions:
+            raise NotImplementedError
+        self.calls.append(("shareholder_counts", filter))
+        if self.company_failing:
+            raise RuntimeError("datacenter unavailable")
+        return self._datacenter_rows(self.count_rows, filter, "NOTICE_DATE")
 
     def fetch_adjustment_factors(self, symbol: str) -> FetchResult:
         self.calls.append(("factors", symbol))

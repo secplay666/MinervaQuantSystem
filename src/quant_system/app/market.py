@@ -219,6 +219,19 @@ class MarketQueries:
                      "AND suspend_start IS NOT NULL ORDER BY suspend_start"),
         }
 
+    def shareholders(self, symbol: str) -> list[dict[str, Any]]:
+        """Shareholder counts by count date, with the change from the previous count, and the top-ten holders'
+        combined stake (periodic reports only): the chart's holder panes."""
+        try:
+            frame = self._query("SELECT end_date, notice_date, holders, top10_pct, top10_free_pct, avg_free_shares, "
+                                "approximate FROM shareholder_counts WHERE symbol = ? ORDER BY end_date", [symbol])
+        except duckdb.CatalogException:
+            return []
+        counted = frame["holders"].notna()
+        previous = frame["holders"].where(counted).ffill().shift(1)
+        frame["change"] = (frame["holders"] / previous - 1).where(counted & (previous > 0))
+        return records(frame)
+
     def corporate_plans(self, symbols: list[str], since: date) -> list[dict[str, Any]]:
         """Implemented dividend and bonus-share plans of ``symbols`` going ex on or after ``since``."""
         if not symbols:

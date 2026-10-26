@@ -40,6 +40,7 @@ SINGLE_FILE_DATASETS = (
     "etf_top_holders",
     "buybacks",
     "holder_changes",
+    "shareholder_counts",
     "option_contracts",
     "option_minute_totals",
 )
@@ -68,6 +69,7 @@ DATE_COLUMNS = {
     "sw_index_bars": "trade_date",
     "buybacks": "notice_date",
     "holder_changes": "notice_date",
+    "shareholder_counts": "end_date",
     "option_contracts": "expiry_date",
     "option_daily_bars": "trade_date",
     "option_risk": "trade_date",

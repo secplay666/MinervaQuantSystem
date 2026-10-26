@@ -106,6 +106,7 @@ from .storage import (
 )
 from .sw_index import SW_L1
 from .company_actions import merge_buybacks, merge_holder_changes, normalize_buybacks, normalize_holder_changes
+from .shareholders import merge_shareholder_counts, normalize_shareholder_counts
 from .options import BAR_COLUMNS as OPTION_BAR_COLUMNS
 from .options import RISK_COLUMNS as OPTION_RISK_COLUMNS
 from .options import log_row as option_log_row
@@ -395,9 +396,12 @@ class CanonicalRebuilder:
                 self.counters["index_partitions"] += 1
 
     def _rebuild_company_actions(self) -> None:
-        """Replay the stored buyback and holder-change responses run by run, as ingestion merged them."""
+        """Replay the stored buyback, holder-change and shareholder-count responses run by run, as
+        ingestion merged them."""
         for dataset, normalize, merge in (("buybacks", normalize_buybacks, merge_buybacks),
-                                          ("holder_changes", normalize_holder_changes, merge_holder_changes)):
+                                          ("holder_changes", normalize_holder_changes, merge_holder_changes),
+                                          ("shareholder_counts", normalize_shareholder_counts,
+                                           merge_shareholder_counts)):
             merged = None
             for run_id, directory in _raw_runs(self.raw_root, dataset):
                 for path in sorted(directory.glob("*.parquet")):

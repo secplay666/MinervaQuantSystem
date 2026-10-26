@@ -115,6 +115,10 @@ class MarketDataProvider(ABC):
         """Holder increases and decreases (Eastmoney RPT_SHARE_HOLDER_INCREASE) matching a datacenter filter."""
         raise NotImplementedError
 
+    def fetch_shareholder_counts(self, filter: str) -> pd.DataFrame:
+        """Shareholder counts and top-ten stakes (Eastmoney RPT_F10_EH_HOLDERNUM) matching a datacenter filter."""
+        raise NotImplementedError
+
     def fetch_sw_index_daily(self, code: str) -> FetchResult:
         """The whole daily history of one SW industry index (e.g. 801080);
         optional: providers without it skip the SW indices."""

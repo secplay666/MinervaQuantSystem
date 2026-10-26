@@ -90,12 +90,13 @@ def settings_view(settings: PmSettings) -> dict[str, Any]:
             "rule_params": rule_params(settings).to_dict(), "rule_defaults": RuleParams().to_dict(),
             "label_mode": settings.label_mode, "push_daily": settings.push_daily, "auto_base": settings.auto_base,
             "crowd_high": settings.crowd_high, "crowd_low": settings.crowd_low,
+            "holder_run": settings.holder_run, "holder_rise": settings.holder_rise,
             "evaluated_through": settings.evaluated_through,
             "presets": [{"key": key, "name": name, "params": params.to_dict()} for key, (name, params) in PRESETS.items()]}
 
 
 AUDITED_SETTINGS = ("stage_preset", "stage_overrides", "rule_overrides", "label_mode", "push_daily", "auto_base",
-                    "crowd_high", "crowd_low")
+                    "crowd_high", "crowd_low", "holder_run", "holder_rise")
 
 
 class SettingsIn(BaseModel):
@@ -107,6 +108,8 @@ class SettingsIn(BaseModel):
     auto_base: bool | None = None                 # a close in the 起涨区 turns 左侧 into 筑底
     crowd_high: float | None = None               # industry crowding reminder (money map) ...
     crowd_low: float | None = None                # ... and its relief
+    holder_run: float | None = None               # 大涨后股东户数大增: the run-up over 120 sessions ...
+    holder_rise: float | None = None              # ... and the count's rise on the quarter before
 
 
 @router.get("/pm/settings")
@@ -133,6 +136,10 @@ def put_settings(body: SettingsIn, principal: Principal = Depends(use), session:
     low = body.crowd_low if body.crowd_low is not None else settings.crowd_low
     if not 0.5 <= low < high <= 5:
         raise api_error(400, "invalid", "行业拥挤提醒：解除线要低于提醒线，并在 0.5 到 5 之间")
+    run = body.holder_run if body.holder_run is not None else settings.holder_run
+    rise = body.holder_rise if body.holder_rise is not None else settings.holder_rise
+    if not (0.1 <= run <= 5 and 0.05 <= rise <= 5):
+        raise api_error(400, "invalid", "股东户数提醒：前期涨幅在 10% 到 500% 之间，户数增幅在 5% 到 500% 之间")
     try:
         StageParams.from_dict(overrides, PRESETS[preset][1])
         RuleParams.from_dict(rules)
@@ -146,6 +153,7 @@ def put_settings(body: SettingsIn, principal: Principal = Depends(use), session:
     if body.auto_base is not None:
         settings.auto_base = body.auto_base
     settings.crowd_high, settings.crowd_low = high, low
+    settings.holder_run, settings.holder_rise = run, rise
     settings.updated_at = utc_now()
     after = safe(settings_view(settings))
     audit(session, principal.actor, "pm.settings", "pm_settings", str(principal.user.id),

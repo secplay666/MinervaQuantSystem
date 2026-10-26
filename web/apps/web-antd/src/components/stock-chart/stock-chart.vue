@@ -8,9 +8,9 @@
  */
 import type { Chart, DataLoader, KLineData, Overlay, OverlayCreate, OverlayMode } from 'klinecharts';
 
-import type { AutoLabel, AutoLineData, MarkData, RangeStats } from './extensions';
+import type { AutoLabel, AutoLineData, HolderPoint, MarkData, RangeStats } from './extensions';
 
-import type { BarPeriod, ChartAnalysis, ChartMarks, ChartPoint, PmChart, PmLevelKind, SavedOverlay } from '#/api';
+import type { BarPeriod, ChartAnalysis, ChartMarks, ChartPoint, HolderCount, PmChart, PmLevelKind, SavedOverlay } from '#/api';
 
 import { computed, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
@@ -23,7 +23,8 @@ import {
 import { dispose, init } from 'klinecharts';
 
 import {
-  barsApi, chartAnalysisApi, drawingsApi, etfMarksApi, indexBarsApi, isIndexSymbol, LEVEL_NAMES, marksApi, saveDrawingsApi,
+  barsApi, chartAnalysisApi, drawingsApi, etfMarksApi, holdersApi, indexBarsApi, isIndexSymbol, LEVEL_NAMES, marksApi,
+  saveDrawingsApi,
 } from '#/api';
 import { bigYuan, DOWN_COLOR, UP_COLOR } from '#/utils/format';
 
@@ -81,7 +82,12 @@ const SUB_INDICATORS: Record<string, string> = {
   BIAS: 'BIAS 乖离率', BRAR: 'BRAR 人气意愿', CCI: 'CCI 顺势', CR: 'CR 能量', DMA: 'DMA 平均差', DMI: 'DMI 趋向',
   KDJ: 'KDJ 随机', MACD: 'MACD 平滑异同', MTM: 'MTM 动量', OBV: 'OBV 能量潮', PSY: 'PSY 心理线', ROC: 'ROC 变动率',
   RSI: 'RSI 相对强弱', TRIX: 'TRIX 三重指数', VOL: 'VOL 成交量', VR: 'VR 成交量比率', WR: 'WR 威廉',
+  HOLDERS: '股东户数', TOP10: '大股东/小股东持股',
 };
+/** Stocks only, drawn from the shareholder counts (no parameters). */
+const HOLDER_PANES = new Set(['HOLDERS', 'TOP10']);
+/** Validated pairs (dataviz validator) for the light and dark surfaces. */
+const HOLDER_COLORS = { dark: ['#3987e5', '#d95926'], light: ['#2a78d6', '#eb6834'] };
 const COMPARE: Record<string, string> = {
   H00300: '沪深300全收益', H00852: '中证1000全收益', H00905: '中证500全收益', sh000001: '上证指数', sh000300: '沪深300',
   sh000688: '科创50', sh000905: '中证500', sz399001: '深证成指', sz399006: '创业板指',
@@ -137,6 +143,7 @@ const drawingCount = ref(0);
 const range = ref<null | RangeStats>();
 const analysis = ref<ChartAnalysis>();
 let markStacks = new Map<number, { above: number; below: number }>(); // badges per bar from the event marks
+const holderRows = ref<HolderCount[]>([]); // shareholder counts of the stock, by count date
 const fullscreen = ref(false);
 const paramsDialog = reactive<{ name: string; open: boolean; text: string }>({ name: '', open: false, text: '' });
 let quiet = false; // true while overlays are removed or restored by code, so no save is triggered
@@ -232,15 +239,18 @@ async function afterInit(token: number) {
   hovered.value = undefined;
   range.value = null;
   const symbol = props.symbol;
-  const [m, saved] = await Promise.all([
+  const [m, saved, holders] = await Promise.all([
     isIndexSymbol(symbol)
       ? etfMarksApi(symbol).then((etf) => ({ dividends: [], etf, fills: [], reports: [], risk: [], suspensions: [] }))
           .catch(() => undefined)
       : marksApi(symbol).catch(() => undefined),
     drawingsApi(symbol).catch(() => undefined),
+    isIndexSymbol(symbol) ? Promise.resolve([]) : holdersApi(symbol).catch(() => []),
   ]);
   if (token !== loadToken || !chart) return;
   marks.value = m;
+  holderRows.value = holders;
+  refreshHolderPanes();
   renderMarks();
   quiet = true;
   chart.removeOverlay({ groupId: 'drawings' });
@@ -596,14 +606,41 @@ function applyIndicators() {
   for (const name of Object.keys(SUB_INDICATORS)) {
     const paneId = subPane(name);
     const has = chart.getIndicators({ paneId }).length > 0;
-    const want = settings.subs.includes(name);
+    const want = settings.subs.includes(name) && !(HOLDER_PANES.has(name) && isIndex.value);
     if (want && !has) {
-      chart.createIndicator({ calcParams: paramsOf(name), name, paneId });
+      if (HOLDER_PANES.has(name)) {
+        chart.createIndicator({ extendData: { points: holderPoints.value }, name, paneId, styles: holderStyles() });
+      } else {
+        chart.createIndicator({ calcParams: paramsOf(name), name, paneId });
+      }
       chart.setPaneOptions({ height: 110, id: paneId, minHeight: 50 });
     }
     if (!want && has) chart.removeIndicator({ paneId });
   }
 }
+
+// -- shareholder panes (count date on the x axis; the data window names the notice date) --------------
+const holderPoints = computed<HolderPoint[]>(() => holderRows.value.map((r) => ({
+  holders: r.holders, t: stamp(r.end_date), top10: r.top10_pct,
+})));
+function holderStyles() {
+  const [first, second] = HOLDER_COLORS[isDark.value ? 'dark' : 'light'];
+  return { lines: [{ color: first, size: 1.5 }, { color: second, size: 1.5 }] } as any;
+}
+function refreshHolderPanes() {
+  for (const name of HOLDER_PANES) {
+    if (chart?.getIndicators({ name }).length) {
+      chart.overrideIndicator({ extendData: { points: holderPoints.value }, name, styles: holderStyles() });
+    }
+  }
+}
+/** The latest count and the latest report stake on or before the shown bar. */
+const shownHolders = computed(() => {
+  const bar = shown.value;
+  if (!bar || !settings.subs.some((n) => HOLDER_PANES.has(n)) || !holderRows.value.length) return undefined;
+  const upto = holderRows.value.filter((r) => stamp(r.end_date) <= bar.timestamp);
+  return { count: upto.findLast((r) => r.holders !== null), stake: upto.findLast((r) => r.top10_pct !== null) };
+});
 
 async function applyCompare() {
   if (!chart) return;
@@ -664,7 +701,7 @@ function resetParams() {
   }
   applyIndicators();
 }
-const activeIndicators = computed(() => [...settings.main, ...settings.subs]);
+const activeIndicators = computed(() => [...settings.main, ...settings.subs.filter((n) => !HOLDER_PANES.has(n))]);
 
 // -- drawings -------------------------------------------------------------------------------------
 function drawingOverlay(name: string, saved?: SavedOverlay): OverlayCreate {
@@ -848,6 +885,7 @@ function themeStyles() {
 function applyTheme() {
   chart?.setStyles(isDark.value ? 'dark' : 'light');
   chart?.setStyles(themeStyles());
+  refreshHolderPanes();
 }
 
 function reload() {
@@ -863,6 +901,8 @@ function reload() {
   range.value = null;
   selectedId.value = '';
   analysis.value = undefined;
+  holderRows.value = [];
+  refreshHolderPanes();
 }
 
 onMounted(() => {
@@ -928,6 +968,10 @@ watch(() => settings.panel, () => nextTick(() => chart?.resize()));
 function fmt(v: unknown, digits = 2): string {
   return typeof v === 'number' && Number.isFinite(v) ? v.toFixed(digits) : '—';
 }
+function pctText(value: null | number | undefined, digits = 1): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—';
+  return `${value > 0 ? '+' : ''}${(value * 100).toFixed(digits)}%`;
+}
 function colorOf(value?: number): string | undefined {
   if (value === undefined || !Number.isFinite(value) || value === 0) return undefined;
   return value > 0 ? UP_COLOR : DOWN_COLOR;
@@ -967,7 +1011,7 @@ const PERIOD_LABEL: Record<BarPeriod, string> = { day: '日', month: '月', week
       <Select v-model:value="settings.main" mode="multiple" size="small" :max-tag-count="2" placeholder="主图指标" style="min-width: 150px"
               :options="Object.entries(MAIN_INDICATORS).map(([value, label]) => ({ label, value }))" />
       <Select v-model:value="settings.subs" mode="multiple" size="small" :max-tag-count="3" placeholder="副图指标" style="min-width: 190px"
-              :options="Object.entries(SUB_INDICATORS).map(([value, label]) => ({ label, value }))" />
+              :options="Object.entries(SUB_INDICATORS).filter(([value]) => !(isIndex && HOLDER_PANES.has(value))).map(([value, label]) => ({ label, value }))" />
       <Dropdown :trigger="['click']">
         <Button size="small">指标参数</Button>
         <template #overlay>
@@ -1065,6 +1109,26 @@ const PERIOD_LABEL: Record<BarPeriod, string> = { day: '日', month: '月', week
             <span class="text-muted-foreground">成交额</span><span class="text-right">{{ shown.turnover ? `${bigYuan(shown.turnover, false)}` : '—' }}</span>
             <span class="text-muted-foreground">换手率</span><span class="text-right">{{ typeof shown.turnover_rate === 'number' ? `${fmt(shown.turnover_rate)}%` : '—' }}</span>
           </div>
+          <template v-if="shownHolders">
+            <Divider class="my-2" />
+            <div class="mb-1 font-semibold">股东（截至当日最新一期）</div>
+            <div v-if="shownHolders.count" class="grid grid-cols-2 gap-x-2 gap-y-0.5">
+              <span class="text-muted-foreground">股东户数</span>
+              <span class="text-right">{{ (shownHolders.count.holders! / 1e4).toFixed(2) }} 万{{ shownHolders.count.approximate ? '（约）' : '' }}</span>
+              <span class="text-muted-foreground">较上期</span>
+              <span class="text-right">{{ pctText(shownHolders.count.change) }}</span>
+              <span class="text-muted-foreground">统计日 / 公告</span>
+              <span class="text-right">{{ shownHolders.count.end_date.slice(2) }} / {{ shownHolders.count.notice_date.slice(5) }}</span>
+            </div>
+            <div v-if="shownHolders.stake" class="mt-0.5 grid grid-cols-2 gap-x-2 gap-y-0.5">
+              <span class="text-muted-foreground">前十大股东</span><span class="text-right">{{ fmt(shownHolders.stake.top10_pct, 1) }}%</span>
+              <span class="text-muted-foreground">其余股东</span><span class="text-right">{{ fmt(100 - shownHolders.stake.top10_pct!, 1) }}%</span>
+              <span class="text-muted-foreground">十大流通股东</span>
+              <span class="text-right">{{ shownHolders.stake.top10_free_pct === null ? '—' : `${fmt(shownHolders.stake.top10_free_pct, 1)}%` }}</span>
+              <span class="text-muted-foreground">报告期</span><span class="text-right">{{ shownHolders.stake.end_date.slice(2) }}</span>
+            </div>
+            <div v-if="!shownHolders.count && !shownHolders.stake" class="text-muted-foreground">这天之前没有披露</div>
+          </template>
           <template v-if="shownEvents.length">
             <Divider class="my-2" />
             <div class="mb-1 font-semibold">当期事件</div>

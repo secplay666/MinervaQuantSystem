@@ -35,6 +35,7 @@ from ..position.rules import (
 from ..position.paths import (
     BaseZone, Sentinel, base_zone_entry, days_away, mean_range, sentinel_crossing, suggest_path,
 )
+from ..position.holders import surges
 from ..position.stages import PRESETS, STAGE_KEYS, StageParams, classify, stage_view
 from .db.base import utc_now
 from .db.models import PmItem, PmLabelChange, PmLevel, PmQuality, PmSentinel, PmSettings
@@ -440,6 +441,7 @@ def evaluate(session: Session, market: MarketQueries, item: PmItem, settings: Pm
                 crossings.append((row, event))
     quality = session.get(PmQuality, item.symbol) if item.kind == "stock" else None
     industry, industry_events = industry_crowding(market, item, settings, series, outcome)
+    holders, holder_events = holder_surge(market, item, settings, series, outcome)
     company = company_tags(market, item)
     return {"series": series, "view": view, "structure": structure, "levels": levels, "labels": labels,
             "outcome": outcome, "prompts": prompts, "main_index": main, "index_today": gate,
@@ -449,7 +451,8 @@ def evaluate(session: Session, market: MarketQueries, item: PmItem, settings: Pm
             "daily_range": mean_range(series.high, series.low, series.close) if len(series.high) > 1 else None,
             "path": suggest_path(structure, outcome, last) if outcome is not None else None,
             "previous_completion": structure.completion(previous) if structure and previous else None,
-            "quality": quality, "industry": industry, "industry_events": industry_events, "company": company}
+            "quality": quality, "industry": industry, "industry_events": industry_events, "company": company,
+            "holders": holders, "holder_events": holder_events}
 
 
 def company_tags(market: MarketQueries, item: PmItem) -> dict[str, Any] | None:
@@ -497,6 +500,36 @@ def industry_crowding(market: MarketQueries, item: PmItem, settings: PmSettings,
                             f"industry:{code}:{kind}:{day.isoformat()}"))
     shown = {k: state[k] for k in ("code", "name", "as_of", "zone", "zone_name", "high", "low")}
     return dict(shown, c=round(state["c"], 3)), events
+
+
+HOLDER_TAG_SESSIONS = 60  # the research horizon: the tag shows this long after the reminder
+
+
+def holder_surge(market: MarketQueries, item: PmItem, settings: PmSettings, series: Series,
+                 outcome) -> tuple[dict[str, Any] | None, list[Event]]:
+    """大涨后股东户数大增 (position/holders.py): a reminder per disclosure that meets the user's thresholds
+    (a reduce prompt when holding), and the latest one as a tag for HOLDER_TAG_SESSIONS sessions."""
+    if item.kind != "stock" or not series.dates:
+        return None, []
+    counts = _query(market, "SELECT end_date, notice_date, holders FROM shareholder_counts WHERE symbol = ? "
+                            "ORDER BY end_date", [item.symbol])
+    if counts.empty:
+        return None, []
+    found = surges(series.dates, series.close, counts, settings.holder_run, settings.holder_rise)
+    weight = outcome.weight if outcome is not None else 0.0
+    events = []
+    for surge in found:
+        message = (f"大涨后股东户数大增：{surge.end_date:%Y-%m-%d} 股东户数较上季 {surge.change:+.0%}"
+                   f"（{surge.notice_date:%m-%d} 公告），公告前 120 日涨 {surge.run:+.0%}："
+                   "历史上之后 60 天多数跑输，宜减仓、不追")
+        events.append(Event(surge.day, "holders_surge", 2 if weight > 0 else 4, message,
+                            float(series.close[series.dates.index(surge.day)]), weight, None,
+                            f"holders:{surge.end_date.isoformat()}"))
+    latest = found[-1] if found else None
+    if latest is None or len(series.dates) - series.dates.index(latest.day) > HOLDER_TAG_SESSIONS:
+        return None, events
+    return {"end_date": latest.end_date, "notice_date": latest.notice_date, "change": round(latest.change, 4),
+            "run": round(latest.run, 4)}, events
 
 
 POOLS = {"hold": "持有", "buyback": "回撤关注", "ready": "就绪", "watch": "观察", "archived": "归档"}
@@ -575,6 +608,7 @@ def summary_row(item: PmItem, result: dict[str, Any], settings: PmSettings) -> d
                                                            "score": result["quality"].score},
         "industry": result.get("industry"),
         "company": result.get("company"),
+        "holders": result.get("holders"),
         **breakout_facts(result),
     }
 
@@ -732,6 +766,7 @@ def sync_signals(session: Session, user_id: int, results: list[tuple[PmItem, dic
             row.status, row.crossed_on = "crossed", event.trade_date
         events = (result["outcome"].events if result["outcome"] else []) + result["prompts"]
         events += [e for _, e in result.get("crossings", [])] + result.get("industry_events", [])
+        events += result.get("holder_events", [])
         if result.get("zone_event") is not None:
             events.append(result["zone_event"])
         wanted = [e for e in events if e.trade_date >= cutoff]

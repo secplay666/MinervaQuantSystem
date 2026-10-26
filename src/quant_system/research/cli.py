@@ -12,9 +12,10 @@ from .registry import Registry
 
 
 def command_factors_list(args: argparse.Namespace) -> int:
-    for spec in all_factors():
+    for spec in all_factors(candidates=True):
         direction = "+" if spec.direction > 0 else "-"
-        print(f"{spec.family:<10} {spec.id:<16} {direction} window={spec.window:<4} {spec.description}")
+        mark = "（候选，不在 all 中）" if spec.candidate else ""
+        print(f"{spec.family:<10} {spec.id:<16} {direction} window={spec.window:<4} {spec.description}{mark}")
     return 0
 
 

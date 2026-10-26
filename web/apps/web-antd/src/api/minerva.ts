@@ -150,6 +150,17 @@ export interface ChartMarks {
   suspensions: { end_inferred?: boolean; reason: null | string; suspend_end: null | string; suspend_start: string }[];
   etf?: EtfMark[]; // index charts: abnormal broad-ETF subscription days
 }
+/** A shareholder count by count date; the top-ten stakes come with periodic reports only. */
+export interface HolderCount {
+  approximate: boolean;
+  avg_free_shares: null | number;
+  change: null | number; // from the previous count
+  end_date: string;
+  holders: null | number;
+  notice_date: string;
+  top10_free_pct: null | number; // % of the float shares
+  top10_pct: null | number; // % of the total shares
+}
 export interface EtfMark { abnormal: 'in' | 'out'; flow: number; flow_pct: number; group: string; strong: boolean; trade_date: string; z: number }
 
 export interface SavedOverlay {
@@ -320,6 +331,7 @@ export interface ChartAnalysis {
 export const chartAnalysisApi = (symbol: string, params: { adjust: string; bars: number; period: BarPeriod; sensitivity: string }) =>
   requestClient.get<ChartAnalysis>(`/charts/${symbol}/analysis`, { params });
 export const marksApi = (symbol: string) => requestClient.get<ChartMarks>(`/instruments/${symbol}/marks`);
+export const holdersApi = (symbol: string) => requestClient.get<HolderCount[]>(`/instruments/${symbol}/holders`);
 export const drawingsApi = (symbol: string) =>
   requestClient.get<{ overlays: SavedOverlay[]; symbol: string; updated_at: null | string }>(`/charts/${symbol}/drawings`);
 export const saveDrawingsApi = (symbol: string, overlays: SavedOverlay[]) =>

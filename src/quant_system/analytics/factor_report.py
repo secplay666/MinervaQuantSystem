@@ -11,7 +11,7 @@ import pandas as pd
 from ..features.registry import get
 
 FAMILY_NAMES = {"value": "价值", "quality": "质量", "growth": "成长", "momentum": "动量", "volatility": "波动",
-                "liquidity": "流动性", "size": "规模", "technical": "技术"}
+                "liquidity": "流动性", "size": "规模", "technical": "技术", "holders": "股东"}
 
 
 def _fmt(value: Any, digits: int = 3, pct: bool = False) -> str:

@@ -147,7 +147,7 @@ onMounted(load);
           <template v-if="column.key === 'item'">
             <a @click="router.push(`/position/items/${record.id}`)">{{ record.name || record.symbol }}</a>
             <div class="text-xs text-gray-400">{{ record.symbol }}</div>
-            <CompanyTags :company="record.company" />
+            <CompanyTags :company="record.company" :holders="record.holders" />
           </template>
           <template v-else-if="column.key === 'kind'">{{ KIND[record.kind] ?? record.kind }}</template>
           <template v-else-if="column.key === 'groups'">

@@ -46,10 +46,11 @@ const RULES: Field[] = [
 
 const settings = ref<PmSettings>();
 const saving = ref(false);
-const form = reactive<{ auto_base: boolean; crowd_high: number; crowd_low: number; label_mode: 'manual' | 'suggest'; ladder: number[][];
-                        preset: string; push_daily: boolean; rules: Record<string, number>; stage: Record<string, number> }>({
-  auto_base: true, crowd_high: 1.8, crowd_low: 1.4, label_mode: 'suggest', ladder: [], preset: 'steady', push_daily: false,
-  rules: {}, stage: {},
+const form = reactive<{ auto_base: boolean; crowd_high: number; crowd_low: number; holder_rise: number; holder_run: number;
+                        label_mode: 'manual' | 'suggest'; ladder: number[][]; preset: string; push_daily: boolean;
+                        rules: Record<string, number>; stage: Record<string, number> }>({
+  auto_base: true, crowd_high: 1.8, crowd_low: 1.4, holder_rise: 20, holder_run: 50, label_mode: 'suggest', ladder: [],
+  preset: 'steady', push_daily: false, rules: {}, stage: {},
 });
 const presetValues = computed(() => settings.value?.presets.find((p) => p.key === form.preset)?.params ?? {});
 
@@ -72,6 +73,8 @@ function fill(s: PmSettings) {
   form.auto_base = s.auto_base;
   form.crowd_high = s.crowd_high;
   form.crowd_low = s.crowd_low;
+  form.holder_run = Math.round(s.holder_run * 100);
+  form.holder_rise = Math.round(s.holder_rise * 100);
   form.preset = s.stage_preset;
   form.stage = { ...s.stage_params };
   form.rules = { ...s.rule_params };
@@ -98,6 +101,7 @@ async function save() {
   saving.value = true;
   try {
     fill(await pmSaveSettingsApi({ auto_base: form.auto_base, crowd_high: form.crowd_high, crowd_low: form.crowd_low,
+                                   holder_rise: form.holder_rise / 100, holder_run: form.holder_run / 100,
                                    label_mode: form.label_mode, push_daily: form.push_daily,
                                    rule_params: ruleOverrides,
                                    stage_params: stageOverrides, stage_preset: form.preset }));
@@ -136,6 +140,16 @@ onMounted(async () => fill(await pmSettingsApi()));
               <InputNumber v-model:value="form.crowd_low" :min="0.5" :max="4.9" :step="0.1" size="small" class="!w-20" />
               <span class="text-xs">以下时提示解除</span>
               <span class="text-xs text-gray-500">只对个股：按它所属的申万一级行业（钱去哪地图）；持有时提示减仓，未持有时只作提示</span>
+            </Space>
+          </Form.Item>
+          <Form.Item label="股东户数提醒">
+            <Space wrap>
+              <span class="text-xs">公告前 120 日涨幅 ≥</span>
+              <InputNumber v-model:value="form.holder_run" :min="10" :max="500" :step="10" size="small" class="!w-20" />
+              <span class="text-xs">%，且季末股东户数较上季增加 ≥</span>
+              <InputNumber v-model:value="form.holder_rise" :min="5" :max="500" :step="5" size="small" class="!w-20" />
+              <span class="text-xs">% 时提醒</span>
+              <span class="text-xs text-gray-500">“大涨后股东户数大增”：筹码分散到大量新股东手里。按默认值（50%、20%），2016–2026 年这类公告之后 60 天平均跑输约 4%，近半数跌过 20%（样本内统计）。持有时提示减仓，未持有时只作提示</span>
             </Space>
           </Form.Item>
           <Form.Item label="每日推送" class="!mb-0">

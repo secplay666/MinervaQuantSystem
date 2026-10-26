@@ -4,6 +4,10 @@ A factor maps (context, rows) -> raw values [R, N] for the requested session
 rows, using only data up to each row.  Cross-sectional processing
 (winsorize, neutralize, standardize, direction) is applied afterwards by
 ``features.processing`` inside the research universe.
+
+A candidate factor is evaluated under ADR-009 before it may count: it is
+left out of ``"all"`` (the factor list of the frozen strategy configs) and
+used only where a config names it.
 """
 
 from __future__ import annotations
@@ -32,6 +36,7 @@ class FactorSpec:
     neutralize: tuple[str, ...] = ("industry", "size")
     requires: tuple[str, ...] = ()   # e.g. ("fundamentals",)
     version: str = "1"
+    candidate: bool = False          # not in "all" until promoted (ADR-009)
 
     def __post_init__(self) -> None:
         if self.direction not in (1, -1):
@@ -51,7 +56,7 @@ class FactorSpec:
 
 
 _REGISTRY: dict[str, FactorSpec] = {}
-FAMILIES = ("value", "quality", "growth", "momentum", "volatility", "liquidity", "size", "technical")
+FAMILIES = ("value", "quality", "growth", "momentum", "volatility", "liquidity", "size", "technical", "holders")
 
 
 def register(spec: FactorSpec) -> FactorSpec:
@@ -74,7 +79,7 @@ def factor(id: str, family: str, description: str, direction: int, window: int, 
 
 
 def _load_builtin() -> None:
-    from . import fundamental, technical  # noqa: F401  (registration side effects)
+    from . import fundamental, holders, technical  # noqa: F401  (registration side effects)
 
 
 def get(factor_id: str) -> FactorSpec:
@@ -85,9 +90,11 @@ def get(factor_id: str) -> FactorSpec:
         raise KeyError(f"unknown factor {factor_id!r}; known: {sorted(_REGISTRY)}") from None
 
 
-def all_factors(family: str | None = None) -> list[FactorSpec]:
+def all_factors(family: str | None = None, candidates: bool = False) -> list[FactorSpec]:
+    """The registered factors in family order; candidates only when asked for."""
     _load_builtin()
-    specs = [spec for spec in _REGISTRY.values() if family is None or spec.family == family]
+    specs = [spec for spec in _REGISTRY.values()
+             if (family is None or spec.family == family) and (candidates or not spec.candidate)]
     return sorted(specs, key=lambda spec: (FAMILIES.index(spec.family), spec.id))
 
 

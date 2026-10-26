@@ -296,3 +296,16 @@
 - `pm_settings.auto_base`：左侧→筑底自动流转的开关，默认开。
 - `pm_quality`：质地评分（代码、计算日、档位、总分、六维明细 JSON、数据时点）。
 - `pm_label_changes.source` 新增 `auto`（自动流转）。
+
+### 11.8 大涨后股东户数大增（2026-10-26）
+
+- **规则**（`position/holders.py`）：季末股东户数较上一季末增加 ≥ `holder_rise`（默认 20%），且公告前 120 个交易日涨幅 ≥ `holder_run`（默认 50%）。在公告日当天或之后的第一根 K 线提醒；持有时为“减仓”，未持有时为“提示”。之后 60 个交易日内，标的旁显示“户数大增”标签。
+- **依据**：`research/stock_flow/holder_alert_grid.py`，2016–2026 年，样本内。按默认值共 2,706 次公告，之后 60 天：
+  - 平均超额 −3.9%；
+  - 31% 跑赢；
+  - 45% 期间跌过 20%；
+  - 11 年里有 10 年为负。
+
+  数字是选阈值时看到的，实际效果会弱一些。只是提醒，不是指令。
+- **数据**：`shareholder_counts`（东方财富 RPT_F10_EH_HOLDERNUM，ADR-004 的时点规则）。只用季末户数，和因子 `holders_qoq` 一致；季末之间的披露只在 K 线副图上显示。
+- **数据表变化**（迁移 0009）：`pm_settings.holder_run`、`pm_settings.holder_rise`，在“规则设置”里可调。

@@ -79,6 +79,8 @@ export interface PmRow {
   completion_change: null | number;
   entered: boolean;
   company?: null | { buying: boolean; days: number; notes: string[]; reducing: boolean };
+  /** 大涨后股东户数大增 within the last 60 sessions (fractions). */
+  holders?: null | { change: number; end_date: string; notice_date: string; run: number };
   half_entry: boolean;
   industry?: null | PmIndustry;
   last_exit: null | { date: string; name: string; rule: string };
@@ -241,6 +243,8 @@ export interface PmSettings {
   crowd_high: number;
   crowd_low: number;
   evaluated_through: null | string;
+  holder_rise: number;
+  holder_run: number;
   label_mode: 'manual' | 'suggest';
   presets: { key: string; name: string; params: Record<string, number> }[];
   push_daily: boolean;
@@ -306,7 +310,7 @@ export const pmSignalsApi = (unread = false) =>
 export const pmReadSignalsApi = (ids?: number[]) =>
   requestClient.post<{ marked: number; unread: number }>('/pm/signals/read', { ids: ids ?? null });
 export const pmSettingsApi = () => requestClient.get<PmSettings>('/pm/settings');
-export const pmSaveSettingsApi = (body: Partial<{ auto_base: boolean; crowd_high: number; crowd_low: number; label_mode: string; push_daily: boolean; rule_params: Record<string, any>;
+export const pmSaveSettingsApi = (body: Partial<{ auto_base: boolean; crowd_high: number; crowd_low: number; holder_rise: number; holder_run: number; label_mode: string; push_daily: boolean; rule_params: Record<string, any>;
   stage_params: Record<string, number>; stage_preset: string }>) => requestClient.put<PmSettings>('/pm/settings', body);
 export const pmStageApi = (symbol: string, preset?: string) =>
   requestClient.get<{ kind: string; name: string; params: Record<string, number>; segments: { end: string; name: string; stage: string; start: string }[];

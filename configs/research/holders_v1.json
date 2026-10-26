@@ -1,0 +1,83 @@
+{
+  "name": "holders_v1_factors",
+  "experiment": "holders_v1",
+  "hypothesis": "股东户数季度减少（筹码集中）的股票之后跑赢、增加的跑输（候选因子 holders_qoq，方向 -1）。2026-10-25 用巨潮数据做的事件研究（2016–2026）已看到每期 +2.64% 的五档差，覆盖了这里的样本外期间，所以样本外不是全新的；同列现有 27 个因子以比较和看相关性",
+  "data": {
+    "source": "duckdb",
+    "path": "data/market.duckdb"
+  },
+  "market_rules": "configs/market_rules/cn_a_share.json",
+  "schedule": {
+    "type": "month_end"
+  },
+  "universe": {
+    "size": 1800,
+    "boards": [
+      "SSE_MAIN",
+      "SZSE_MAIN",
+      "CHINEXT",
+      "STAR"
+    ],
+    "min_listing_sessions": 250,
+    "coverage_window": 60,
+    "min_coverage": 0.8,
+    "min_price": 2.0,
+    "turnover_window": 20,
+    "turnover_weight": 0.5,
+    "exclude_risk_warning": true
+  },
+  "processing": {
+    "winsorize_k": 3.0,
+    "neutralize": true,
+    "min_names": 30
+  },
+  "factors": [
+    "bp",
+    "cfp_ttm",
+    "dy_ttm",
+    "ep_ttm",
+    "sp_ttm",
+    "accruals",
+    "gross_margin_ttm",
+    "leverage",
+    "roa_ttm",
+    "roe_ttm",
+    "dni_yoy",
+    "ni_yoy",
+    "rev_yoy",
+    "high_52w",
+    "mom_12_1",
+    "mom_6_1",
+    "rev_1m",
+    "ivol_60",
+    "max_20",
+    "vol_60",
+    "abn_turn",
+    "amihud_20",
+    "turn_20",
+    "ln_float_mcap",
+    "amplitude_20",
+    "pv_corr_20",
+    "turn_vol_20",
+    "holders_qoq"
+  ],
+  "samples": {
+    "is": [
+      "2021-01-01",
+      "2023-12-31"
+    ],
+    "oos": [
+      "2024-01-01",
+      "2026-09-30"
+    ]
+  },
+  "evaluation": {
+    "horizons": [
+      1,
+      2,
+      3,
+      6
+    ],
+    "quantiles": 5
+  }
+}
