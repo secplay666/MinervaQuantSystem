@@ -17,6 +17,7 @@
     "@capacitor/app": "^8.0.0",
     "@capacitor/core": "^8.5.2",
     "dayjs": "catalog:",
+    "echarts": "catalog:",
     "klinecharts": "^10.0.3",
     "vant": "^4.10.2",
     "vue": "catalog:",

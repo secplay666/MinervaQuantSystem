@@ -33,7 +33,7 @@ onMounted(load);
     <van-notice-bar v-if="unread" left-icon="bell" mode="link" :text="`${unread} 条未读通知`" @click="router.push('/events')" />
     <van-cell-group v-if="overview" inset title="市场" style="margin-top: 12px">
       <van-grid :column-num="3" :border="false">
-        <van-grid-item v-for="index in overview.indices" :key="index.symbol">
+        <van-grid-item v-for="index in overview.indices" :key="index.symbol" clickable @click="router.push(`/chart/${index.symbol}`)">
           <div class="muted">{{ index.name }}</div>
           <div :style="{ color: color(index.change_pct), fontWeight: 600 }">{{ index.close.toFixed(2) }}</div>
           <div :style="{ color: color(index.change_pct), fontSize: '12px' }">{{ pct(index.change_pct, 2, true) }}</div>

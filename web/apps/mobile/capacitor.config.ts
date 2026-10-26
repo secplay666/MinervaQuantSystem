@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.minerva.decision',
-  appName: 'Minerva 决策',
+  appName: 'Minerva',
   webDir: 'dist',
   android: { allowMixedContent: false },
   plugins: {

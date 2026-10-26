@@ -54,5 +54,17 @@ export async function request<T = any>(path: string, init: RequestInit = {}, ret
   return (res.headers.get('content-type') ?? '').includes('json') ? res.json() : ((await res.text()) as T);
 }
 
-export const post = <T = any>(path: string, body?: unknown) =>
-  request<T>(path, { body: body === undefined ? undefined : JSON.stringify(body), method: 'POST' });
+function send<T>(method: string, path: string, body?: unknown): Promise<T> {
+  return request<T>(path, { body: body === undefined ? undefined : JSON.stringify(body), method });
+}
+
+export const post = <T = any>(path: string, body?: unknown) => send<T>('POST', path, body);
+export const put = <T = any>(path: string, body?: unknown) => send<T>('PUT', path, body);
+export const patch = <T = any>(path: string, body?: unknown) => send<T>('PATCH', path, body);
+export const del = <T = any>(path: string) => send<T>('DELETE', path);
+
+/** Query string from the defined values of ``params`` ('' when none). */
+export function qs(params: Record<string, boolean | null | number | string | undefined>): string {
+  const pairs = Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '');
+  return pairs.length ? `?${pairs.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join('&')}` : '';
+}

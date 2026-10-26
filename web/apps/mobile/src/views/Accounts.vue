@@ -22,7 +22,7 @@ onMounted(load);
 </script>
 
 <template>
-  <van-nav-bar title="账户" />
+  <van-nav-bar title="账户" left-arrow @click-left="router.back()" />
   <van-pull-refresh v-model="loading" @refresh="load">
     <van-empty v-if="!accounts.length && !loading" description="暂无账户" />
     <van-cell-group inset style="margin-top: 12px">

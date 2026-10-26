@@ -5,7 +5,7 @@ import { useRouter } from 'vue-router';
 import { showFailToast, showSuccessToast } from 'vant';
 
 import { post, request } from '../api';
-import { auth, clearAuth, isNative, saveAuth, serverUrl } from '../store';
+import { auth, can, clearAuth, isNative, saveAuth, serverUrl } from '../store';
 
 const router = useRouter();
 const form = reactive({ confirm: '', current: '', next: '' });
@@ -54,6 +54,11 @@ async function reloadMe() {
     <van-cell title="角色" :value="(auth.user?.roles ?? []).map((r) => ROLE[r] ?? r).join('、')" />
     <van-cell v-if="isNative" title="服务器" :value="serverUrl()" />
     <van-cell title="两步验证" :value="auth.user?.totp_enabled ? '已开启' : '未开启（在电脑端设置）'" />
+  </van-cell-group>
+  <van-cell-group inset title="更多">
+    <van-cell v-if="can('account:view')" title="账户" icon="balance-o" is-link to="/accounts" />
+    <van-cell v-if="can('event:view')" title="通知中心" icon="bell" is-link to="/events" />
+    <van-cell v-if="can('data:view')" title="数据健康" icon="records-o" is-link to="/data" />
   </van-cell-group>
   <van-cell-group inset title="修改密码">
     <van-field v-model="form.current" type="password" label="当前密码" autocomplete="current-password" />

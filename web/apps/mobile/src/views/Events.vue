@@ -57,7 +57,7 @@ onBeforeUnmount(() => clearInterval(timer));
 </script>
 
 <template>
-  <van-nav-bar title="通知" :right-text="unread ? '全部已读' : ''" @click-right="unread && readAll()" />
+  <van-nav-bar title="通知" left-arrow :right-text="unread ? '全部已读' : ''" @click-left="router.back()" @click-right="unread && readAll()" />
   <van-pull-refresh v-model="loading" @refresh="load()">
     <van-empty v-if="!items.length && !loading" description="暂无通知" />
     <van-cell-group inset style="margin-top: 12px">
