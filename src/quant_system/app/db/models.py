@@ -355,6 +355,10 @@ class Event(Base):
     account_id: Mapped[str | None] = mapped_column(String(64))
     symbol: Mapped[str | None] = mapped_column(String(16))
     action_hint: Mapped[str | None] = mapped_column(Text)
+    # Set when a later run fixed what the event reported (the evening update's retry, a rerun of the day's
+    # decision; app/recovery.py): the home page's 待办 drops it, the notification centre marks it 已恢复.
+    resolved_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    resolution: Mapped[str | None] = mapped_column(Text)
 
 
 class EventRead(Base):

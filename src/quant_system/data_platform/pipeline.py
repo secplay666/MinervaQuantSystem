@@ -932,6 +932,15 @@ class IngestionPipeline:
                     sessions = set(ctx.open_dates)
                     incoming = incoming[incoming["trade_date"].isin(sessions)].reset_index(drop=True)
                 issues = validate_index_refresh(incoming, existing, item.symbol)
+                if any(issue.rule == "not_regressed" for issue in issues):
+                    # The source served an older series than the one stored (CSIndex once did, 2026-10-28): keep
+                    # the stored history, set the response aside and fetch again next run.  The data is not
+                    # damaged, so this does not block the run (as a failed download does not).
+                    self._quarantine(ctx, step, f"symbol={item.symbol}", incoming)
+                    self._reject_raw(ctx, raw_path)
+                    ctx.issues.extend(replace(issue, severity="warning") for issue in issues)
+                    ctx.count(step, "stale")
+                    continue
                 merged = merge_index_bars(existing, incoming)
                 if item.source == "csindex":
                     merged = merged[merged["trade_date"].isin(sessions)].reset_index(drop=True)

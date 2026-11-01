@@ -119,6 +119,9 @@ export interface EventItem {
   event_id: string;
   level: 'critical' | 'info' | 'warning';
   read: boolean;
+  /** Set when a later run fixed what the event reported (the update's retry, a decision rerun). */
+  resolution?: null | string;
+  resolved_at?: null | string;
   run_id: null | string;
   symbol: null | string;
   title: string;

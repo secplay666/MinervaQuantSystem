@@ -24,7 +24,9 @@ def event_view(event: Event, read: bool) -> dict:
     return {"event_id": event.event_id, "at": event.at.isoformat(), "level": event.level,
             "category": event.category, "title": event.title, "body": event.body, "run_id": event.run_id,
             "trade_date": event.trade_date.isoformat() if event.trade_date else None,
-            "account_id": event.account_id, "symbol": event.symbol, "action_hint": event.action_hint, "read": read}
+            "account_id": event.account_id, "symbol": event.symbol, "action_hint": event.action_hint, "read": read,
+            "resolved_at": event.resolved_at.isoformat() if event.resolved_at else None,
+            "resolution": event.resolution}
 
 
 @router.get("/events")

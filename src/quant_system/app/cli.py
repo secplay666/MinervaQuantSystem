@@ -162,6 +162,21 @@ def command_event_add(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_event_resolve(args: argparse.Namespace) -> int:
+    """Mark the open critical events whose id starts with --prefix as recovered and, when there were any, record
+    one info event --id saying so (app/recovery.py).  Prints how many were resolved."""
+    from .recovery import open_critical, recover
+
+    settings = _settings(args, require_secret=False)
+    _, sessions = open_database(settings.db_path)
+    with sessions() as session:
+        resolved = recover(session, open_critical(category=args.category, prefix=args.prefix), args.id, args.title,
+                           args.resolution, category=args.category)
+        session.commit()
+    print(len(resolved))
+    return 0
+
+
 def command_notify_status(args: argparse.Namespace) -> int:
     print(json.dumps(_settings(args, require_secret=False).notify.describe(), ensure_ascii=False, indent=2))
     return 0
@@ -315,6 +330,13 @@ def build_parser() -> argparse.ArgumentParser:
     event_add.add_argument("--trade-date")
     event_add.add_argument("--id", help="event id; an existing id is left unchanged")
     event_add.set_defaults(handler=command_event_add)
+    event_resolve = event.add_parser("resolve", help="mark open critical events as recovered (a later run succeeded)")
+    event_resolve.add_argument("--category", choices=["data", "decision", "risk", "account", "system"], required=True)
+    event_resolve.add_argument("--prefix", required=True, help="event-id prefix, e.g. ingest-")
+    event_resolve.add_argument("--id", required=True, help="id of the info event recording the recovery")
+    event_resolve.add_argument("--title", required=True)
+    event_resolve.add_argument("--resolution", required=True, help="what fixed it, kept on the resolved events")
+    event_resolve.set_defaults(handler=command_event_resolve)
     notify = sub.add_parser("notify").add_subparsers(dest="notify_command", required=True)
     notify.add_parser("status", help="configured channels (secrets masked)").set_defaults(
         handler=command_notify_status)
