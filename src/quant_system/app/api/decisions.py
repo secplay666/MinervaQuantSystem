@@ -255,7 +255,7 @@ def todo(principal: Principal = Depends(view), session: Session = Depends(get_se
     """What needs attention, for the home page: per active account, every
     complete decision that still has intents to review (a later blocked day
     does not hide them), whether its latest decision was blocked or failed,
-    and the user's unread critical events."""
+    and the user's unread critical events that no later run has resolved (app/recovery.py)."""
     now = utc_now()
     accounts = []
     for account in session.scalars(select(Account).where(Account.is_active.is_(True)).order_by(Account.account_id)):
@@ -289,7 +289,8 @@ def todo(principal: Principal = Depends(view), session: Session = Depends(get_se
                        if failed_gate else None,
                        "reason": latest.reason if latest.status == "failed" else None}})
     read = select(EventRead.event_id).where(EventRead.user_id == principal.user.id)
-    critical = list(session.scalars(select(Event).where(Event.level == "critical", Event.event_id.not_in(read))
+    critical = list(session.scalars(select(Event).where(Event.level == "critical", Event.resolved_at.is_(None),
+                                                        Event.event_id.not_in(read))
                                     .order_by(Event.at.desc()).limit(5)))
     return {"accounts": accounts,
             "critical_unread": [{"event_id": e.event_id, "title": e.title, "at": e.at.isoformat(),

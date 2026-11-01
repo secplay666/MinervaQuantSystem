@@ -288,6 +288,13 @@ def test_gates_block_and_a_later_complete_run_replaces_the_block(tmp_path: Path,
     assert complete.status == "complete"
     statuses = {r.run_id: r.status for r in query(root, select(DecisionRun))}
     assert statuses[blocked.run_id] == statuses[mismatch.run_id] == "superseded"
+    # The completed rerun closes the day's two block events and says so once (app/recovery.py).
+    events = {e.event_id: e for e in query(root, select(Event))}
+    for run_id in (blocked.run_id, mismatch.run_id):
+        assert events[f"{run_id}-blocked"].resolved_at is not None
+        assert complete.run_id in events[f"{run_id}-blocked"].resolution
+    recovered = events[f"{complete.run_id}-recovered"]
+    assert recovered.level == "info" and recovered.trade_date == day and "决策被闸门" in recovered.body
     (late_failure,) = run(root, loaded, day, status="partial")
     assert late_failure.status == "skipped"  # never replaces a finished decision
 

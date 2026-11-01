@@ -161,6 +161,31 @@ def test_empty_index_response_never_overwrites_history(tmp_path: Path) -> None:
     pd.testing.assert_frame_equal(pd.read_parquet(path), before)
 
 
+def test_a_stale_index_response_is_set_aside_without_blocking(tmp_path: Path) -> None:
+    """The source serving an older series than the one stored (CSIndex, 2026-10-28) keeps the stored history and
+    warns; it does not block the run, as nothing was damaged."""
+    provider = FakeProvider(today=date(2026, 9, 24))
+    run(tmp_path, provider, SATURDAY_NIGHT)
+    path = canonical_path(tmp_path, "index_bars", "symbol=sh000001")
+    before = pd.read_parquet(path)
+    fetch = provider.fetch_index_daily
+
+    def stale(symbol: str, start: str, end: str):
+        result = fetch(symbol, start, end)
+        return replace(result, frame=result.frame[pd.to_datetime(result.frame["date"]).dt.date < date(2026, 9, 24)])
+
+    provider.fetch_index_daily = stale
+    manifest = run(tmp_path, provider, SATURDAY_NIGHT)
+
+    assert manifest["status"] == "complete", blocking(tmp_path, manifest)
+    pd.testing.assert_frame_equal(pd.read_parquet(path), before)
+    found = issues(tmp_path, manifest)
+    found = found[found["rule"] == "not_regressed"]
+    assert len(found) and set(found["severity"]) == {"warning"}
+    raw = tmp_path / "data" / "raw" / "akshare"
+    assert (raw / "index_bars_rejected" / f"run_id={manifest['run_id']}" / "sh000001.parquet").exists()
+
+
 def test_blocking_bar_issues_quarantine_instead_of_overwriting(tmp_path: Path) -> None:
     provider = FakeProvider(today=date(2026, 9, 24))
     run(tmp_path, provider, SATURDAY_NIGHT)

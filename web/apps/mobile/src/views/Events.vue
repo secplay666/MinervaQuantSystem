@@ -64,6 +64,7 @@ onBeforeUnmount(() => clearInterval(timer));
       <van-cell v-for="event in items" :key="event.event_id" is-link :label="`${time(event.at)} · ${event.body ?? ''}`" @click="open(event)">
         <template #title>
           <van-tag :type="(LEVEL[event.level]?.[1] as any)" style="margin-right: 6px">{{ LEVEL[event.level]?.[0] }}</van-tag>
+          <van-tag v-if="event.resolved_at" type="success" plain style="margin-right: 6px">已恢复</van-tag>
           <span :style="{ fontWeight: event.read ? 'normal' : '600' }">{{ event.title }}</span>
         </template>
       </van-cell>

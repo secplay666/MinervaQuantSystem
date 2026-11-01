@@ -72,11 +72,15 @@ onMounted(load);
       <Table :columns="columns" :data-source="items" :loading="loading" row-key="event_id" size="small"
              :pagination="{ pageSize: 30 }" class="cursor-pointer" :custom-row="(record: EventItem) => ({ onClick: () => open(record) })">
         <template #bodyCell="{ column, record }">
-          <template v-if="column.key === 'level'"><Tag :color="LEVEL[record.level]?.color">{{ LEVEL[record.level]?.label }}</Tag></template>
+          <template v-if="column.key === 'level'">
+            <Tag :color="LEVEL[record.level]?.color">{{ LEVEL[record.level]?.label }}</Tag>
+            <Tag v-if="record.resolved_at" color="green" class="mt-1">已恢复</Tag>
+          </template>
           <template v-else-if="column.key === 'category'">{{ CATEGORY[record.category] ?? record.category }}</template>
           <template v-else-if="column.key === 'title'">
             <span :class="record.read ? 'text-muted-foreground' : 'font-semibold'">{{ record.title }}</span>
             <div class="text-muted-foreground text-xs">{{ record.body }}<template v-if="record.action_hint"> · {{ record.action_hint }}</template></div>
+            <div v-if="record.resolved_at" class="text-xs text-green-600">已恢复（{{ dateTime(record.resolved_at) }}）：{{ record.resolution }}</div>
           </template>
           <template v-else-if="column.key === 'at'">{{ dateTime(record.at) }}</template>
         </template>

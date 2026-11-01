@@ -44,6 +44,7 @@ from ..app.db.models import (
     RiskCheck,
     TargetPosition,
 )
+from ..app.recovery import open_critical, recover
 from ..backtest.config import BacktestConfig
 from ..backtest.market_data import MarketData, load_market_data
 from ..backtest.view import PanelView
@@ -503,7 +504,11 @@ def _run_account(factory: sessionmaker[Session], shared: _Shared, account_id: st
             failed = next(g for g in gates if not g.passed)
             _event(session, f"{run_id}-blocked", "critical", "decision", f"决策被闸门 {failed.gate} 阻断",
                    failed.message, run_id, day, account_id, failed.hint)
-        elif intents:
+        else:  # a blocked or failed earlier run of this day is fixed now (app/recovery.py)
+            recover(session, open_critical(category="decision", account_id=account_id, trade_date=day),
+                    f"{run_id}-recovered", f"决策已恢复：{day} 的决策重跑后完成", f"{run_id} 完成",
+                    category="decision", run_id=run_id, trade_date=day, account_id=account_id)
+        if status == "complete" and intents:
             sells = sum(1 for d in intents if d.side == "sell")
             _event(session, f"{run_id}-ready", "info", "decision",
                    f"交易清单已生成：卖出 {sells} 笔，买入 {len(intents) - sells} 笔，待审核",

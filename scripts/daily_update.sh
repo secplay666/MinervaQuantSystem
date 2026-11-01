@@ -101,6 +101,17 @@ if [[ -x "$APP" ]]; then
       --title "数据备份失败（退出码 $backup_rc）" --body "日志：logs/daily/$day.log" \
       --hint "检查备份盘；下一次成功的备份会补齐" >> "$LOG" 2>&1
   fi
+  # A run that succeeds closes the earlier failures still open (the 21:47 retry after a failed 18:17 run): they
+  # leave the home page's 待办 and one info event says so (src/quant_system/app/recovery.py).
+  stamp="$(date -d "@$now" '+%m-%d %H:%M')"
+  if (( rc == 0 )); then
+    "$APP" --root "$REPO" event resolve --category data --prefix "ingest-" --id "recovered-ingest-$day-$now" \
+      --title "每日数据采集已恢复" --resolution "$stamp 开始的采集完整完成" >> "$LOG" 2>&1
+  fi
+  if (( backup_rc == 0 )); then
+    "$APP" --root "$REPO" event resolve --category data --prefix "backup-" --id "recovered-backup-$day-$now" \
+      --title "数据备份已恢复" --resolution "$stamp 开始的运行备份成功" >> "$LOG" 2>&1
+  fi
   # Position manager: every user's signals of the new session, and the daily
   # push events of those who asked for it (counts only), before the digest.
   note "== position manager"
