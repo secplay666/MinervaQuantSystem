@@ -64,7 +64,7 @@ async function load() {
 
 function line(index: VolIndex, points: [string, null | number][]) {
   return { color: COLORS[index.id], connectNulls: true, data: points, endLabel: { formatter: index.name.replace(' 波动率', '').replace(' 股指期权波动率', ''), show: true, fontSize: 10 },
-           lineStyle: { width: 2 }, name: index.name, showSymbol: false, type: 'line' as const };
+           labelLayout: { moveOverlap: 'shiftY' as const }, lineStyle: { width: 2 }, name: index.name, showSymbol: false, type: 'line' as const };
 }
 
 const option = computed<EChartsOption>(() => {

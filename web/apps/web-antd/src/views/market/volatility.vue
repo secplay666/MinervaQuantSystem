@@ -78,8 +78,9 @@ function minutes(): string[] {
 
 function lineSeries(index: VolatilityIndex, points: [string, null | number][]) {
   return {
-    color: colorOf(index.id), connectNulls: true, data: points, endLabel: { color: ink.value, formatter: index.name, show: true },
-    lineStyle: { width: 2 }, name: index.name, showSymbol: false, symbol: 'circle', symbolSize: 8, type: 'line' as const,
+    color: colorOf(index.id), connectNulls: true, data: points,
+    endLabel: { color: ink.value, formatter: index.name.replace(' 股指期权波动率', ' 期权').replace(' 波动率', ''), show: true },
+    labelLayout: { moveOverlap: 'shiftY' as const }, lineStyle: { width: 2 }, name: index.name, showSymbol: false, symbol: 'circle', symbolSize: 8, type: 'line' as const,
   };
 }
 
@@ -89,7 +90,7 @@ function draw() {
   const axis = { axisLabel: { color: muted.value }, axisLine: { lineStyle: { color: muted.value } } };
   const split = { lineStyle: { color: isDark.value ? '#2a2a2c' : '#ececea' } };
   const legend = { textStyle: { color: ink.value }, top: 0 };
-  const grid = { bottom: 40, left: 48, right: 150, top: 36 };
+  const grid = { bottom: 40, left: 48, right: 110, top: 36 };
   if (d.day) {
     const xs = minutes();
     renderIntraday({
