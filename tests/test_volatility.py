@@ -220,3 +220,25 @@ def test_the_backfill_replays_stored_minutes_of_the_sse_options() -> None:
     out = replay_minutes(pd.DataFrame(minutes), pd.DataFrame(contracts), CONFIG, day)
     assert out["time"].tolist() == ["09:31", "09:32"]
     assert out["value"].tolist() == pytest.approx([20.0, 25.0], abs=0.4)
+
+
+def test_every_configured_index_is_listed_even_without_its_minutes(tmp_path: Path) -> None:
+    from quant_system.app.monitor import VolatilityQueries
+
+    (tmp_path / "configs" / "monitor").mkdir(parents=True)
+    (tmp_path / "configs" / "monitor" / "volatility.json").write_text(json.dumps({"indices": [
+        {"id": "etf300", "name": "300ETF 波动率", "exchange": "SSE", "underlying": "510300"},
+        {"id": "io", "name": "沪深300 股指期权波动率", "exchange": "CFFEX", "underlying": "IO"}]}), encoding="utf-8")
+    base = tmp_path / "data" / "monitor" / "volatility"
+    base.mkdir(parents=True)
+    days = list(pd.bdate_range(end="2026-11-04", periods=10).date)
+    pd.DataFrame({"id": ["etf300"] * 10 + ["io"] * 10, "trade_date": days * 2,
+                  "value": list(range(10, 20)) + list(range(30, 40))}).to_parquet(base / "daily.parquet", index=False)
+    fake = FakeChains()
+    state = IndexState(ETF300, [("2026-11", date(2026, 11, 25)), ("2026-12", date(2026, 12, 23))])
+    VolatilityMonitor(tmp_path, CONFIG, date(2026, 11, 3), [state], fake, lambda: fake.now).poll()
+    result = VolatilityQueries(tmp_path).day()
+    assert [i["id"] for i in result["indices"]] == ["etf300", "io"]
+    io = result["indices"][1]
+    assert io["name"] == "沪深300 股指期权波动率" and io["series"] == []
+    assert io["value"] == 38 and io["previous_close"] == 37   # its daily value of 11-03, and 11-02's

@@ -77,7 +77,14 @@ class VolatilityQueries:
 
     def __init__(self, root: Path) -> None:
         self.base = root / "data" / "monitor" / "volatility"
+        self.config = root / "configs" / "monitor" / "volatility.json"
         self._history: tuple[float, pd.DataFrame] | None = None
+
+    def configured(self) -> list[dict[str, Any]]:
+        if not self.config.is_file():
+            return []
+        payload = json.loads(self.config.read_text(encoding="utf-8"))
+        return [dict(item) for item in payload.get("indices", [])]
 
     def days(self) -> list[str]:
         if not self.base.is_dir():
@@ -114,7 +121,16 @@ class VolatilityQueries:
         live = bool(status) and not status.get("final") and \
             now - datetime.fromisoformat(status["updated"]) < timedelta(minutes=3)
         alerts = {a["id"]: a["time"] for a in status.get("alerts", [])}
-        indices = status.get("indices") or [{"id": i} for i in sorted(history["id"].unique())]
+        # Every configured index, in config order: a day without an index's minutes (a backfilled day has the SSE
+        # ones only) still shows its latest daily value.
+        indices = list(status.get("indices") or [])
+        known = {meta["id"] for meta in indices}
+        for meta in self.configured() + [{"id": i} for i in sorted(history["id"].unique())]:
+            if meta["id"] not in known:
+                indices.append(meta)
+                known.add(meta["id"])
+        order = {meta["id"]: k for k, meta in enumerate(self.configured())}
+        indices.sort(key=lambda meta: order.get(meta["id"], len(order)))
         out = []
         for meta in indices:
             own = history[history["id"] == meta["id"]].sort_values("trade_date")
@@ -124,7 +140,11 @@ class VolatilityQueries:
             series = minutes[minutes["id"] == meta["id"]].sort_values("time")
             series = series[series["value"].notna()]
             latest = series.iloc[-1] if len(series) else None
-            value = float(latest["value"]) if latest is not None else (float(own["value"].iloc[-1]) if len(own) else None)
+            if latest is not None:
+                value = float(latest["value"])
+            else:  # no minutes of this index that day: its daily value then (or the latest one before it)
+                upto = own[own["trade_date"] <= pd.Timestamp(day).date()] if day else own
+                value = float(upto["value"].iloc[-1]) if len(upto) else None
             previous = meta.get("previous_close")
             if previous is None and len(before):
                 previous = float(before["value"].iloc[-1])
