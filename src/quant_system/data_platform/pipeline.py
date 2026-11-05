@@ -179,8 +179,10 @@ MAX_RECORDED_ERRORS = 200
 STEPS = ("daily_bars", "adjustment_factors", "indices", "status_history", "market_snapshot", "corporate",
          "company_actions", "classification", "fundamentals", "etf", "intraday")
 # Run only when asked (``--steps``): the one-off backfill of history before
-# the earliest stored bar, e.g. after start_date moved earlier.
-OPTIONAL_STEPS = ("bars_history", "options")
+# the earliest stored bar, e.g. after start_date moved earlier; the options
+# (morning catch-up); the SSE option minute bars of the session just closed
+# (the evening update: the source clears them before the next morning).
+OPTIONAL_STEPS = ("bars_history", "options", "option_minutes")
 ALL_STEPS = STEPS + OPTIONAL_STEPS
 CORPORATE_MAX_CONSECUTIVE_FAILURES = 3
 ETF_MAX_CONSECUTIVE_FAILURES = 2
@@ -300,8 +302,10 @@ class IngestionPipeline:
         self._ingest_security_master(ctx)
         universe = self._daily_universe(ctx)
         if "options" in self.steps and self.config.download_options:
-            # First: the source keeps the option minute bars only until the next session opens (09:30).
             self._ingest_options(ctx)
+        if ("option_minutes" in self.steps and self.config.download_options and self.config.download_option_minutes
+                and "options" not in self.steps):
+            self._ingest_session_option_minutes(ctx)
         if "daily_bars" in self.steps:
             self._ingest_daily_bars(ctx, universe)
         if "bars_history" in self.steps:
@@ -1414,8 +1418,9 @@ class IngestionPipeline:
         """Exchange-traded options (options.py) for the options page, run by the morning catch-up.
 
         Session by session what the fetch log lacks: the SSE risk indicators (which also list the contracts),
-        then the latest session's SSE minute bars (the source keeps that session only, until the next one
-        opens), the CFFEX daily statistics, and last the SSE daily bars of every contract not fetched since its
+        then the latest session's SSE minute bars (the source keeps that session only and clears it before the
+        next morning on weekdays, so the evening update fetches them: ``option_minutes``), the CFFEX daily
+        statistics, and last the SSE daily bars of every contract not fetched since its
         latest session (each request returns a contract's whole history).  Stored phase by phase, so a long
         backfill keeps what it got.  The data feeds a page: problems are warnings, failures are retried next run.
         """
@@ -1579,6 +1584,17 @@ class IngestionPipeline:
             write_canonical_frame(self.root, "option_minute_bars", merged, partition=partition)
             totals = merge_option_totals(read_canonical(self.root, "option_minute_totals"), option_minute_totals(merged))
             write_canonical_frame(self.root, "option_minute_totals", totals)
+
+    def _ingest_session_option_minutes(self, ctx: RunContext) -> None:
+        """The evening's fetch of the session's SSE option minute bars: Sina clears them before the next morning
+        (weekday catch-ups at 09:05 found them empty; only Saturday's caught Friday's), so they are taken after the
+        close.  The contracts are those stored by the morning catch-up; one listed today is missed."""
+        assert ctx.expected_latest is not None
+        contracts = read_canonical(self.root, "option_contracts")
+        if contracts is None or contracts.empty:
+            return
+        self._ingest_option_minutes(ctx, contracts, ctx.expected_latest)
+        self._option_warnings(ctx, ctx.expected_latest)
 
     def _option_warnings(self, ctx: RunContext, latest: date) -> None:
         counts = {step: ctx.counters.get(step, {}) for step in

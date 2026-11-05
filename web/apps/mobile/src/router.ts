@@ -19,6 +19,7 @@ const router = createRouter({
     { component: () => import('./views/market/CompanyActions.vue'), meta: { permission: 'market:view' }, path: '/company-actions' },
     { component: () => import('./views/market/BigMoney.vue'), meta: { permission: 'market:view' }, path: '/big-money' },
     { component: () => import('./views/market/Options.vue'), meta: { permission: 'market:view' }, path: '/options' },
+    { component: () => import('./views/market/Volatility.vue'), meta: { permission: 'market:view' }, path: '/volatility' },
     // 仓位管家
     { component: () => import('./views/pm/Board.vue'), meta: { permission: 'position:use', tab: true }, path: '/pm' },
     { component: () => import('./views/pm/Library.vue'), meta: { permission: 'position:use' }, path: '/pm/library' },

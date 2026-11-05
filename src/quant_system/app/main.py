@@ -25,7 +25,7 @@ from .etf import EtfQueries
 from .market import MarketQueries
 from .money_map import money_map_for
 from .options import options_for
-from .monitor import BigMoneyQueries
+from .monitor import BigMoneyQueries, VolatilityQueries
 from .breadth import market_breadth_for
 from .company_actions import company_actions_for
 from .position_jobs import StageBacktests
@@ -57,6 +57,7 @@ def create_app(settings: AppSettings) -> FastAPI:
     app.state.breadth = market_breadth_for(settings.market_db)
     app.state.options = options_for(settings.market_db)
     app.state.big_money = BigMoneyQueries(settings.root)
+    app.state.volatility = VolatilityQueries(settings.root)
     app.state.stage_jobs = StageBacktests(app.state.market)
     app.state.jobs = {}
     app.add_middleware(GZipMiddleware, minimum_size=1024)

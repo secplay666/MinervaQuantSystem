@@ -95,6 +95,12 @@ const routes: RouteRecordRaw[] = [
         meta: { authority: ['market:view'], icon: 'lucide:radar', title: '盘中大资金' },
       },
       {
+        name: 'Volatility',
+        path: '/volatility',
+        component: () => import('#/views/market/volatility.vue'),
+        meta: { authority: ['market:view'], icon: 'lucide:siren', title: '恐慌指数' },
+      },
+      {
         name: 'Options',
         path: '/options', // ?underlying=510050&month=2026-10&contract=10009003
         component: () => import('#/views/market/options.vue'),

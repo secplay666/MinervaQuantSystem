@@ -54,9 +54,16 @@ print("\t".join(str(v) for v in (sys.argv[2], sys.argv[3], m.get("run_id"), m.ge
                                  m.get("expected_latest_date"), q.get("blocking"), q.get("warning"))))
 EOF
 
+# The 恐慌指数' daily history from the option bars just fetched (monitor/volatility.py, about a minute).
+APP="$REPO/.venv/bin/quant-app"
+if [[ -x "$APP" ]]; then
+  note "== volatility history"
+  "$APP" --root "$REPO" monitor volatility-history >> "$LOG" 2>&1
+  note "== volatility history exit $?"
+fi
+
 # A failed catch-up is caught up by the evening run; it only becomes a warning
 # in the notification centre (sent with the evening digest).
-APP="$REPO/.venv/bin/quant-app"
 if (( rc != 0 )) && [[ -x "$APP" ]]; then
   "$APP" --root "$REPO" event add --level warning --category data --id "catchup-$(date +%F)-$now" \
     --title "早上补抓 ETF 份额、指数和期权未完成（退出码 $rc）" --body "日志：logs/daily/$(date +%F)-catchup.log" \

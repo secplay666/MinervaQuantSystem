@@ -22,6 +22,7 @@ const ENTRIES = [
   { icon: 'cash-back-record-o', path: '/company-actions', text: '回购增持' },
   { icon: 'fire-o', path: '/big-money', text: '盘中大资金' },
   { icon: 'balance-list-o', path: '/options', text: '期权' },
+  { icon: 'warning-o', path: '/volatility', text: '恐慌指数' },
 ];
 
 function onInput() {

@@ -170,3 +170,21 @@ def test_the_options_step_runs_only_when_asked_and_the_rebuild_agrees(tmp_path: 
     report = rebuild_canonical(tmp_path, make_config())
     for dataset in OPTION_DATASETS:
         assert report["diff"][dataset]["live"] == report["diff"][dataset]["rebuilt"], dataset
+
+
+def test_the_evening_step_takes_the_minutes_of_the_session_just_closed(tmp_path: Path) -> None:
+    """Sina clears the minutes before the next morning, so the evening update fetches them (step option_minutes);
+    the morning catch-up then has nothing left to fetch."""
+    provider = FakeProvider(today=date(2026, 9, 23), options=True)
+    morning(tmp_path, provider, date(2026, 9, 23))               # contracts known from the catch-up of 09-23
+    provider.calls.clear()
+    evening = IngestionPipeline(tmp_path, make_config(), provider=provider, clock=lambda: at(date(2026, 9, 23), 18, 20))
+    report = evening.run(steps={"option_minutes"})
+    assert not issues(tmp_path, report)["dataset"].str.startswith("option").any()  # (no daily bars in this store)
+    expected = ["10009001", "10009002", "10009003", "10009004"]  # the September ones expire that day and trade
+    assert sorted(calls(provider, "minute")) == expected and not calls(provider, "risk")
+    minutes = read_canonical(tmp_path, "option_minute_bars", "trade_date=2026-09-23")
+    assert sorted(minutes["contract"].unique()) == expected
+    provider.calls.clear()
+    morning(tmp_path, provider, date(2026, 9, 24))
+    assert not calls(provider, "minute")                         # already stored the evening before

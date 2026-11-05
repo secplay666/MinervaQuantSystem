@@ -77,6 +77,12 @@ if [[ -x "$REPO/.venv/bin/quant-decision" ]]; then
   note "== decision exit $decision_rc"
 fi
 
+# The session's SSE option minute bars (the options page's 分时): the source clears them before the next
+# morning, so they are fetched now.  Warnings only; a failure here never fails the update.
+note "== option minutes"
+"$REPO/.venv/bin/quant-data" --root "$REPO" ingest --config "$CONFIG" --steps option_minutes >> "$LOG" 2>&1
+note "== option minutes exit $?"
+
 # Snapshot to the backup disk after every ingest that ran, complete or not: raw
 # responses of a partial run are worth keeping too.  A missed backup is caught
 # up by the next one (every snapshot is complete).

@@ -420,8 +420,10 @@ class BigMoneyMonitor:
         tmp.write_text(json.dumps(status, ensure_ascii=False, indent=1), encoding="utf-8")
         tmp.replace(self.out / "status.json")
 
-    def run(self, sleep: Callable[[float], None] = time_module.sleep) -> None:
-        """Poll every ``poll_seconds`` from the open to just after the close; idle over the lunch break."""
+    def run(self, sleep: Callable[[float], None] = time_module.sleep,
+            also: tuple[Callable[[], Any], ...] = (), finish: tuple[Callable[[], Any], ...] = ()) -> None:
+        """Poll every ``poll_seconds`` from the open to just after the close; idle over the lunch break.  ``also``
+        runs after each poll and ``finish`` after the close (the volatility indices); their failures are their own."""
         last_ticks: dict[str, pd.DataFrame] = {}
         while True:
             now = self.clock()
@@ -433,11 +435,21 @@ class BigMoneyMonitor:
                 except Exception as exc:  # one bad round must not end the session
                     self.errors += 1
                     LOGGER.warning("poll failed: %s", exc)
+                for extra in also:
+                    try:
+                        extra()
+                    except Exception as exc:  # noqa: BLE001
+                        LOGGER.warning("%s failed: %s", getattr(extra, "__qualname__", extra), exc)
             elapsed = (self.clock() - now).total_seconds()
             sleep(max(5.0, self.config.poll_seconds - elapsed))
         for book_symbol, book in self.books.items():
             last_ticks[book_symbol] = book.frame()
         self.write(last_ticks, final=True)
+        for extra in finish:
+            try:
+                extra()
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning("%s failed: %s", getattr(extra, "__qualname__", extra), exc)
 
 
 def replay(day: date, groups: list[Group], trades: pd.DataFrame, profile: pd.Series,

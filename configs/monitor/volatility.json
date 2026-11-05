@@ -1,0 +1,13 @@
+{
+  "indices": [
+    {"id": "etf300", "name": "300ETF 波动率", "exchange": "SSE", "underlying": "510300"},
+    {"id": "io", "name": "沪深300 股指期权波动率", "exchange": "CFFEX", "underlying": "IO"},
+    {"id": "etf50", "name": "50ETF 波动率", "exchange": "SSE", "underlying": "510050"},
+    {"id": "mo", "name": "中证1000 股指期权波动率", "exchange": "CFFEX", "underlying": "MO"}
+  ],
+  "risk_free": 0.015,
+  "min_days": 7,
+  "history_years": 3,
+  "alert_rise": 0.2,
+  "alert_percentile": 0.8
+}

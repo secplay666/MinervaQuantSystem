@@ -46,3 +46,39 @@ export interface BigMoneyDay {
 }
 export const bigMoneyApi = (day?: string) =>
   requestClient.get<BigMoneyDay>('/monitor/big-money', { params: day ? { day } : {} });
+
+/** 恐慌指数 (app/monitor.py, monitor/volatility.py): 30-day volatility indices of the A-share options, VIX method. */
+export interface VolatilityPoint {
+  near_vol: null | number;
+  next_vol: null | number;
+  time: string;
+  value: null | number;
+}
+export interface VolatilityIndex {
+  alert: null | string;
+  change: null | number;
+  exchange: null | string;
+  history: { trade_date: string; value: number }[];
+  history_from: null | string;
+  id: string;
+  latest: (VolatilityPoint & { forward: null | number; near_expiry: null | string; next_expiry: null | string; strikes: number }) | null;
+  median: null | number;
+  name: string;
+  percentile: null | number;
+  previous_close: null | number;
+  series: VolatilityPoint[];
+  underlying: null | string;
+  value: null | number;
+}
+export interface VolatilityDay {
+  day: null | string;
+  days: string[];
+  errors: number;
+  final: boolean;
+  history_years: number;
+  indices: VolatilityIndex[];
+  live: boolean;
+  updated: null | string;
+}
+export const volatilityApi = (day?: string) =>
+  requestClient.get<VolatilityDay>('/monitor/volatility', { params: day ? { day } : {} });

@@ -11,6 +11,7 @@
     quant-app notify status | test | dispatch    # external notifications (app/notify.py)
     quant-app pm daily                           # position manager signals after the data update
     quant-app monitor big-money                  # 盘中大资金监测: poll during today's session (systemd timer)
+    quant-app monitor volatility-history         # 恐慌指数: daily history from the option bars (morning catch-up)
 """
 
 from __future__ import annotations
@@ -272,8 +273,114 @@ def command_monitor_big_money(args: argparse.Namespace) -> int:
 
     funds = sum(len(g.funds) for g in groups)
     print(f"{day}: {len(groups)} groups, {funds} funds; polling every {config.poll_seconds}s", flush=True)
-    BigMoneyMonitor(settings.root, config, groups, profile, day, get, on_alert, clock).run()
+    volatility = _volatility_monitor(settings, day, clock, sessions)
+    also = (volatility.poll,) if volatility else ()
+    finish = ((lambda: volatility.write(final=True)),) if volatility else ()
+    BigMoneyMonitor(settings.root, config, groups, profile, day, get, on_alert, clock).run(also=also, finish=finish)
     print("session over", flush=True)
+    return 0
+
+
+def _volatility_monitor(settings, day, clock, sessions):  # type: ignore[no-untyped-def]
+    """The A-share volatility indices (monitor/volatility.py), polled in the same loop; None when they cannot start
+    (the big-money monitor runs anyway)."""
+    import requests
+
+    from .db.base import utc_now
+    from .db.models import Event
+    from ..monitor.volatility import SinaChains, VolatilityMonitor, VolConfig, prepare as prepare_volatility
+
+    path = settings.root / "configs" / "monitor" / "volatility.json"
+    if not path.is_file():
+        return None
+    try:
+        config = VolConfig.load(path)
+        states = prepare_volatility(settings.root, config, day)
+    except Exception as exc:  # noqa: BLE001
+        print(f"volatility indices not started: {exc}", file=sys.stderr, flush=True)
+        return None
+    http = requests.Session()
+    http.headers.update({"User-Agent": "Mozilla/5.0", "Referer": "https://finance.sina.com.cn/"})
+
+    def get(url: str) -> str:
+        response = http.get(url, timeout=8)
+        response.raise_for_status()
+        return response.content.decode("gbk", errors="replace")
+
+    def on_alert(index, row, text) -> None:  # type: ignore[no-untyped-def]
+        title, body = text
+        event_id = f"vol-{day:%Y%m%d}-{index.id}"
+        with sessions() as session:
+            if session.get(Event, event_id) is None:
+                session.add(Event(event_id=event_id, at=utc_now(), level="warning", category="market", title=title,
+                                  body=body, trade_date=day, action_hint="看盘与仓位 → 恐慌指数"))
+                session.commit()
+        print(title, flush=True)
+
+    print("volatility indices: " + ", ".join(f"{s.index.name} ({len(s.months)} months)" for s in states), flush=True)
+    return VolatilityMonitor(settings.root, config, day, states, SinaChains(get), clock, on_alert)
+
+
+def command_monitor_volatility_backfill(args: argparse.Namespace) -> int:
+    """The SSE volatility indices of past sessions from the stored option minute bars, for the days the live
+    monitor did not record (monitor/volatility.py replay_minutes)."""
+    from datetime import date
+
+    import pandas as pd
+
+    from ..data_platform.storage import read_canonical
+    from ..monitor.volatility import VolConfig, prepare as prepare_volatility, replay_minutes
+
+    settings = _settings(args, require_secret=False)
+    config = VolConfig.load(settings.root / "configs" / "monitor" / "volatility.json")
+    contracts = read_canonical(settings.root, "option_contracts")
+    base = settings.root / "data" / "canonical" / "option_minute_bars"
+    out_base = settings.root / "data" / "monitor" / "volatility"
+    done = 0
+    for part in sorted(base.glob("trade_date=*")) if base.is_dir() else []:
+        day = date.fromisoformat(part.name.split("=", 1)[1])
+        folder = out_base / day.isoformat()
+        if (folder / "status.json").is_file():
+            continue
+        minutes = read_canonical(settings.root, "option_minute_bars", part.name)
+        frame = replay_minutes(minutes, contracts, config, day)
+        if frame.empty:
+            continue
+        states = {s.index.id: s for s in prepare_volatility(settings.root, config, day)}
+        folder.mkdir(parents=True, exist_ok=True)
+        frame.to_parquet(folder / "minutes.parquet", index=False)
+        status = {"day": day.isoformat(), "updated": f"{day}T15:00:00", "final": True, "errors": 0, "alerts": [],
+                  "source": "option_minute_bars", "indices": [
+                      {"id": i.id, "name": i.name, "exchange": i.exchange, "underlying": i.underlying,
+                       "previous_close": None if pd.isna(states[i.id].previous_close) else
+                       round(states[i.id].previous_close, 4)} for i in config.indices if i.exchange == "SSE"]}
+        (folder / "status.json").write_text(json.dumps(status, ensure_ascii=False, indent=1), encoding="utf-8")
+        done += 1
+        print(f"{day}: {len(frame)} minutes ({', '.join(sorted(frame['id'].unique()))})")
+    print(f"{done} sessions backfilled")
+    return 0
+
+
+def command_monitor_volatility_history(args: argparse.Namespace) -> int:
+    """Recompute the volatility indices' daily history from the stored option bars (after the morning catch-up)."""
+    import duckdb
+
+    from ..monitor.volatility import VolConfig, daily_history
+    from .db.base import utc_now
+
+    settings = _settings(args, require_secret=False)
+    config = VolConfig.load(settings.root / "configs" / "monitor" / "volatility.json")
+    with duckdb.connect(str(settings.root / "data" / "market.duckdb"), read_only=True) as con:
+        history = daily_history(con, config)
+    out = settings.root / "data" / "monitor" / "volatility"
+    out.mkdir(parents=True, exist_ok=True)
+    tmp = out / "daily.parquet.tmp"
+    history.to_parquet(tmp, index=False)
+    tmp.replace(out / "daily.parquet")
+    for index_id, rows in history.groupby("id"):
+        last = rows.sort_values("trade_date").iloc[-1]
+        print(f"{index_id}: {len(rows)} sessions, latest {last['trade_date']} {last['value']:.2f}")
+    print(f"written {out / 'daily.parquet'} at {utc_now():%Y-%m-%d %H:%M} UTC")
     return 0
 
 
@@ -346,6 +453,10 @@ def build_parser() -> argparse.ArgumentParser:
     pm.add_parser("daily", help="position manager: evaluate every user's library, store new signals").set_defaults(
         handler=command_pm_daily)
     monitor = sub.add_parser("monitor").add_subparsers(dest="monitor_command", required=True)
+    monitor.add_parser("volatility-history", help="恐慌指数: recompute the daily history from the option bars").set_defaults(
+        handler=command_monitor_volatility_history)
+    monitor.add_parser("volatility-backfill", help="恐慌指数: past sessions from the stored option minute bars").set_defaults(
+        handler=command_monitor_volatility_backfill)
     monitor.add_parser("big-money", help="盘中大资金监测 for today's session (exits after the close)").set_defaults(
         handler=command_monitor_big_money)
     return parser
