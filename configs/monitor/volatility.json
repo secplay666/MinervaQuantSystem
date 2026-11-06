@@ -9,5 +9,6 @@
   "min_days": 7,
   "history_years": 3,
   "alert_rise": 0.2,
-  "alert_percentile": 0.8
+  "alert_percentile": 0.8,
+  "min_strike_share": 0.6
 }
