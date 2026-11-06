@@ -70,7 +70,7 @@ async function load() {
 
 function minutes(): string[] {
   const out: string[] = [];
-  for (const [h0, m0, h1, m1] of [[9, 30, 11, 30], [13, 1, 15, 0]] as const) {
+  for (const [h0, m0, h1, m1] of [[9, 30, 11, 30], [13, 0, 15, 0]] as const) {  // the monitor's first afternoon poll is 13:00
     for (let t = h0 * 60 + m0; t <= h1 * 60 + m1; t++) out.push(`${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`);
   }
   return out;
