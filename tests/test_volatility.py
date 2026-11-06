@@ -102,11 +102,12 @@ class FakeChains(SinaChains):
         super().__init__(lambda url: "")
         self.vol, self.calls = 0.20, 0
         self.now = datetime(2026, 11, 5, 10, 0)
+        self.strikes = np.round(np.arange(2.0, 6.5, 0.05), 3)
 
     def chain(self, index: VolIndex, month: str) -> pd.DataFrame:
         self.calls += 1
         expiry = date(2026, 11, 25) if month == "2026-11" else date(2026, 12, 23)
-        return chain(4.2, years_to(expiry, self.now), self.vol, np.round(np.arange(2.0, 6.5, 0.05), 3))
+        return chain(4.2, years_to(expiry, self.now), self.vol, self.strikes)
 
 
 def test_the_monitor_writes_minutes_and_alerts_once_on_a_spike(tmp_path: Path) -> None:
@@ -282,3 +283,27 @@ def test_the_monitor_starts_without_the_catalog_and_takes_a_newer_history(tmp_pa
     assert state.previous_close == 25 and len(state.reference) == 31
     status = json.loads((base / "2026-11-05" / "status.json").read_text(encoding="utf-8"))
     assert status["indices"][0]["previous_close"] == 25.0
+
+
+def test_the_sse_closing_auction_and_thin_quotes_are_not_kept(tmp_path: Path) -> None:
+    """11-06: from 14:57 (SSE options' closing call auction) 300ETF had no usable strike, then half of them, and its
+    index fell 22.0 -> 20.4 while the CFFEX ones did not move."""
+    io = VolIndex("io", "沪深300 股指期权波动率", "CFFEX", "IO")
+    config = VolConfig(indices=(ETF300, io))
+    months = [("2026-11", date(2026, 11, 25)), ("2026-12", date(2026, 12, 23))]
+    fake = FakeChains()
+    monitor = VolatilityMonitor(tmp_path, config, date(2026, 11, 5), [IndexState(ETF300, months), IndexState(io, months)],
+                                fake, lambda: fake.now)
+    for _ in range(6):
+        monitor.poll()
+        fake.now += timedelta(minutes=1)
+    full = fake.strikes
+    fake.strikes = np.round(np.arange(4.0, 4.45, 0.05), 3)       # a few strikes only
+    assert monitor.poll() == [] and monitor.skipped == 2
+    fake.strikes = full
+    fake.now = datetime(2026, 11, 5, 14, 57)
+    assert [r["id"] for r in monitor.poll()] == ["io"]
+    fake.now = datetime(2026, 11, 5, 15, 0)
+    assert [r["id"] for r in monitor.poll()] == ["etf300", "io"]
+    status = json.loads((tmp_path / "data" / "monitor" / "volatility" / "2026-11-05" / "status.json").read_text("utf-8"))
+    assert status["skipped"] == 2

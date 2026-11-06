@@ -41,6 +41,9 @@ YEAR_SECONDS = 365 * 86400
 THIRTY_DAYS = 30 / 365
 MINUTE_COLUMNS = ["time", "id", "value", "near_vol", "next_vol", "near_expiry", "next_expiry", "forward", "strikes"]
 HISTORY_FILE = Path("data") / "monitor" / "volatility" / "daily.parquet"  # quant-app monitor volatility-history
+# SSE options' closing call auction: from 14:57 the quotes are indicative and thin (11-06: 300ETF had no usable strike
+# at 14:57 and half its strikes at 14:58, and its index fell 22.0 -> 20.4 while the CFFEX ones did not move).
+SSE_CLOSING_AUCTION = (time(14, 57), time(15, 0))
 
 
 @dataclass(frozen=True)
@@ -59,6 +62,7 @@ class VolConfig:
     history_years: int = 3
     alert_rise: float = 0.2
     alert_percentile: float = 0.8
+    min_strike_share: float = 0.6   # a minute with fewer strikes than this share of the day's median is not kept
 
     @classmethod
     def load(cls, path: Path) -> VolConfig:
@@ -256,6 +260,7 @@ class VolatilityMonitor:
         self.rows: list[dict] = []
         self.alerted: dict[str, str] = {}
         self.errors = 0
+        self.skipped = 0
         self.out = root / "data" / "monitor" / "volatility" / day.isoformat()
         self.history_stamp: int | None = None
 
@@ -284,6 +289,8 @@ class VolatilityMonitor:
         stamp = now.strftime("%H:%M")
         new = []
         for state in self.states:
+            if state.index.exchange == "SSE" and SSE_CLOSING_AUCTION[0] <= now.time() < SSE_CLOSING_AUCTION[1]:
+                continue
             try:
                 expiries = dict((e, m) for m, e in state.months)
                 terms = pick_terms(list(expiries), now, self.config.min_days)
@@ -293,11 +300,26 @@ class VolatilityMonitor:
                 self.errors += 1
                 LOGGER.warning("volatility %s failed: %s", state.index.id, exc)
                 continue
+            thin = self._thin(row)
+            if thin:
+                self.skipped += 1
+                LOGGER.info("volatility %s %s not kept: %s", state.index.id, stamp, thin)
+                continue
             self.rows.append(row)
             new.append(row)
             self._check_alert(state, row)
         self.write()
         return new
+
+    def _thin(self, row: dict) -> str | None:
+        """Why a minute's quotes are too thin to keep (None when they are fine): a term without enough quotes, or
+        far fewer strikes than usual today (the index then jumps on a few contracts)."""
+        if not (np.isfinite(row["near_vol"]) and np.isfinite(row["next_vol"])):
+            return f"a term without enough quotes ({row['strikes']} strikes)"
+        usual = [r["strikes"] for r in self.rows if r["id"] == row["id"]]
+        if len(usual) >= 5 and row["strikes"] < self.config.min_strike_share * float(np.median(usual)):
+            return f"{row['strikes']} strikes, {np.median(usual):.0f} usually"
+        return None
 
     def _check_alert(self, state: IndexState, row: dict) -> None:
         value, previous = row["value"], state.previous_close
@@ -315,7 +337,8 @@ class VolatilityMonitor:
         frame = pd.DataFrame(self.rows, columns=MINUTE_COLUMNS)
         frame.to_parquet(self.out / "minutes.parquet", index=False)
         status = {"day": self.day.isoformat(), "updated": self.clock().isoformat(timespec="seconds"), "final": final,
-                  "errors": self.errors, "alerts": [{"id": i, "time": t} for i, t in self.alerted.items()],
+                  "errors": self.errors, "skipped": self.skipped,
+                  "alerts": [{"id": i, "time": t} for i, t in self.alerted.items()],
                   "indices": [{"id": s.index.id, "name": s.index.name, "exchange": s.index.exchange,
                                "underlying": s.index.underlying,
                                "previous_close": None if np.isnan(s.previous_close) else round(s.previous_close, 4)}
