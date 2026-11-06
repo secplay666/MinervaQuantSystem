@@ -8,9 +8,10 @@
 # This run fetches only the indices and ETF steps for the latest final session,
 # so the ETF page shows the previous session's shares in the morning instead of
 # a day (or a weekend) later.  It also runs the options step (the options page):
-# the previous session's option prices and risk indicators, and its option
-# minute bars, which the source keeps only until the next session opens, so the
-# pipeline runs that step first.  It builds no decisions and sends nothing.
+# the previous session's option prices and risk indicators (its option minute
+# bars come from the evening run: on weekdays the source clears them before this
+# run), then recomputes the 恐慌指数 history.  It builds no decisions and sends
+# nothing.
 #
 # Output: logs/daily/<date>-catchup.log and logs/daily/catchup.tsv (one line per
 # run).  It shares the daily lock and leaves last_complete_epoch alone, so the

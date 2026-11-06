@@ -242,3 +242,43 @@ def test_every_configured_index_is_listed_even_without_its_minutes(tmp_path: Pat
     io = result["indices"][1]
     assert io["name"] == "沪深300 股指期权波动率" and io["series"] == []
     assert io["value"] == 38 and io["previous_close"] == 37   # its daily value of 11-03, and 11-02's
+
+
+def test_the_monitor_starts_without_the_catalog_and_takes_a_newer_history(tmp_path: Path) -> None:
+    """The months come from the canonical contracts (the 09:05 catch-up may hold the catalog's lock at 09:20), and
+    the previous close follows the daily history when the catch-up recomputes it after the monitor started."""
+    import os
+
+    from quant_system.data_platform.storage import canonical_path
+    from quant_system.monitor.volatility import prepare
+
+    path = canonical_path(tmp_path, "option_contracts")
+    path.parent.mkdir(parents=True)
+    rows = [{"contract": f"{u}{m}{k}", "exchange": "SSE", "underlying": u, "kind": "call", "expiry_month": m,
+             "expiry_date": e, "strike": 4.2, "adjusted": False}
+            for u in ("510300", "510050") for k in "ab"
+            for m, e in (("2026-10", "2026-10-28"), ("2026-12", "2026-12-23"), ("2026-11", "2026-11-25"))]
+    pd.DataFrame(rows).to_parquet(path, index=False)
+    base = tmp_path / "data" / "monitor" / "volatility"
+    base.mkdir(parents=True)
+    days = list(pd.bdate_range(end="2026-11-03", periods=30).date)
+    values = list(np.linspace(15, 20, 30))
+    pd.DataFrame({"id": "etf300", "trade_date": days, "value": values}).to_parquet(base / "daily.parquet", index=False)
+    assert not (tmp_path / "data" / "market.duckdb").exists()
+    [state] = prepare(tmp_path, CONFIG, date(2026, 11, 5))
+    assert state.months == [("2026-11", date(2026, 11, 25)), ("2026-12", date(2026, 12, 23))]
+    assert state.previous_close == 20 and len(state.reference) == 30
+
+    fake = FakeChains()
+    monitor = VolatilityMonitor(tmp_path, CONFIG, date(2026, 11, 5), [state], fake, lambda: fake.now)
+    monitor.poll()
+    history = base / "daily.parquet"
+    stamp = history.stat().st_mtime_ns
+    pd.DataFrame({"id": "etf300", "trade_date": days + [date(2026, 11, 4)], "value": values + [25.0]}).to_parquet(
+        history, index=False)
+    os.utime(history, ns=(stamp + 10**9, stamp + 10**9))
+    fake.now += timedelta(minutes=1)
+    monitor.poll()
+    assert state.previous_close == 25 and len(state.reference) == 31
+    status = json.loads((base / "2026-11-05" / "status.json").read_text(encoding="utf-8"))
+    assert status["indices"][0]["previous_close"] == 25.0

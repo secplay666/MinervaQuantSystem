@@ -40,6 +40,7 @@ EXPIRY_TIME = time(15, 0)
 YEAR_SECONDS = 365 * 86400
 THIRTY_DAYS = 30 / 365
 MINUTE_COLUMNS = ["time", "id", "value", "near_vol", "next_vol", "near_expiry", "next_expiry", "forward", "strikes"]
+HISTORY_FILE = Path("data") / "monitor" / "volatility" / "daily.parquet"  # quant-app monitor volatility-history
 
 
 @dataclass(frozen=True)
@@ -256,8 +257,29 @@ class VolatilityMonitor:
         self.alerted: dict[str, str] = {}
         self.errors = 0
         self.out = root / "data" / "monitor" / "volatility" / day.isoformat()
+        self.history_stamp: int | None = None
+
+    def refresh_history(self) -> None:
+        """Take the previous close and the reference values again when the daily history file changed: the morning
+        catch-up recomputes it after its ingest, which on some days ends after the monitor starts (09:20)."""
+        path = self.root / HISTORY_FILE
+        stamp = path.stat().st_mtime_ns if path.is_file() else None
+        if stamp is None or stamp == self.history_stamp:
+            return
+        try:
+            history = load_history(self.root, self.config, self.day)
+        except Exception as exc:  # a bad file must not stop the polling; the old values stay
+            LOGGER.warning("volatility history not reloaded: %s", exc)
+            return
+        self.history_stamp = stamp
+        for state in self.states:
+            previous, reference = history[state.index.id]
+            if previous != state.previous_close and not (np.isnan(previous) and np.isnan(state.previous_close)):
+                LOGGER.info("volatility %s previous close %s -> %s", state.index.id, state.previous_close, previous)
+            state.previous_close, state.reference = previous, reference
 
     def poll(self) -> list[dict]:
+        self.refresh_history()
         now = self.clock()
         stamp = now.strftime("%H:%M")
         new = []
@@ -310,26 +332,39 @@ def alert_text(index: VolIndex, row: dict, previous: float, pct: float, years: i
     return title, body
 
 
-def prepare(root: Path, config: VolConfig, day: date) -> list[IndexState]:
-    """The listed months of each index (from the catalog's contracts) and its daily history up to ``day``."""
-    import duckdb
-
-    with duckdb.connect(str(root / "data" / "market.duckdb"), read_only=True) as con:
-        months = con.execute("""
-            SELECT exchange, underlying, expiry_month, min(expiry_date) expiry FROM option_contracts
-            WHERE expiry_date >= ? GROUP BY 1, 2, 3 ORDER BY expiry""", [day]).fetchdf()
-    history_file = root / "data" / "monitor" / "volatility" / "daily.parquet"
+def load_history(root: Path, config: VolConfig, day: date) -> dict[str, tuple[float, pd.Series]]:
+    """Per index: the last daily value before ``day`` (nan when none) and the values of the last
+    ``history_years`` years (for the percentile)."""
+    history_file = root / HISTORY_FILE
     history = pd.read_parquet(history_file) if history_file.is_file() else pd.DataFrame(
         columns=["id", "trade_date", "value"])
     history["trade_date"] = pd.to_datetime(history["trade_date"]).dt.date
-    states = []
     start = date(day.year - config.history_years, day.month, min(day.day, 28))
+    out = {}
+    for index in config.indices:
+        own = history[(history["id"] == index.id) & (history["trade_date"] < day)].sort_values("trade_date")
+        out[index.id] = (float(own["value"].iloc[-1]) if len(own) else float("nan"),
+                         own.loc[own["trade_date"] >= start, "value"].astype(float).reset_index(drop=True))
+    return out
+
+
+def prepare(root: Path, config: VolConfig, day: date) -> list[IndexState]:
+    """The listed months of each index and its daily history up to ``day``.  The months come from the canonical
+    contracts file, not the catalog: the 09:05 catch-up may hold the catalog's lock when the monitor starts."""
+    from ..data_platform.storage import read_canonical
+
+    contracts = read_canonical(root, "option_contracts")
+    if contracts is None or contracts.empty:
+        raise FileNotFoundError("no option contracts stored (data/canonical/option_contracts)")
+    contracts = contracts.assign(expiry=pd.to_datetime(contracts["expiry_date"]).dt.date)
+    months = (contracts[contracts["expiry"] >= day].groupby(["exchange", "underlying", "expiry_month"], as_index=False)
+              ["expiry"].min().sort_values("expiry"))
+    history = load_history(root, config, day)
+    states = []
     for index in config.indices:
         mine = months[(months["exchange"] == index.exchange) & (months["underlying"] == index.underlying)]
-        own = history[(history["id"] == index.id) & (history["trade_date"] < day)].sort_values("trade_date")
-        states.append(IndexState(index, [(m, pd.Timestamp(e).date()) for m, e in zip(mine["expiry_month"], mine["expiry"])],
-                                 float(own["value"].iloc[-1]) if len(own) else float("nan"),
-                                 own.loc[own["trade_date"] >= start, "value"].reset_index(drop=True)))
+        previous, reference = history[index.id]
+        states.append(IndexState(index, list(zip(mine["expiry_month"], mine["expiry"])), previous, reference))
     return states
 
 
